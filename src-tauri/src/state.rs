@@ -81,7 +81,7 @@ impl AppState {
         if self.peer_address.is_none() {
             self.peer_address = Some(peer_address.to_string());
         }
-        
+
         if let Some(ref mut network) = self.network {
             let message = ChatMessage {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -106,6 +106,21 @@ impl AppState {
         Ok(())
     }
 
+    pub fn receive_message(&mut self, peer_address: &str, message: ChatMessage) {
+        // Автоматически устанавливаем peer_address при первом сообщении
+        if self.peer_address.is_none() {
+            self.peer_address = Some(peer_address.to_string());
+            self.connected = true;
+            eprintln!("🟢 Установлено подключение к {}", peer_address);
+        }
+
+        // Сохраняем в кэш
+        self.message_cache
+            .entry(peer_address.to_string())
+            .or_insert_with(Vec::new)
+            .push(message);
+    }
+
     pub fn get_peers(&self) -> Vec<PeerInfo> {
         self.history_mgr.load_peers()
     }
@@ -118,6 +133,11 @@ impl AppState {
 
         // Загружаем из истории
         self.history_mgr.load_messages(peer_address, 1000)
+    }
+    
+    pub fn get_cached_messages(&self, peer_address: &str) -> Vec<ChatMessage> {
+        // Возвращаем только из кэша
+        self.message_cache.get(peer_address).cloned().unwrap_or_default()
     }
 
     pub fn get_status(&self) -> ConnectionStatus {
@@ -136,6 +156,64 @@ impl AppState {
             network.stop();
         }
         self.network = None;
+    }
+    
+    pub fn send_file(&mut self, peer_address: &str, file_path: &str) -> Result<(), String> {
+        use std::io::{Read, Write};
+        use std::fs::File;
+        use std::net::TcpStream;
+        use std::time::Duration;
+        
+        eprintln!("📁 Отправка файла: {} -> {}", file_path, peer_address);
+        
+        // Читаем файл
+        let mut file = File::open(file_path)
+            .map_err(|e| format!("Не удалось открыть файл: {}", e))?;
+        
+        let mut file_data = Vec::new();
+        file.read_to_end(&mut file_data)
+            .map_err(|e| format!("Не удалось прочитать файл: {}", e))?;
+        
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        
+        eprintln!("📊 Размер файла: {} байт", file_data.len());
+        
+        // Подключаемся к собеседнику
+        let mut stream = TcpStream::connect(peer_address)
+            .map_err(|e| format!("Не удалось подключиться: {}", e))?;
+        
+        stream.set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|e| format!("Ошибка установки таймаута: {}", e))?;
+        
+        // Отправляем заголовок: FILE|name|size
+        let header = format!("FILE|{}|{}", file_name, file_data.len());
+        stream.write_all(header.as_bytes())
+            .map_err(|e| format!("Ошибка отправки заголовка: {}", e))?;
+        
+        // Отправляем данные файла
+        stream.write_all(&file_data)
+            .map_err(|e| format!("Ошибка отправки данных: {}", e))?;
+        
+        eprintln!("📤 Файл отправлен");
+        
+        // Ждём подтверждение
+        let mut buffer = [0u8; 1024];
+        match stream.read(&mut buffer) {
+            Ok(n) => {
+                let response = String::from_utf8_lossy(&buffer[..n]);
+                eprintln!("📥 Ответ: {}", response);
+                if response == "FILE_OK" {
+                    eprintln!("✅ Файл успешно отправлен");
+                    Ok(())
+                } else {
+                    Err(format!("Получен неверный ответ: {}", response))
+                }
+            }
+            Err(e) => Err(format!("Таймаут подтверждения: {}", e))
+        }
     }
 }
 

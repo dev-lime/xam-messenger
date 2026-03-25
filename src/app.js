@@ -19,7 +19,6 @@ const elements = {
     userAvatar: document.getElementById('userAvatar'),
     userProfileHeader: document.getElementById('userProfileHeader'),
     connectBtn: document.getElementById('connectBtn'),
-    settingsBtn: document.getElementById('settingsBtn'),
     sendBtn: document.getElementById('sendBtn'),
     attachBtn: document.getElementById('attachBtn'),
     fileInput: document.getElementById('fileInput'),
@@ -76,6 +75,9 @@ async function init() {
     }
 
     setupEventListeners();
+    
+    // Периодическая проверка новых сообщений
+    setInterval(checkNewMessages, 1000);
 }
 
 // Загрузка списка контактов
@@ -147,8 +149,12 @@ async function selectPeer(address) {
 
 // Загрузка сообщений
 async function loadMessages(peerAddress) {
+    console.log('📂 Загрузка сообщений для:', peerAddress);
+    
     try {
         const messages = await invoke('get_messages', { peerAddress });
+        console.log('📚 Загружено сообщений:', messages.length);
+        
         state.messages = messages;
         
         // Если peer_address не установлен, устанавливаем его
@@ -162,14 +168,24 @@ async function loadMessages(peerAddress) {
         }
         
         renderMessages();
+        
+        // Обновляем статус - показываем что подключены
+        updateStatusDisplay(true, peerAddress);
     } catch (error) {
-        console.error('Failed to load messages:', error);
+        console.error('❌ Ошибка загрузки сообщений:', error);
     }
 }
 
 // Рендеринг сообщений
 function renderMessages() {
+    console.log('🎨 Рендеринг сообщений:', state.messages.length);
+    
     elements.messages.innerHTML = '';
+
+    if (state.messages.length === 0) {
+        elements.messages.innerHTML = '<p style="text-align: center; color: var(--text-tertiary); padding: 20px;">Нет сообщений</p>';
+        return;
+    }
 
     state.messages.forEach(msg => {
         const messageEl = createMessageElement(msg);
@@ -177,6 +193,7 @@ function renderMessages() {
     });
 
     scrollToBottom();
+    console.log('✅ Сообщения отрендерены');
 }
 
 // Создание элемента сообщения
@@ -218,13 +235,19 @@ async function sendMessage() {
     const text = elements.messageInput.value.trim();
     const peerAddress = state.peerAddress || state.currentPeer;
     
-    if (!text || !peerAddress) return;
+    if (!text || !peerAddress) {
+        console.log('❌ Не отправлено: text=', !!text, 'peerAddress=', peerAddress);
+        return;
+    }
+    
+    console.log('📤 Отправка сообщения:', { text, peerAddress });
 
     try {
         await invoke('send_message', {
             peerAddress: peerAddress,
             text: text,
         });
+        console.log('✅ Сообщение отправлено');
 
         // Добавляем сообщение локально
         state.messages.push({
@@ -240,7 +263,7 @@ async function sendMessage() {
         elements.messageInput.value = '';
         updateSendButton();
     } catch (error) {
-        console.error('Failed to send message:', error);
+        console.error('❌ Ошибка отправки:', error);
         alert('Ошибка отправки: ' + error);
     }
 }
@@ -276,7 +299,8 @@ function updateStatusDisplay(connected, peerAddress) {
 }
 
 function updateUserProfile(name, address) {
-    const displayName = name || userSettings.name || 'Не подключен';
+    // Показываем данные текущего пользователя (не собеседника!)
+    const displayName = userSettings.name || name || 'Не подключен';
     const avatar = userSettings.avatar || '👤';
     
     elements.userName.textContent = displayName;
@@ -376,8 +400,8 @@ function setupEventListeners() {
     // Периодическое обновление статуса
     setInterval(updateStatus, 5000);
     
-    // Настройки профиля
-    elements.settingsBtn.addEventListener('click', () => {
+    // Настройки профиля - клик по аватару/имени
+    elements.userProfileHeader.addEventListener('click', () => {
         elements.settingsNameInput.value = userSettings.name;
         elements.settingsAvatarInput.value = userSettings.avatar;
         elements.settingsDialog.showModal();
@@ -414,13 +438,31 @@ function setupEventListeners() {
         elements.fileInput.click();
     });
     
-    elements.fileInput.addEventListener('change', (e) => {
+    elements.fileInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (file) {
-            // TODO: Реализовать отправку файла
-            console.log('Файл выбран:', file.name, file.size);
-            alert('Отправка файлов будет реализована в следующей версии');
-            elements.fileInput.value = '';
+            const peerAddress = state.peerAddress || state.currentPeer;
+            if (!peerAddress) {
+                alert('Сначала подключитесь к собеседнику');
+                elements.fileInput.value = '';
+                return;
+            }
+            
+            console.log('📁 Отправка файла:', file.name, file.size);
+            
+            try {
+                // Для отправки файла нужен полный путь, но браузеры не дают доступ к нему
+                // Поэтому показываем сообщение о будущей реализации
+                alert(`Файл выбран: ${file.name}\n\nОтправка файлов требует доступа к файловой системе.\nФайлы будут сохраняться в ~/Downloads/xam-messenger/`);
+                
+                // TODO: Реализовать через Tauri FS API
+                // await invoke('send_file', { peerAddress, filePath: file.path });
+                
+                elements.fileInput.value = '';
+            } catch (error) {
+                console.error('Ошибка отправки файла:', error);
+                alert('Ошибка отправки файла: ' + error);
+            }
         }
     });
 }
@@ -429,6 +471,38 @@ function setupEventListeners() {
 function updateSendButton() {
     const hasText = elements.messageInput.value.trim().length > 0;
     elements.sendBtn.disabled = !hasText || !state.connected;
+}
+
+// Периодическая проверка новых сообщений
+async function checkNewMessages() {
+    if (!state.currentPeer) return;
+    
+    try {
+        const cachedMessages = await invoke('get_cached_messages', { peerAddress: state.currentPeer });
+        const status = await invoke('get_connection_status');
+        
+        // Обновляем статус подключения
+        if (status.connected && status.peer_address) {
+            updateStatusDisplay(true, status.peer_address);
+        }
+        
+        // Проверяем, есть ли новые сообщения
+        if (cachedMessages.length > state.messages.length) {
+            console.log('📬 Найдены новые сообщения:', cachedMessages.length - state.messages.length);
+            state.messages = cachedMessages;
+            renderMessages();
+        }
+        
+        // Обновляем список контактов если изменился
+        const peers = await invoke('get_peers');
+        if (peers.length !== state.peers.length) {
+            console.log('📋 Обновление списка контактов');
+            state.peers = peers;
+            renderPeers();
+        }
+    } catch (error) {
+        // Игнорируем ошибки, это фоновая проверка
+    }
 }
 
 // Запуск

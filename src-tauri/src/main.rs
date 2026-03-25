@@ -108,6 +108,36 @@ fn get_current_peer(
     Ok(state.peer_address.clone())
 }
 
+#[tauri::command]
+async fn send_file(
+    app_state: tauri::State<'_, Mutex<AppState>>,
+    peer_address: String,
+    file_path: String,
+) -> Result<(), String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.send_file(&peer_address, &file_path)
+}
+
+#[tauri::command]
+fn get_cached_messages(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+) -> Result<Vec<Message>, String> {
+    let state = app_state.lock().map_err(|e| e.to_string())?;
+    let messages = state.get_cached_messages(&peer_address);
+    Ok(messages
+        .into_iter()
+        .map(|m| Message {
+            id: m.id,
+            text: m.text,
+            is_mine: m.is_mine,
+            timestamp: m.timestamp.timestamp(),
+            sender: m.sender,
+            is_read: m.is_read,
+        })
+        .collect())
+}
+
 // ============ Main ============
 
 fn main() {
@@ -118,6 +148,7 @@ fn main() {
             init_app,
             get_peers,
             get_messages,
+            get_cached_messages,
             start_server,
             connect_to_peer,
             send_message,
@@ -125,6 +156,7 @@ fn main() {
             disconnect,
             set_peer_address,
             get_current_peer,
+            send_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
