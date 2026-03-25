@@ -30,7 +30,6 @@ const elements = {
     connectDialog: document.getElementById('connectDialog'),
     settingsDialog: document.getElementById('settingsDialog'),
     portInput: document.getElementById('portInput'),
-    nameInput: document.getElementById('nameInput'),
     ipInput: document.getElementById('ipInput'),
     cancelConnect: document.getElementById('cancelConnect'),
     confirmConnect: document.getElementById('confirmConnect'),
@@ -301,19 +300,31 @@ function escapeHtml(text) {
 function setupEventListeners() {
     // Кнопка подключения
     elements.connectBtn.addEventListener('click', () => {
-        elements.nameInput.value = userSettings.name;
         elements.connectDialog.showModal();
+        elements.portInput.focus();
     });
 
     // Отмена подключения
     elements.cancelConnect.addEventListener('click', () => {
         elements.connectDialog.close();
     });
+    
+    // Enter в диалоге подключения
+    elements.portInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            elements.ipInput.focus();
+        }
+    });
+    
+    elements.ipInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            elements.confirmConnect.click();
+        }
+    });
 
     // Подтверждение подключения
     elements.confirmConnect.addEventListener('click', async () => {
         const port = elements.portInput.value.trim();
-        const name = elements.nameInput.value.trim() || userSettings.name;
         const ip = elements.ipInput.value.trim();
 
         if (!port) {
@@ -321,20 +332,14 @@ function setupEventListeners() {
             return;
         }
 
-        // Сохраняем имя в настройки
-        if (name) {
-            userSettings.name = name;
-            saveUserSettings();
-        }
-
         try {
-            await invoke('start_server', { port, name });
+            await invoke('start_server', { port, name: userSettings.name });
 
             state.myPort = port;
-            state.myName = name;
+            state.myName = userSettings.name;
 
             // Обновляем профиль пользователя
-            updateUserProfile(name, port);
+            updateUserProfile(userSettings.name, port);
 
             if (ip) {
                 state.currentPeer = ip;
@@ -376,10 +381,24 @@ function setupEventListeners() {
         elements.settingsNameInput.value = userSettings.name;
         elements.settingsAvatarInput.value = userSettings.avatar;
         elements.settingsDialog.showModal();
+        elements.settingsNameInput.focus();
     });
     
     elements.cancelSettings.addEventListener('click', () => {
         elements.settingsDialog.close();
+    });
+    
+    // Enter в диалоге настроек
+    elements.settingsNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            elements.settingsAvatarInput.focus();
+        }
+    });
+    
+    elements.settingsAvatarInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            elements.saveSettings.click();
+        }
     });
     
     elements.saveSettings.addEventListener('click', () => {
