@@ -10,20 +10,29 @@
     <div class="app">
         <!-- Левая панель - список контактов -->
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2>💬 Чаты</h2>
-            </div>
+            <!-- Список контактов -->
             <div class="peers-list" id="peersList">
                 <!-- Контакты будут загружены сюда -->
             </div>
+            
+            <!-- Плавающая кнопка подключения -->
+            <button class="fab fab-connect" id="connectBtn" title="Подключиться">
+                <span>+</span>
+            </button>
         </aside>
 
         <!-- Основная панель - чат -->
         <main class="chat">
             <!-- Верхняя панель -->
             <header class="chat-header">
+                <div class="user-profile-header">
+                    <div class="user-avatar-small">👤</div>
+                    <div class="user-info-header">
+                        <div class="user-name-header" id="userName">Не подключен</div>
+                        <div class="user-address-header" id="userAddress">--</div>
+                    </div>
+                </div>
                 <div class="status" id="status">⚫ Не подключен</div>
-                <button class="btn btn-primary" id="connectBtn">Подключиться</button>
             </header>
 
             <!-- Список сообщений -->
@@ -37,11 +46,11 @@
             <div class="input-area">
                 <textarea 
                     id="messageInput" 
-                    placeholder="Введите сообщение...&#10;Enter - отправить"
+                    placeholder="Введите сообщение..."
                     rows="1"
                 ></textarea>
                 <button class="btn btn-send" id="sendBtn" disabled>
-                    <span>📤</span>
+                    <span>➤</span>
                 </button>
             </div>
         </main>

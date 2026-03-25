@@ -14,6 +14,8 @@ let state = {
 // DOM элементы
 const elements = {
     status: document.getElementById('status'),
+    userName: document.getElementById('userName'),
+    userAddress: document.getElementById('userAddress'),
     connectBtn: document.getElementById('connectBtn'),
     sendBtn: document.getElementById('sendBtn'),
     messageInput: document.getElementById('messageInput'),
@@ -66,7 +68,8 @@ function renderPeers() {
         item.className = `peer-item ${state.currentPeer === peer.address ? 'active' : ''}`;
         item.dataset.address = peer.address;
 
-        const time = new Date(peer.last_message * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        const time = new Date(peer.last_message * 1000);
+        const timeStr = time.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
         item.innerHTML = `
             <span class="peer-icon">👤</span>
@@ -74,7 +77,7 @@ function renderPeers() {
                 <div class="peer-name">${escapeHtml(peer.name)}</div>
                 <div class="peer-address">${escapeHtml(peer.address)}</div>
             </div>
-            <span class="peer-time">${time}</span>
+            <span class="peer-time">${timeStr}</span>
         `;
 
         item.addEventListener('click', () => selectPeer(peer.address));
@@ -196,7 +199,7 @@ async function sendMessage() {
 
         renderMessages();
         elements.messageInput.value = '';
-        elements.sendBtn.disabled = true;
+        updateSendButton();
     } catch (error) {
         console.error('Failed to send message:', error);
         alert('Ошибка отправки: ' + error);
@@ -213,6 +216,7 @@ async function updateStatus() {
         state.myName = status.my_name;
 
         updateStatusDisplay(status.connected, status.peer_address);
+        updateUserProfile(status.my_name, status.my_port);
     } catch (error) {
         console.error('Failed to get status:', error);
     }
@@ -222,16 +226,19 @@ function updateStatusDisplay(connected, peerAddress) {
     if (connected && peerAddress) {
         elements.status.textContent = `🟢 Подключен к ${peerAddress}`;
         elements.status.style.color = 'var(--success)';
-        elements.sendBtn.disabled = false;
     } else if (connected) {
         elements.status.textContent = `🟡 Ожидание подключения`;
         elements.status.style.color = 'var(--warning)';
-        elements.sendBtn.disabled = true;
     } else {
         elements.status.textContent = `⚫ Не подключен`;
         elements.status.style.color = 'var(--text-tertiary)';
-        elements.sendBtn.disabled = true;
     }
+    updateSendButton();
+}
+
+function updateUserProfile(name, address) {
+    elements.userName.textContent = name || 'Не подключен';
+    elements.userAddress.textContent = address ? `:${address}` : '--';
 }
 
 // Прокрутка вниз
@@ -284,6 +291,9 @@ function setupEventListeners() {
             state.myPort = port;
             state.myName = name;
 
+            // Обновляем профиль пользователя
+            updateUserProfile(name, port);
+
             if (ip) {
                 state.currentPeer = ip;
                 await loadMessages(ip);
@@ -294,6 +304,7 @@ function setupEventListeners() {
 
             elements.connectDialog.close();
             await loadPeers();
+            updateSendButton();
         } catch (error) {
             alert('Ошибка: ' + error);
         }
@@ -304,7 +315,7 @@ function setupEventListeners() {
 
     // Ввод сообщения
     elements.messageInput.addEventListener('input', () => {
-        elements.sendBtn.disabled = !elements.messageInput.value.trim();
+        updateSendButton();
     });
 
     elements.messageInput.addEventListener('keydown', (e) => {
@@ -316,6 +327,12 @@ function setupEventListeners() {
 
     // Периодическое обновление статуса
     setInterval(updateStatus, 5000);
+}
+
+// Обновление кнопки отправки
+function updateSendButton() {
+    const hasText = elements.messageInput.value.trim().length > 0;
+    elements.sendBtn.disabled = !hasText || !state.connected;
 }
 
 // Запуск
