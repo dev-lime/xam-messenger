@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xam Messenger</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Левая панель - список контактов -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>💬 Чаты</h2>
+            </div>
+            <div class="peers-list" id="peersList">
+                <!-- Контакты будут загружены сюда -->
+            </div>
+        </aside>
+
+        <!-- Основная панель - чат -->
+        <main class="chat">
+            <!-- Верхняя панель -->
+            <header class="chat-header">
+                <div class="status" id="status">⚫ Не подключен</div>
+                <button class="btn btn-primary" id="connectBtn">Подключиться</button>
+            </header>
+
+            <!-- Список сообщений -->
+            <div class="messages-container" id="messagesContainer">
+                <div class="messages" id="messages">
+                    <!-- Сообщения будут здесь -->
+                </div>
+            </div>
+
+            <!-- Панель ввода -->
+            <div class="input-area">
+                <textarea 
+                    id="messageInput" 
+                    placeholder="Введите сообщение...&#10;Enter - отправить"
+                    rows="1"
+                ></textarea>
+                <button class="btn btn-send" id="sendBtn" disabled>
+                    <span>📤</span>
+                </button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Диалог подключения -->
+    <dialog id="connectDialog" class="dialog">
+        <div class="dialog-header">
+            <h3>Подключение к чату</h3>
+        </div>
+        <div class="dialog-content">
+            <div class="form-group">
+                <label>Ваш порт</label>
+                <input type="text" id="portInput" value="8080" placeholder="8080">
+            </div>
+            <div class="form-group">
+                <label>Ваше имя</label>
+                <input type="text" id="nameInput" placeholder="Ваше имя">
+            </div>
+            <div class="form-group">
+                <label>IP собеседника</label>
+                <input type="text" id="ipInput" placeholder="192.168.1.100:8080">
+            </div>
+            <p class="hint">💡 Для теста на одном ПК:<br>
+               Экземпляр 1: порт 8080<br>
+               Экземпляр 2: порт 8081<br>
+               IP собеседника: 127.0.0.1:8080</p>
+        </div>
+        <div class="dialog-actions">
+            <button class="btn" id="cancelConnect">Отмена</button>
+            <button class="btn btn-primary" id="confirmConnect">Подключиться</button>
+        </div>
+    </dialog>
+
+    <script src="app.js"></script>
+</body>
+</html>
