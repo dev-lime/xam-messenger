@@ -89,19 +89,62 @@ impl AppState {
                 sender: self.my_name.clone(),
                 text: text.to_string(),
                 is_mine: true,
-                is_read: false,
+                delivery_status: 0, // ⏳ Отправлено, ждём доставки
             };
 
-            network.send_message(peer_address, &message).map_err(|e| e.to_string())?;
+            // Отправляем и ждём ACK
+            let ack_received = network.send_message_with_ack(peer_address, &message)?;
+
+            // Обновляем статус доставки
+            let mut final_message = message.clone();
+            if ack_received {
+                final_message.delivery_status = 1; // ✓ Доставлено
+                eprintln!("✅ ACK получен, сообщение доставлено");
+            } else {
+                eprintln!("⚠️ ACK не получен, сообщение не доставлено");
+            }
 
             // Сохраняем в кэш
             self.message_cache
                 .entry(peer_address.to_string())
                 .or_insert_with(Vec::new)
-                .push(message.clone());
+                .push(final_message.clone());
 
             // Сохраняем в историю
-            self.history_mgr.save_message(peer_address, &message);
+            self.history_mgr.save_message(peer_address, &final_message);
+        }
+        Ok(())
+    }
+    
+    // Обновить статус доставки (⏳ → ✓)
+    pub fn mark_delivered(&mut self, peer_address: &str, message_id: &str) {
+        if let Some(messages) = self.message_cache.get_mut(peer_address) {
+            for msg in messages.iter_mut() {
+                if msg.id == message_id && msg.delivery_status == 0 {
+                    msg.delivery_status = 1; // ✓ Доставлено
+                    eprintln!("📨 Сообщение {} доставлено", message_id);
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Обновить статус прочтения (✓ → ✓✓)
+    pub fn mark_read(&mut self, peer_address: &str, message_ids: &[String]) {
+        if let Some(messages) = self.message_cache.get_mut(peer_address) {
+            for msg in messages.iter_mut() {
+                if message_ids.contains(&msg.id) && msg.delivery_status >= 1 {
+                    msg.delivery_status = 2; // ✓✓ Прочитано
+                    eprintln!("👀 Сообщение {} прочитано", msg.id);
+                    break;
+                }
+            }
+        }
+    }
+    
+    pub fn send_ack(&mut self, peer_address: &str, message_ids: Vec<String>) -> Result<(), String> {
+        if let Some(ref mut network) = self.network {
+            network.send_ack(peer_address, &message_ids)?;
         }
         Ok(())
     }

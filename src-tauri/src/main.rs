@@ -40,7 +40,7 @@ fn get_messages(
             is_mine: m.is_mine,
             timestamp: m.timestamp.timestamp(),
             sender: m.sender,
-            is_read: m.is_read,
+            delivery_status: m.delivery_status,
         })
         .collect())
 }
@@ -119,6 +119,16 @@ async fn send_file(
 }
 
 #[tauri::command]
+fn send_ack(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+    message_ids: Vec<String>,
+) -> Result<(), String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.send_ack(&peer_address, message_ids)
+}
+
+#[tauri::command]
 fn get_cached_messages(
     app_state: tauri::State<Mutex<AppState>>,
     peer_address: String,
@@ -133,9 +143,31 @@ fn get_cached_messages(
             is_mine: m.is_mine,
             timestamp: m.timestamp.timestamp(),
             sender: m.sender,
-            is_read: m.is_read,
+            delivery_status: m.delivery_status,
         })
         .collect())
+}
+
+#[tauri::command]
+fn mark_delivered(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+    message_id: String,
+) -> Result<(), String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.mark_delivered(&peer_address, &message_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn mark_read(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+    message_ids: Vec<String>,
+) -> Result<(), String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.mark_read(&peer_address, &message_ids);
+    Ok(())
 }
 
 // ============ Main ============
@@ -152,6 +184,9 @@ fn main() {
             start_server,
             connect_to_peer,
             send_message,
+            send_ack,
+            mark_delivered,
+            mark_read,
             get_connection_status,
             disconnect,
             set_peer_address,

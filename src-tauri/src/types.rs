@@ -8,7 +8,7 @@ pub struct ChatMessage {
     pub sender: String,
     pub text: String,
     pub is_mine: bool,
-    pub is_read: bool,
+    pub delivery_status: u8, // 0=⏳, 1=✓, 2=✓✓
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub struct Message {
     pub is_mine: bool,
     pub timestamp: i64,
     pub sender: String,
-    pub is_read: bool,
+    pub delivery_status: u8, // 0=⏳, 1=✓, 2=✓✓
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

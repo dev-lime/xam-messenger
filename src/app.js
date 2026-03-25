@@ -167,6 +167,27 @@ async function loadMessages(peerAddress) {
             }
         }
         
+        // Отправляем ACK для непрочитанных сообщений (✓ → ✓✓)
+        const unreadIds = messages
+            .filter(m => !m.is_mine && m.delivery_status < 2)
+            .map(m => m.id);
+        
+        if (unreadIds.length > 0) {
+            console.log('📤 Отправка ACK (прочитано) для', unreadIds.length, 'сообщений');
+            try {
+                await invoke('mark_read', { peerAddress, messageIds: unreadIds });
+                await invoke('send_ack', { peerAddress, messageIds: unreadIds });
+                
+                // Обновляем статус локально
+                unreadIds.forEach(id => {
+                    const msg = state.messages.find(m => m.id === id);
+                    if (msg) msg.delivery_status = 2; // ✓✓
+                });
+            } catch (e) {
+                console.warn('Failed to send read ACK:', e);
+            }
+        }
+        
         renderMessages();
         
         // Обновляем статус - показываем что подключены
@@ -210,11 +231,22 @@ function createMessageElement(msg) {
             <div class="message-meta">${time}</div>
         `;
     } else if (msg.is_mine) {
-        // Своё сообщение
+        // Своё сообщение с галочками
+        let statusIcon = '⏳';
+        let statusTitle = 'Отправлено';
+        
+        if (msg.delivery_status === 1) {
+            statusIcon = '✓';
+            statusTitle = 'Доставлено';
+        } else if (msg.delivery_status === 2) {
+            statusIcon = '✓✓';
+            statusTitle = 'Прочитано';
+        }
+        
         div.innerHTML = `
             <div class="message-text">${escapeHtml(msg.text)}</div>
             <div class="message-meta">
-                <span class="read-status">${msg.is_read ? '✓✓' : '✓'}</span>
+                <span class="read-status" title="${statusTitle}">${statusIcon}</span>
                 <span>${time}</span>
             </div>
         `;
@@ -475,10 +507,28 @@ function updateSendButton() {
 
 // Периодическая проверка новых сообщений
 async function checkNewMessages() {
-    if (!state.currentPeer) return;
-    
     try {
-        const cachedMessages = await invoke('get_cached_messages', { peerAddress: state.currentPeer });
+        // Сначала проверяем список контактов
+        const peers = await invoke('get_peers');
+        if (peers.length > 0 && !state.currentPeer) {
+            // Если currentPeer не установлен, но есть контакты - используем первый
+            state.currentPeer = peers[0].address;
+            state.peerAddress = peers[0].address;
+            console.log('🔗 Автоматически выбран peer:', state.currentPeer);
+            await loadMessages(state.currentPeer);
+            return;
+        }
+        
+        // Обновляем список контактов если изменился
+        if (peers.length !== state.peers.length) {
+            console.log('📋 Обновление списка контактов');
+            state.peers = peers;
+            renderPeers();
+        }
+        
+        // Если нет активного пира - не проверяем сообщения
+        if (!state.currentPeer) return;
+        
         const status = await invoke('get_connection_status');
         
         // Обновляем статус подключения
@@ -486,19 +536,34 @@ async function checkNewMessages() {
             updateStatusDisplay(true, status.peer_address);
         }
         
-        // Проверяем, есть ли новые сообщения
-        if (cachedMessages.length > state.messages.length) {
-            console.log('📬 Найдены новые сообщения:', cachedMessages.length - state.messages.length);
-            state.messages = cachedMessages;
-            renderMessages();
-        }
+        // Используем get_messages для получения сообщений
+        const messages = await invoke('get_messages', { peerAddress: state.currentPeer });
         
-        // Обновляем список контактов если изменился
-        const peers = await invoke('get_peers');
-        if (peers.length !== state.peers.length) {
-            console.log('📋 Обновление списка контактов');
-            state.peers = peers;
-            renderPeers();
+        // Проверяем, есть ли новые сообщения
+        if (messages.length > state.messages.length) {
+            console.log('📬 Найдены новые сообщения:', messages.length - state.messages.length);
+            
+            // Отправляем ACK для новых сообщений (⏳ → ✓)
+            const newMessages = messages.slice(state.messages.length);
+            const newIds = newMessages.filter(m => !m.is_mine).map(m => m.id);
+            
+            if (newIds.length > 0) {
+                console.log('📤 Отправка ACK (доставлено) для', newIds.length, 'сообщений');
+                await invoke('send_ack', { peerAddress: state.currentPeer, messageIds: newIds });
+            }
+            
+            state.messages = messages;
+            renderMessages();
+        } else {
+            // Проверяем обновления статуса для существующих сообщений
+            let needsRender = false;
+            messages.forEach((newMsg, i) => {
+                if (state.messages[i] && state.messages[i].delivery_status !== newMsg.delivery_status) {
+                    state.messages[i].delivery_status = newMsg.delivery_status;
+                    needsRender = true;
+                }
+            });
+            if (needsRender) renderMessages();
         }
     } catch (error) {
         // Игнорируем ошибки, это фоновая проверка

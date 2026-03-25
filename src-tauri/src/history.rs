@@ -136,7 +136,8 @@ impl HistoryManager {
 
         for line in reader.lines().filter_map(|l| l.ok()) {
             if let Ok(msg) = serde_json::from_str::<ChatMessage>(&line) {
-                if !msg.is_read && !msg.is_mine {
+                // Считаем непрочитанными сообщения с delivery_status < 2
+                if msg.delivery_status < 2 && !msg.is_mine {
                     unread_count += 1;
                 }
                 last_msg = Some(msg);

@@ -301,6 +301,17 @@ body {
 
 .read-status {
     font-weight: 600;
+    font-size: 13px;
+}
+
+/* Цвет галочек */
+.message.mine .read-status {
+    color: rgba(200, 220, 255, 0.9);
+}
+
+/* Две галочки - доставлено */
+.message.mine .read-status:not(:empty)::before {
+    content: '';
 }
 
 /* Copy button */
