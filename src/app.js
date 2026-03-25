@@ -68,7 +68,8 @@ function renderPeers() {
         item.className = `peer-item ${state.currentPeer === peer.address ? 'active' : ''}`;
         item.dataset.address = peer.address;
 
-        const time = new Date(peer.last_message * 1000);
+        // last_message приходит как timestamp в секундах
+        const time = peer.last_message > 0 ? new Date(peer.last_message * 1000) : new Date();
         const timeStr = time.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
         item.innerHTML = `

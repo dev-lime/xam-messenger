@@ -102,7 +102,7 @@ impl HistoryManager {
                     peers.push(PeerInfo {
                         address,
                         name: last_msg.sender,
-                        last_message: last_msg.timestamp,
+                        last_message: last_msg.timestamp.timestamp(),
                         unread_count,
                     });
                 }

@@ -25,7 +25,7 @@ pub struct Message {
 pub struct PeerInfo {
     pub address: String,
     pub name: String,
-    pub last_message: DateTime<Utc>,
+    pub last_message: i64,  // timestamp в секундах
     pub unread_count: usize,
 }
 
