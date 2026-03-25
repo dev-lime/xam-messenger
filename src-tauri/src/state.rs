@@ -2,9 +2,9 @@ use crate::types::{ChatMessage, PeerInfo, ConnectionStatus};
 use crate::history::HistoryManager;
 use crate::network::NetworkManager;
 use anyhow::Result;
+use chrono::Timelike;
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
 
 pub enum NetworkEvent {
     Connected { peer_address: String },

@@ -40,8 +40,8 @@ impl NetworkManager {
             port,
             event_tx,
             history_mgr,
-            running: Arc::new(AtomicBool::new(true)),
-            listener: Some(listener),
+            running,
+            listener: None,
         })
     }
 
@@ -166,9 +166,7 @@ impl NetworkManager {
 
     pub fn stop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
-        if let Some(ref listener) = self.listener {
-            // Подключаемся к себе чтобы разблокировать accept
-            let _ = TcpStream::connect(format!("127.0.0.1:{}", self.port));
-        }
+        // Подключаемся к себе чтобы разблокировать accept
+        let _ = TcpStream::connect(format!("127.0.0.1:{}", self.port));
     }
 }

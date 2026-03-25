@@ -9,7 +9,6 @@ mod state;
 use state::AppState;
 use types::{Message, PeerInfo, ConnectionStatus};
 use std::sync::Mutex;
-use tauri::Manager;
 
 // ============ Tauri Commands ============
 

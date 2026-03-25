@@ -1,7 +1,5 @@
 use crate::types::{ChatMessage, PeerInfo};
 use anyhow::{Result, Context};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
