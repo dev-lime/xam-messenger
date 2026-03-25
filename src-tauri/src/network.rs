@@ -130,8 +130,11 @@ impl NetworkManager {
                 // Отправляем подтверждение
                 let _ = stream.write_all(b"OK");
 
-                // Отправляем событие во фронтенд
-                let _ = event_tx.send(NetworkEvent::MessageReceived { message });
+                // Отправляем событие во фронтенд с адресом пира для ответа
+                let _ = event_tx.send(NetworkEvent::MessageReceived { 
+                    message,
+                    peer_address: peer_address.clone(),
+                });
             }
             Err(e) => {
                 eprintln!("Error reading from stream: {}", e);

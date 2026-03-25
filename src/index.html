@@ -25,14 +25,15 @@
         <main class="chat">
             <!-- Верхняя панель -->
             <header class="chat-header">
-                <div class="user-profile-header">
-                    <div class="user-avatar-small">👤</div>
+                <div class="user-profile-header" id="userProfileHeader">
+                    <div class="user-avatar-small" id="userAvatar">👤</div>
                     <div class="user-info-header">
                         <div class="user-name-header" id="userName">Не подключен</div>
                         <div class="user-address-header" id="userAddress">--</div>
                     </div>
                 </div>
                 <div class="status" id="status">⚫ Не подключен</div>
+                <button class="btn btn-icon" id="settingsBtn" title="Настройки">⚙️</button>
             </header>
 
             <!-- Список сообщений -->
@@ -44,8 +45,9 @@
 
             <!-- Панель ввода -->
             <div class="input-area">
-                <textarea 
-                    id="messageInput" 
+                <button class="btn btn-attach" id="attachBtn" title="Прикрепить файл">📎</button>
+                <textarea
+                    id="messageInput"
                     placeholder="Введите сообщение..."
                     rows="1"
                 ></textarea>
@@ -53,6 +55,9 @@
                     <span>➤</span>
                 </button>
             </div>
+            
+            <!-- Скрытый input для файлов -->
+            <input type="file" id="fileInput" style="display: none;">
         </main>
     </div>
 
@@ -82,6 +87,28 @@
         <div class="dialog-actions">
             <button class="btn" id="cancelConnect">Отмена</button>
             <button class="btn btn-primary" id="confirmConnect">Подключиться</button>
+        </div>
+    </dialog>
+
+    <!-- Диалог настроек -->
+    <dialog id="settingsDialog" class="dialog">
+        <div class="dialog-header">
+            <h3>Настройки профиля</h3>
+        </div>
+        <div class="dialog-content">
+            <div class="form-group">
+                <label>Ваше имя</label>
+                <input type="text" id="settingsNameInput" placeholder="Ваше имя">
+            </div>
+            <div class="form-group">
+                <label>Аватар (эмодзи)</label>
+                <input type="text" id="settingsAvatarInput" placeholder="👤" maxlength="2">
+            </div>
+            <p class="hint">Эти настройки сохранятся для следующих подключений</p>
+        </div>
+        <div class="dialog-actions">
+            <button class="btn" id="cancelSettings">Отмена</button>
+            <button class="btn btn-primary" id="saveSettings">Сохранить</button>
         </div>
     </dialog>
 

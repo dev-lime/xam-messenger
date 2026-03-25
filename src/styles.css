@@ -205,6 +205,24 @@ body {
     margin-left: auto;
 }
 
+.btn-icon {
+    background: var(--bg-tertiary);
+    border: none;
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-icon:hover {
+    background: var(--border);
+}
+
 /* Chat */
 .chat {
     flex: 1;
@@ -321,6 +339,26 @@ body {
     padding: 16px 20px;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
+    align-items: center;
+}
+
+.btn-attach {
+    background: var(--bg-tertiary);
+    border: none;
+    border-radius: 8px;
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.btn-attach:hover {
+    background: var(--border);
 }
 
 #messageInput {

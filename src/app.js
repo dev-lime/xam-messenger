@@ -1,4 +1,4 @@
-const { invoke } = window.__TAURI__.core;
+const { invoke } = window.__TAURI__ ? window.__TAURI__.core : { invoke: async () => {} };
 
 // Состояние приложения
 let state = {
@@ -16,22 +16,58 @@ const elements = {
     status: document.getElementById('status'),
     userName: document.getElementById('userName'),
     userAddress: document.getElementById('userAddress'),
+    userAvatar: document.getElementById('userAvatar'),
+    userProfileHeader: document.getElementById('userProfileHeader'),
     connectBtn: document.getElementById('connectBtn'),
+    settingsBtn: document.getElementById('settingsBtn'),
     sendBtn: document.getElementById('sendBtn'),
+    attachBtn: document.getElementById('attachBtn'),
+    fileInput: document.getElementById('fileInput'),
     messageInput: document.getElementById('messageInput'),
     messages: document.getElementById('messages'),
     messagesContainer: document.getElementById('messagesContainer'),
     peersList: document.getElementById('peersList'),
     connectDialog: document.getElementById('connectDialog'),
+    settingsDialog: document.getElementById('settingsDialog'),
     portInput: document.getElementById('portInput'),
     nameInput: document.getElementById('nameInput'),
     ipInput: document.getElementById('ipInput'),
     cancelConnect: document.getElementById('cancelConnect'),
     confirmConnect: document.getElementById('confirmConnect'),
+    cancelSettings: document.getElementById('cancelSettings'),
+    saveSettings: document.getElementById('saveSettings'),
+    settingsNameInput: document.getElementById('settingsNameInput'),
+    settingsAvatarInput: document.getElementById('settingsAvatarInput'),
 };
+
+// Настройки пользователя
+let userSettings = {
+    name: '',
+    avatar: '👤',
+};
+
+// Загружаем настройки из localStorage
+function loadUserSettings() {
+    const saved = localStorage.getItem('xam-user-settings');
+    if (saved) {
+        try {
+            userSettings = JSON.parse(saved);
+        } catch (e) {
+            console.warn('Failed to load user settings');
+        }
+    }
+}
+
+// Сохраняем настройки в localStorage
+function saveUserSettings() {
+    localStorage.setItem('xam-user-settings', JSON.stringify(userSettings));
+}
 
 // Инициализация
 async function init() {
+    // Загружаем настройки пользователя
+    loadUserSettings();
+
     try {
         await invoke('init_app');
         await loadPeers();
@@ -89,6 +125,7 @@ function renderPeers() {
 // Выбор контакта
 async function selectPeer(address) {
     state.currentPeer = address;
+    state.peerAddress = address;
 
     // Обновляем активный класс
     document.querySelectorAll('.peer-item').forEach(item => {
@@ -114,6 +151,17 @@ async function loadMessages(peerAddress) {
     try {
         const messages = await invoke('get_messages', { peerAddress });
         state.messages = messages;
+        
+        // Если peer_address не установлен, устанавливаем его
+        if (!state.peerAddress && peerAddress) {
+            state.peerAddress = peerAddress;
+            try {
+                await invoke('set_peer_address', { peerAddress });
+            } catch (e) {
+                console.warn('Failed to set peer_address:', e);
+            }
+        }
+        
         renderMessages();
     } catch (error) {
         console.error('Failed to load messages:', error);
@@ -163,28 +211,19 @@ function createMessageElement(msg) {
         `;
     }
 
-    // Кнопка копирования
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'copy-btn';
-    copyBtn.innerHTML = '📋';
-    copyBtn.title = 'Копировать';
-    copyBtn.onclick = () => copyToClipboard(msg.text);
-
-    div.addEventListener('mouseenter', () => copyBtn.style.display = 'inline-block');
-    div.addEventListener('mouseleave', () => copyBtn.style.display = 'none');
-    div.appendChild(copyBtn);
-
     return div;
 }
 
 // Отправка сообщения
 async function sendMessage() {
     const text = elements.messageInput.value.trim();
-    if (!text || !state.currentPeer) return;
+    const peerAddress = state.peerAddress || state.currentPeer;
+    
+    if (!text || !peerAddress) return;
 
     try {
         await invoke('send_message', {
-            peerAddress: state.currentPeer,
+            peerAddress: peerAddress,
             text: text,
         });
 
@@ -238,22 +277,17 @@ function updateStatusDisplay(connected, peerAddress) {
 }
 
 function updateUserProfile(name, address) {
-    elements.userName.textContent = name || 'Не подключен';
+    const displayName = name || userSettings.name || 'Не подключен';
+    const avatar = userSettings.avatar || '👤';
+    
+    elements.userName.textContent = displayName;
     elements.userAddress.textContent = address ? `:${address}` : '--';
+    elements.userAvatar.textContent = avatar;
 }
 
 // Прокрутка вниз
 function scrollToBottom() {
     elements.messagesContainer.scrollTop = elements.messagesContainer.scrollHeight;
-}
-
-// Копирование в буфер
-async function copyToClipboard(text) {
-    try {
-        await navigator.clipboard.writeText(text);
-    } catch (error) {
-        console.error('Failed to copy:', error);
-    }
 }
 
 // Экранирование HTML
@@ -267,6 +301,7 @@ function escapeHtml(text) {
 function setupEventListeners() {
     // Кнопка подключения
     elements.connectBtn.addEventListener('click', () => {
+        elements.nameInput.value = userSettings.name;
         elements.connectDialog.showModal();
     });
 
@@ -278,12 +313,18 @@ function setupEventListeners() {
     // Подтверждение подключения
     elements.confirmConnect.addEventListener('click', async () => {
         const port = elements.portInput.value.trim();
-        const name = elements.nameInput.value.trim() || state.myName;
+        const name = elements.nameInput.value.trim() || userSettings.name;
         const ip = elements.ipInput.value.trim();
 
         if (!port) {
             alert('Укажите порт');
             return;
+        }
+
+        // Сохраняем имя в настройки
+        if (name) {
+            userSettings.name = name;
+            saveUserSettings();
         }
 
         try {
@@ -297,6 +338,7 @@ function setupEventListeners() {
 
             if (ip) {
                 state.currentPeer = ip;
+                state.peerAddress = ip;
                 await loadMessages(ip);
                 updateStatusDisplay(true, ip);
             } else {
@@ -328,6 +370,40 @@ function setupEventListeners() {
 
     // Периодическое обновление статуса
     setInterval(updateStatus, 5000);
+    
+    // Настройки профиля
+    elements.settingsBtn.addEventListener('click', () => {
+        elements.settingsNameInput.value = userSettings.name;
+        elements.settingsAvatarInput.value = userSettings.avatar;
+        elements.settingsDialog.showModal();
+    });
+    
+    elements.cancelSettings.addEventListener('click', () => {
+        elements.settingsDialog.close();
+    });
+    
+    elements.saveSettings.addEventListener('click', () => {
+        userSettings.name = elements.settingsNameInput.value.trim();
+        userSettings.avatar = elements.settingsAvatarInput.value.trim() || '👤';
+        saveUserSettings();
+        updateUserProfile(state.myName, state.myPort);
+        elements.settingsDialog.close();
+    });
+    
+    // Прикрепление файла (подготовка)
+    elements.attachBtn.addEventListener('click', () => {
+        elements.fileInput.click();
+    });
+    
+    elements.fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            // TODO: Реализовать отправку файла
+            console.log('Файл выбран:', file.name, file.size);
+            alert('Отправка файлов будет реализована в следующей версии');
+            elements.fileInput.value = '';
+        }
+    });
 }
 
 // Обновление кнопки отправки

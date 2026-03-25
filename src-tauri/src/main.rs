@@ -89,6 +89,25 @@ fn disconnect(app_state: tauri::State<Mutex<AppState>>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn set_peer_address(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+) -> Result<(), String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.peer_address = Some(peer_address);
+    state.connected = true;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_current_peer(
+    app_state: tauri::State<Mutex<AppState>>,
+) -> Result<Option<String>, String> {
+    let state = app_state.lock().map_err(|e| e.to_string())?;
+    Ok(state.peer_address.clone())
+}
+
 // ============ Main ============
 
 fn main() {
@@ -104,6 +123,8 @@ fn main() {
             send_message,
             get_connection_status,
             disconnect,
+            set_peer_address,
+            get_current_peer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

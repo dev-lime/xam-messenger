@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 pub enum NetworkEvent {
     Connected { peer_address: String },
-    MessageReceived { message: ChatMessage },
+    MessageReceived { message: ChatMessage, peer_address: String },
     AckReceived { message_ids: Vec<String> },
     Disconnected,
 }
@@ -77,6 +77,11 @@ impl AppState {
     }
 
     pub fn send_message(&mut self, peer_address: &str, text: &str) -> Result<(), String> {
+        // Автоматически устанавливаем peer_address если не установлен
+        if self.peer_address.is_none() {
+            self.peer_address = Some(peer_address.to_string());
+        }
+        
         if let Some(ref mut network) = self.network {
             let message = ChatMessage {
                 id: uuid::Uuid::new_v4().to_string(),
