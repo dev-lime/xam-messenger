@@ -42,6 +42,20 @@ cargo tauri dev
 cargo tauri build
 ```
 
+### Сборка для Linux (из macOS/Windows)
+```bash
+# Через Docker
+./build-linux.sh
+
+# Или вручную на Linux машине:
+sudo apt install libwebkit2gtk-4.0-dev build-essential libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+cargo tauri build
+```
+
+**Результат:**
+- `.deb` пакет для Debian/Ubuntu
+- `.AppImage` для остальных дистрибутивов
+
 ## 🎮 Использование
 
 ### На одном ПК (тест)

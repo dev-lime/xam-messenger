@@ -224,6 +224,12 @@ function renderPeers() {
 
 // Выбор контакта
 async function selectPeer(address) {
+    // Если уже выбран этот пир - просто загружаем сообщения
+    if (state.currentPeer === address) {
+        await loadMessages(address);
+        return;
+    }
+    
     state.currentPeer = address;
     state.peerAddress = address;
 
@@ -235,14 +241,34 @@ async function selectPeer(address) {
     // Загружаем сообщения
     await loadMessages(address);
 
-    // Подключаемся если ещё не подключены
-    if (!state.connected) {
+    // Если не подключены - подключаемся автоматически
+    if (!state.connected || !state.myPort) {
+        console.log('🔗 Автоматическое подключение к', address);
+        
+        // Определяем наш порт (если собеседник на 8080, мы на 8081 и наоборот)
+        const peerPort = address.split(':').pop();
+        const myPort = peerPort === '8080' ? '8081' : '8080';
+        
         try {
+            // Запускаем сервер на свободном порту
+            await invoke('start_server', { port: myPort, name: userSettings.name });
+            state.myPort = myPort;
+            state.myName = userSettings.name;
+            updateUserProfile(userSettings.name, myPort);
+            
+            // Подключаемся к собеседнику
             await invoke('connect_to_peer', { peerAddress: address });
+            state.connected = true;
+            
             updateStatusDisplay(true, address);
+            console.log('✅ Подключено к', address, 'на порту', myPort);
         } catch (error) {
-            console.error('Failed to connect:', error);
+            console.error('❌ Ошибка подключения:', error);
+            // Всё равно показываем чат
+            updateStatusDisplay(false, null);
         }
+    } else {
+        updateStatusDisplay(true, address);
     }
 }
 
@@ -342,13 +368,19 @@ function createMessageElement(msg) {
             statusTitle = 'Прочитано';
         }
         
-        // Проверяем, не файл ли это
-        const fileMatch = msg.text.match(/^📎 Файл: (.+) \((.+)\)$/);
-        if (fileMatch) {
-            const fileName = fileMatch[1];
+        // Проверяем, сообщение с файлами ли это
+        if (msg.files && msg.files.length > 0) {
+            const filesHtml = msg.files.map(f => `
+                <div class="file-item" data-filename="${escapeHtml(f.name)}" data-filesize="${f.size}">
+                    <span class="file-icon">${getFileIcon(f.name)}</span>
+                    <span class="file-name">${escapeHtml(f.name)}</span>
+                    <span class="file-size">${formatFileSize(f.size)}</span>
+                </div>
+            `).join('');
+            
             div.innerHTML = `
-                <div class="message-text file-message" title="Открыть файл">
-                    📎 ${escapeHtml(fileName)}
+                <div class="files-container">
+                    ${filesHtml}
                 </div>
                 <div class="message-meta">
                     <span class="read-status" title="${statusTitle}">${statusIcon}</span>
@@ -356,12 +388,14 @@ function createMessageElement(msg) {
                 </div>
             `;
             
-            // Клик по файлу - открываем (для локальных файлов)
-            const fileEl = div.querySelector('.file-message');
-            fileEl.style.cursor = 'pointer';
-            fileEl.addEventListener('click', () => {
-                // Для отправленных файлов нужно искать в attachedFiles или открывать из Downloads
-                alert('Файл сохранён в ~/Downloads/xam-messenger/');
+            // Добавляем обработчики кликов для файлов
+            div.querySelectorAll('.file-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    if (!e.target.classList.contains('file-remove')) {
+                        const fileName = item.dataset.filename;
+                        openFileFromDownloads(fileName);
+                    }
+                });
             });
         } else {
             div.innerHTML = `
@@ -374,23 +408,27 @@ function createMessageElement(msg) {
         }
     } else {
         // Чужое сообщение
-        // Проверяем, не файл ли это
+        // Проверяем, сообщение с файлами ли это
         const fileMatch = msg.text.match(/^📎 Файл: (.+) \((.+)\)$/);
         if (fileMatch) {
             const fileName = fileMatch[1];
             div.innerHTML = `
                 <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
-                <div class="message-text file-message" title="Скачать файл">
-                    📎 ${escapeHtml(fileName)}
+                <div class="files-container">
+                    <div class="file-item" data-filename="${escapeHtml(fileName)}">
+                        <span class="file-icon">${getFileIcon(fileName)}</span>
+                        <span class="file-name">${escapeHtml(fileName)}</span>
+                    </div>
                 </div>
                 <div class="message-meta">${time}</div>
             `;
             
-            // Клик по файлу - скачиваем
-            const fileEl = div.querySelector('.file-message');
-            fileEl.style.cursor = 'pointer';
-            fileEl.addEventListener('click', () => {
-                openFileFromDownloads(fileName);
+            // Добавляем обработчик клика
+            div.querySelector('.file-item').addEventListener('click', (e) => {
+                if (!e.target.classList.contains('file-remove')) {
+                    const fileName = e.currentTarget.dataset.filename;
+                    openFileFromDownloads(fileName);
+                }
             });
         } else {
             div.innerHTML = `
@@ -405,10 +443,24 @@ function createMessageElement(msg) {
 }
 
 // Открыть файл из Downloads
-function openFileFromDownloads(fileName) {
-    // Ищем файл в Downloads/xam-messenger/
-    const downloadPath = '~/Downloads/xam-messenger/';
-    alert(`Файл "${fileName}" сохранён в:\n${downloadPath}\n\nОткройте файл через Finder/Проводник`);
+async function openFileFromDownloads(fileName) {
+    try {
+        // Используем Tauri Shell для открытия файла
+        const { open } = await import('@tauri-apps/plugin-shell');
+        const downloadDir = await import('@tauri-apps/api/path');
+        const { appDataDir } = await import('@tauri-apps/api/path');
+        
+        // Путь к файлу
+        const downloadsDir = await downloadDir.downloadDir() || await appDataDir();
+        const filePath = `${downloadsDir}xam-messenger/${fileName}`;
+        
+        console.log('📂 Открытие файла:', filePath);
+        await open(filePath);
+    } catch (error) {
+        // Fallback: просто показываем путь
+        const downloadPath = '~/Downloads/xam-messenger/';
+        alert(`Файл "${fileName}" сохранён в:\n${downloadPath}\n\nОткройте файл через Finder/Проводник`);
+    }
 }
 
 // Отправка сообщения
@@ -434,38 +486,48 @@ async function sendMessage() {
             
             if (!sent) {
                 console.log('⚠️ Сообщение не отправлено (нет подключения)');
-                // Всё равно добавляем в локальный чат
             } else {
                 console.log('✅ Сообщение отправлено');
             }
         }
 
-        // Отправляем файлы
-        for (const file of filesToSend) {
-            console.log('📁 Отправка файла:', file.name, formatFileSize(file.size));
+        // Отправляем файлы (все в одном сообщении)
+        if (filesToSend.length > 0) {
+            const fileInfos = [];
             
-            // Читаем файл как base64
-            const base64 = await readFileAsBase64(file);
-            
-            try {
-                await invoke('send_file_base64', {
-                    peerAddress: peerAddress,
-                    fileName: file.name,
-                    fileData: base64,
-                });
-                console.log('✅ Файл отправлен:', file.name);
+            for (const file of filesToSend) {
+                console.log('📁 Отправка файла:', file.name, formatFileSize(file.size));
                 
-                // Добавляем сообщение о файле в локальный чат
+                // Читаем файл как base64
+                const base64 = await readFileAsBase64(file);
+                
+                try {
+                    await invoke('send_file_base64', {
+                        peerAddress: peerAddress,
+                        fileName: file.name,
+                        fileData: base64,
+                    });
+                    console.log('✅ Файл отправлен:', file.name);
+                    fileInfos.push({
+                        name: file.name,
+                        size: file.size,
+                    });
+                } catch (fileError) {
+                    console.error('❌ Ошибка отправки файла:', fileError);
+                }
+            }
+            
+            // Добавляем сообщение о файлах в локальный чат (одно сообщение для всех файлов)
+            if (fileInfos.length > 0) {
                 state.messages.push({
-                    id: 'file_' + Date.now() + '_' + file.name,
-                    text: `📎 Файл: ${file.name} (${formatFileSize(file.size)})`,
+                    id: 'files_' + Date.now(),
+                    text: 'files',
+                    files: fileInfos, // Массив файлов
                     is_mine: true,
                     timestamp: Math.floor(Date.now() / 1000),
                     sender: state.myName,
                     delivery_status: 1,
                 });
-            } catch (fileError) {
-                console.error('❌ Ошибка отправки файла:', fileError);
             }
         }
 

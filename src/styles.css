@@ -287,6 +287,49 @@ body {
     background: rgba(255, 255, 255, 0.15);
 }
 
+/* Контейнер для файлов */
+.files-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+/* Элемент файла */
+.file-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.file-item:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.file-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.file-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 14px;
+}
+
+.file-size {
+    font-size: 12px;
+    opacity: 0.7;
+    flex-shrink: 0;
+}
+
 .message-meta {
     display: flex;
     align-items: center;
