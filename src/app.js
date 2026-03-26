@@ -408,34 +408,63 @@ function createMessageElement(msg) {
         }
     } else {
         // Чужое сообщение
-        // Проверяем, сообщение с файлами ли это
-        const fileMatch = msg.text.match(/^📎 Файл: (.+) \((.+)\)$/);
-        if (fileMatch) {
-            const fileName = fileMatch[1];
+        // Проверяем, есть ли файлы в поле files
+        if (msg.files && msg.files.length > 0) {
+            const filesHtml = msg.files.map(f => `
+                <div class="file-item" data-filename="${escapeHtml(f.name)}" data-filesize="${f.size}">
+                    <span class="file-icon">${getFileIcon(f.name)}</span>
+                    <span class="file-name">${escapeHtml(f.name)}</span>
+                    <span class="file-size">${formatFileSize(f.size)}</span>
+                </div>
+            `).join('');
+
             div.innerHTML = `
                 <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
                 <div class="files-container">
-                    <div class="file-item" data-filename="${escapeHtml(fileName)}">
-                        <span class="file-icon">${getFileIcon(fileName)}</span>
-                        <span class="file-name">${escapeHtml(fileName)}</span>
-                    </div>
+                    ${filesHtml}
                 </div>
                 <div class="message-meta">${time}</div>
             `;
-            
+
             // Добавляем обработчик клика
-            div.querySelector('.file-item').addEventListener('click', (e) => {
-                if (!e.target.classList.contains('file-remove')) {
-                    const fileName = e.currentTarget.dataset.filename;
-                    openFileFromDownloads(fileName);
-                }
+            div.querySelectorAll('.file-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    if (!e.target.classList.contains('file-remove')) {
+                        const fileName = e.currentTarget.dataset.filename;
+                        openFileFromDownloads(fileName);
+                    }
+                });
             });
         } else {
-            div.innerHTML = `
-                <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
-                <div class="message-text">${escapeHtml(msg.text)}</div>
-                <div class="message-meta">${time}</div>
-            `;
+            // Проверяем, сообщение с файлами ли это (старый формат)
+            const fileMatch = msg.text.match(/^📎 Файл: (.+)$/);
+            if (fileMatch) {
+                const fileName = fileMatch[1];
+                div.innerHTML = `
+                    <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
+                    <div class="files-container">
+                        <div class="file-item" data-filename="${escapeHtml(fileName)}">
+                            <span class="file-icon">${getFileIcon(fileName)}</span>
+                            <span class="file-name">${escapeHtml(fileName)}</span>
+                        </div>
+                    </div>
+                    <div class="message-meta">${time}</div>
+                `;
+
+                // Добавляем обработчик клика
+                div.querySelector('.file-item').addEventListener('click', (e) => {
+                    if (!e.target.classList.contains('file-remove')) {
+                        const fileName = e.currentTarget.dataset.filename;
+                        openFileFromDownloads(fileName);
+                    }
+                });
+            } else {
+                div.innerHTML = `
+                    <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
+                    <div class="message-text">${escapeHtml(msg.text)}</div>
+                    <div class="message-meta">${time}</div>
+                `;
+            }
         }
     }
 
@@ -483,7 +512,7 @@ async function sendMessage() {
                 peerAddress: peerAddress,
                 text: text,
             });
-            
+
             if (!sent) {
                 console.log('⚠️ Сообщение не отправлено (нет подключения)');
             } else {
@@ -491,16 +520,14 @@ async function sendMessage() {
             }
         }
 
-        // Отправляем файлы (все в одном сообщении)
+        // Отправляем файлы (каждый файл создаёт отдельное сообщение)
         if (filesToSend.length > 0) {
-            const fileInfos = [];
-            
             for (const file of filesToSend) {
                 console.log('📁 Отправка файла:', file.name, formatFileSize(file.size));
-                
+
                 // Читаем файл как base64
                 const base64 = await readFileAsBase64(file);
-                
+
                 try {
                     await invoke('send_file_base64', {
                         peerAddress: peerAddress,
@@ -508,26 +535,9 @@ async function sendMessage() {
                         fileData: base64,
                     });
                     console.log('✅ Файл отправлен:', file.name);
-                    fileInfos.push({
-                        name: file.name,
-                        size: file.size,
-                    });
                 } catch (fileError) {
                     console.error('❌ Ошибка отправки файла:', fileError);
                 }
-            }
-            
-            // Добавляем сообщение о файлах в локальный чат (одно сообщение для всех файлов)
-            if (fileInfos.length > 0) {
-                state.messages.push({
-                    id: 'files_' + Date.now(),
-                    text: 'files',
-                    files: fileInfos, // Массив файлов
-                    is_mine: true,
-                    timestamp: Math.floor(Date.now() / 1000),
-                    sender: state.myName,
-                    delivery_status: 1,
-                });
             }
         }
 
@@ -755,74 +765,71 @@ async function checkNewMessages() {
     try {
         // Сначала проверяем список контактов
         const peers = await invoke('get_peers');
+        
+        // Если currentPeer не установлен, но есть контакты - используем первый
         if (peers.length > 0 && !state.currentPeer) {
-            // Если currentPeer не установлен, но есть контакты - используем первый
             state.currentPeer = peers[0].address;
             state.peerAddress = peers[0].address;
             console.log('🔗 Автоматически выбран peer:', state.currentPeer);
             await loadMessages(state.currentPeer);
             return;
         }
-        
+
         // Обновляем список контактов если изменился
         if (peers.length !== state.peers.length) {
             console.log('📋 Обновление списка контактов');
             state.peers = peers;
             renderPeers();
         }
-        
+
         // Если нет активного пира - не проверяем сообщения
         if (!state.currentPeer) return;
-        
+
         const status = await invoke('get_connection_status');
-        
+
         // Обновляем статус подключения
         if (status.connected && status.peer_address) {
             updateStatusDisplay(true, status.peer_address);
         }
-        
-        // Используем get_messages для получения сообщений
+
+        // Используем get_messages для получения сообщений из БД
         const messages = await invoke('get_messages', { peerAddress: state.currentPeer });
-        
-        // Проверяем, есть ли новые сообщения
-        if (messages.length > state.messages.length) {
-            console.log('📬 Найдены новые сообщения:', messages.length - state.messages.length);
-            
+
+        // Проверяем, есть ли новые сообщения по количеству
+        if (messages.length !== state.messages.length) {
+            console.log('📬 Изменение количества сообщений:', state.messages.length, '→', messages.length);
+
             // Устанавливаем peer_address если не установлен
             if (!state.peerAddress) {
                 state.peerAddress = state.currentPeer;
                 await invoke('set_peer_address', { peerAddress: state.currentPeer });
             }
-            
-            // Отправляем READ ACK для новых сообщений (✓ → ✓✓)
-            const newMessages = messages.slice(state.messages.length);
+
+            // Находим новые сообщения (те, которых нет в state.messages)
+            const existingIds = new Set(state.messages.map(m => m.id));
+            const newMessages = messages.filter(m => !existingIds.has(m.id));
             const newIds = newMessages.filter(m => !m.is_mine).map(m => m.id);
-            
+
             if (newIds.length > 0) {
-                console.log('📤 Отправка READ ACK (прочитано) для', newIds.length, 'сообщений');
+                console.log('📤 Отправка READ ACK для', newIds.length, 'сообщений');
                 await invoke('mark_read', { peerAddress: state.currentPeer, messageIds: newIds });
                 await invoke('send_ack', { peerAddress: state.currentPeer, messageIds: newIds });
-                
-                // Обновляем статус локально
-                newIds.forEach(id => {
-                    const msg = messages.find(m => m.id === id);
-                    if (msg) msg.delivery_status = 2; // ✓✓
-                });
             }
-            
+
             state.messages = messages;
             renderMessages();
-        } else {
-            // Проверяем обновления статуса для существующих сообщений
-            let needsRender = false;
-            messages.forEach((newMsg, i) => {
-                if (state.messages[i] && state.messages[i].delivery_status !== newMsg.delivery_status) {
-                    state.messages[i].delivery_status = newMsg.delivery_status;
-                    needsRender = true;
-                }
-            });
-            if (needsRender) renderMessages();
+            return;
         }
+
+        // Проверяем обновления статуса доставки для существующих сообщений
+        let needsRender = false;
+        messages.forEach((newMsg, i) => {
+            if (state.messages[i] && state.messages[i].delivery_status !== newMsg.delivery_status) {
+                state.messages[i].delivery_status = newMsg.delivery_status;
+                needsRender = true;
+            }
+        });
+        if (needsRender) renderMessages();
     } catch (error) {
         // Игнорируем ошибки, это фоновая проверка
     }

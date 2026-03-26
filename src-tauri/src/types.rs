@@ -2,6 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileInfo {
+    pub name: String,
+    pub size: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub id: String,
     pub timestamp: DateTime<Utc>,
@@ -9,6 +15,7 @@ pub struct ChatMessage {
     pub text: String,
     pub is_mine: bool,
     pub delivery_status: u8, // 0=⏳, 1=✓, 2=✓✓
+    pub files: Vec<FileInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +26,7 @@ pub struct Message {
     pub timestamp: i64,
     pub sender: String,
     pub delivery_status: u8, // 0=⏳, 1=✓, 2=✓✓
+    pub files: Vec<FileInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,7 +3,7 @@ use crate::history::HistoryManager;
 use crate::network::NetworkManager;
 use anyhow::Result;
 use chrono::Timelike;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub enum NetworkEvent {
@@ -91,6 +91,7 @@ impl AppState {
                 text: text.to_string(),
                 is_mine: true,
                 delivery_status: 0, // ⏳ Отправлено, ждём доставки
+                files: Vec::new(),
             };
 
             // Отправляем и ждём ACK
@@ -189,13 +190,25 @@ impl AppState {
     }
 
     pub fn get_messages(&self, peer_address: &str) -> Vec<ChatMessage> {
-        // Сначала пробуем из кэша
-        if let Some(messages) = self.message_cache.get(peer_address) {
-            return messages.clone();
+        // Всегда загружаем из истории (там все сообщения)
+        let mut messages = self.history_mgr.load_messages(peer_address, 1000);
+        
+        // Если есть сообщения в кэше для этого пира - добавляем их
+        if let Some(cached) = self.message_cache.get(peer_address) {
+            // Собираем ID существующих сообщений
+            let existing_ids: HashSet<String> = messages.iter().map(|m| m.id.clone()).collect();
+            // Добавляем только те, которых нет в истории
+            for msg in cached {
+                if !existing_ids.contains(&msg.id) {
+                    messages.push(msg.clone());
+                }
+            }
         }
-
-        // Загружаем из истории
-        self.history_mgr.load_messages(peer_address, 1000)
+        
+        // Сортируем по времени
+        messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        
+        messages
     }
     
     pub fn get_cached_messages(&self, peer_address: &str) -> Vec<ChatMessage> {

@@ -404,17 +404,30 @@ body {
 /* Прикреплённые файлы */
 .attached-files {
     display: none;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 8px;
-    padding: 12px 20px 8px 20px;
+    padding: 8px 20px 0 20px;
     background: var(--bg-primary);
-    border-top: 1px solid var(--border);
-    max-height: 120px;
     overflow-x: auto;
+    overflow-y: hidden;
+    max-height: 60px;
 }
 
 .attached-files:not(:empty) {
     display: flex;
+}
+
+.attached-files::-webkit-scrollbar {
+    height: 3px;
+}
+
+.attached-files::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+}
+
+.attached-files::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 .attached-file {

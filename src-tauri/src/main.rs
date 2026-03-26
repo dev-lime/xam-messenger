@@ -41,6 +41,7 @@ fn get_messages(
             timestamp: m.timestamp.timestamp(),
             sender: m.sender,
             delivery_status: m.delivery_status,
+            files: m.files,
         })
         .collect())
 }
@@ -144,6 +145,7 @@ fn get_cached_messages(
             timestamp: m.timestamp.timestamp(),
             sender: m.sender,
             delivery_status: m.delivery_status,
+            files: m.files,
         })
         .collect())
 }
@@ -167,57 +169,81 @@ async fn send_file_base64(
     file_data: String,
 ) -> Result<(), String> {
     let mut state = app_state.lock().map_err(|e| e.to_string())?;
-    
+
     // Парсим base64 (удаляем data:...;base64,)
     let base64_data = file_data.split(',').nth(1).unwrap_or(&file_data);
-    
+
     // Декодируем base64
     use base64::Engine;
     let file_bytes = base64::engine::general_purpose::STANDARD.decode(base64_data)
         .map_err(|e| format!("Ошибка декодирования base64: {}", e))?;
-    
-    eprintln!("📁 Получен файл: {} ({} байт)", file_name, file_bytes.len());
-    
-    // Сохраняем в Downloads/xam-messenger/
-    let download_dir = dirs::download_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("xam-messenger");
-    
-    std::fs::create_dir_all(&download_dir)
-        .map_err(|e| format!("Ошибка создания директории: {}", e))?;
-    
-    // Генерируем уникальное имя
-    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-    let file_path = download_dir.join(format!("{}_{}", timestamp, file_name));
-    
-    std::fs::write(&file_path, &file_bytes)
-        .map_err(|e| format!("Ошибка сохранения файла: {}", e))?;
-    
-    eprintln!("✅ Файл сохранён: {:?}", file_path);
 
-    // Создаём сообщение о файле в истории получателя
+    eprintln!("📁 Отправка файла: {} ({} байт) -> {}", file_name, file_bytes.len(), peer_address);
+
+    // Отправляем файл по TCP
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let mut stream = TcpStream::connect(&peer_address)
+        .map_err(|e| format!("Не удалось подключиться к {}: {}", peer_address, e))?;
+
+    stream.set_read_timeout(Some(Duration::from_secs(30)))
+        .map_err(|e| format!("Ошибка установки таймаута: {}", e))?;
+
+    // Отправляем заголовок: FILE|name|size|sender_port\n
+    let my_port = state.my_port.clone().unwrap_or_else(|| "0".to_string());
+    let header = format!("FILE|{}|{}|{}\n", file_name, file_bytes.len(), my_port);
+    stream.write_all(header.as_bytes())
+        .map_err(|e| format!("Ошибка отправки заголовка: {}", e))?;
+
+    // Отправляем данные файла
+    stream.write_all(&file_bytes)
+        .map_err(|e| format!("Ошибка отправки данных: {}", e))?;
+
+    // Ждём подтверждение
+    let mut buffer = [0u8; 1024];
+    match stream.read(&mut buffer) {
+        Ok(n) => {
+            let response = String::from_utf8_lossy(&buffer[..n]);
+            eprintln!("📥 Ответ от получателя: {}", response);
+            if response != "FILE_OK" {
+                return Err(format!("Получен неверный ответ: {}", response));
+            }
+        }
+        Err(e) => {
+            return Err(format!("Таймаут подтверждения: {}", e));
+        }
+    }
+
+    eprintln!("✅ Файл успешно отправлен");
+
+    // Сохраняем сообщение о файле в кэш и историю отправителя (is_mine: true)
     let file_msg = ChatMessage {
         id: uuid::Uuid::new_v4().to_string(),
         timestamp: chrono::Utc::now(),
         sender: state.my_name.clone(),
-        text: format!("📎 Файл: {} ({})", file_name, format_file_size(file_bytes.len())),
-        is_mine: false,
+        text: format!("📎 Файл: {}", file_name),
+        is_mine: true,
         delivery_status: 1,
+        files: vec![types::FileInfo {
+            name: file_name.clone(),
+            size: file_bytes.len(),
+        }],
     };
-    
-    state.receive_message(&peer_address, file_msg);
+
+    // Сохраняем в кэш
+    state.message_cache
+        .entry(peer_address.clone())
+        .or_insert_with(Vec::new)
+        .push(file_msg.clone());
+
+    // Сохраняем в историю
+    state.history_mgr.save_message(&peer_address, &file_msg);
+
+    eprintln!("💾 Файл сохранён в историю отправителя для: {}", peer_address);
 
     Ok(())
-}
-
-fn format_file_size(bytes: usize) -> String {
-    if bytes < 1024 {
-        format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    }
 }
 
 #[tauri::command]
