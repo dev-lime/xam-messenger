@@ -7,7 +7,7 @@ mod history;
 mod state;
 
 use state::AppState;
-use types::{Message, PeerInfo, ConnectionStatus};
+use types::{ChatMessage, ConnectionStatus, Message, PeerInfo};
 use std::sync::Mutex;
 
 // ============ Tauri Commands ============
@@ -166,15 +166,14 @@ async fn send_file_base64(
     file_name: String,
     file_data: String,
 ) -> Result<(), String> {
-    use std::io::Write;
-    
     let mut state = app_state.lock().map_err(|e| e.to_string())?;
     
     // Парсим base64 (удаляем data:...;base64,)
     let base64_data = file_data.split(',').nth(1).unwrap_or(&file_data);
     
     // Декодируем base64
-    let file_bytes = base64::decode(base64_data)
+    use base64::Engine;
+    let file_bytes = base64::engine::general_purpose::STANDARD.decode(base64_data)
         .map_err(|e| format!("Ошибка декодирования base64: {}", e))?;
     
     eprintln!("📁 Получен файл: {} ({} байт)", file_name, file_bytes.len());
@@ -195,7 +194,19 @@ async fn send_file_base64(
         .map_err(|e| format!("Ошибка сохранения файла: {}", e))?;
     
     eprintln!("✅ Файл сохранён: {:?}", file_path);
+
+    // Создаём сообщение о файле в истории получателя
+    let file_msg = ChatMessage {
+        id: uuid::Uuid::new_v4().to_string(),
+        timestamp: chrono::Utc::now(),
+        sender: state.my_name.clone(),
+        text: format!("📎 Файл: {} ({})", file_name, format_file_size(file_bytes.len())),
+        is_mine: false,
+        delivery_status: 1,
+    };
     
+    state.receive_message(&peer_address, file_msg);
+
     Ok(())
 }
 

@@ -342,23 +342,73 @@ function createMessageElement(msg) {
             statusTitle = 'Прочитано';
         }
         
-        div.innerHTML = `
-            <div class="message-text">${escapeHtml(msg.text)}</div>
-            <div class="message-meta">
-                <span class="read-status" title="${statusTitle}">${statusIcon}</span>
-                <span>${time}</span>
-            </div>
-        `;
+        // Проверяем, не файл ли это
+        const fileMatch = msg.text.match(/^📎 Файл: (.+) \((.+)\)$/);
+        if (fileMatch) {
+            const fileName = fileMatch[1];
+            div.innerHTML = `
+                <div class="message-text file-message" title="Открыть файл">
+                    📎 ${escapeHtml(fileName)}
+                </div>
+                <div class="message-meta">
+                    <span class="read-status" title="${statusTitle}">${statusIcon}</span>
+                    <span>${time}</span>
+                </div>
+            `;
+            
+            // Клик по файлу - открываем (для локальных файлов)
+            const fileEl = div.querySelector('.file-message');
+            fileEl.style.cursor = 'pointer';
+            fileEl.addEventListener('click', () => {
+                // Для отправленных файлов нужно искать в attachedFiles или открывать из Downloads
+                alert('Файл сохранён в ~/Downloads/xam-messenger/');
+            });
+        } else {
+            div.innerHTML = `
+                <div class="message-text">${escapeHtml(msg.text)}</div>
+                <div class="message-meta">
+                    <span class="read-status" title="${statusTitle}">${statusIcon}</span>
+                    <span>${time}</span>
+                </div>
+            `;
+        }
     } else {
         // Чужое сообщение
-        div.innerHTML = `
-            <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
-            <div class="message-text">${escapeHtml(msg.text)}</div>
-            <div class="message-meta">${time}</div>
-        `;
+        // Проверяем, не файл ли это
+        const fileMatch = msg.text.match(/^📎 Файл: (.+) \((.+)\)$/);
+        if (fileMatch) {
+            const fileName = fileMatch[1];
+            div.innerHTML = `
+                <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
+                <div class="message-text file-message" title="Скачать файл">
+                    📎 ${escapeHtml(fileName)}
+                </div>
+                <div class="message-meta">${time}</div>
+            `;
+            
+            // Клик по файлу - скачиваем
+            const fileEl = div.querySelector('.file-message');
+            fileEl.style.cursor = 'pointer';
+            fileEl.addEventListener('click', () => {
+                openFileFromDownloads(fileName);
+            });
+        } else {
+            div.innerHTML = `
+                <div class="message-sender">👤 ${escapeHtml(msg.sender)}</div>
+                <div class="message-text">${escapeHtml(msg.text)}</div>
+                <div class="message-meta">${time}</div>
+            `;
+        }
     }
 
     return div;
+}
+
+// Открыть файл из Downloads
+function openFileFromDownloads(fileName) {
+    // Ищем файл в Downloads/xam-messenger/
+    const downloadPath = '~/Downloads/xam-messenger/';
+    alert(`Файл "${fileName}" сохранён в:\n${downloadPath}\n\nОткройте файл через Finder/Проводник`);
 }
 
 // Отправка сообщения
@@ -404,6 +454,16 @@ async function sendMessage() {
                     fileData: base64,
                 });
                 console.log('✅ Файл отправлен:', file.name);
+                
+                // Добавляем сообщение о файле в локальный чат
+                state.messages.push({
+                    id: 'file_' + Date.now() + '_' + file.name,
+                    text: `📎 Файл: ${file.name} (${formatFileSize(file.size)})`,
+                    is_mine: true,
+                    timestamp: Math.floor(Date.now() / 1000),
+                    sender: state.myName,
+                    delivery_status: 1,
+                });
             } catch (fileError) {
                 console.error('❌ Ошибка отправки файла:', fileError);
             }

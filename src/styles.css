@@ -276,6 +276,17 @@ body {
     word-wrap: break-word;
 }
 
+.message-text.file-message {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 8px 12px;
+    border-radius: 8px;
+    display: inline-block;
+}
+
+.message-text.file-message:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
 .message-meta {
     display: flex;
     align-items: center;

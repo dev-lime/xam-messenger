@@ -215,14 +215,14 @@ impl NetworkManager {
         // Если подключения нет - создаём
         if !connections.contains_key(peer_address) {
             match TcpStream::connect(peer_address) {
-                Ok(mut s) => {
+                Ok(s) => {
                     s.set_read_timeout(Some(Duration::from_secs(30))).ok();
                     eprintln!("🔗 Подключение к {}", peer_address);
                     connections.insert(peer_address.to_string(), s);
                 }
                 Err(e) => {
                     eprintln!("❌ Не удалось подключиться к {}: {}", peer_address, e);
-                    return Ok(false); // Возвращаем false вместо паники
+                    return Ok(false);
                 }
             }
         }
