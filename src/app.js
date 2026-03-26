@@ -22,6 +22,7 @@ const elements = {
     sendBtn: document.getElementById('sendBtn'),
     attachBtn: document.getElementById('attachBtn'),
     fileInput: document.getElementById('fileInput'),
+    attachedFiles: document.getElementById('attachedFiles'),
     messageInput: document.getElementById('messageInput'),
     messages: document.getElementById('messages'),
     messagesContainer: document.getElementById('messagesContainer'),
@@ -37,6 +38,104 @@ const elements = {
     settingsNameInput: document.getElementById('settingsNameInput'),
     settingsAvatarInput: document.getElementById('settingsAvatarInput'),
 };
+
+// Прикреплённые файлы
+let attachedFiles = [];
+
+// Получить иконку файла по расширению
+function getFileIcon(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    const icons = {
+        'pdf': '📄',
+        'doc': '📝', 'docx': '📝',
+        'xls': '📊', 'xlsx': '📊',
+        'ppt': '📊', 'pptx': '📊',
+        'txt': '📄',
+        'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'bmp': '🖼️', 'svg': '🖼️',
+        'mp3': '🎵', 'wav': '🎵', 'ogg': '🎵',
+        'mp4': '🎬', 'avi': '🎬', 'mkv': '🎬', 'mov': '🎬',
+        'zip': '📦', 'rar': '📦', '7z': '📦', 'tar': '📦', 'gz': '📦',
+        'exe': '⚙️', 'msi': '⚙️', 'deb': '⚙️', 'rpm': '⚙️',
+        'js': '📜', 'ts': '📜', 'py': '📜', 'java': '📜', 'cpp': '📜', 'c': '📜', 'h': '📜',
+        'html': '🌐', 'css': '🎨', 'json': '📋', 'xml': '📋', 'yaml': '📋', 'yml': '📋',
+        'md': '📝', 'rtf': '📄',
+    };
+    return icons[ext] || '📎';
+}
+
+// Форматировать размер файла
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// Отобразить прикреплённые файлы
+function renderAttachedFiles() {
+    elements.attachedFiles.innerHTML = '';
+    
+    attachedFiles.forEach((file, index) => {
+        const fileEl = document.createElement('div');
+        fileEl.className = 'attached-file';
+        fileEl.title = `Открыть: ${file.name} (${formatFileSize(file.size)})`;
+        fileEl.innerHTML = `
+            <span class="attached-file-icon">${getFileIcon(file.name)}</span>
+            <span class="attached-file-name">${file.name}</span>
+            <button class="attached-file-remove" onclick="removeAttachedFile(event, ${index})" title="Удалить">×</button>
+        `;
+        
+        // Клик по файлу - открыть
+        fileEl.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('attached-file-remove')) {
+                openFile(file);
+            }
+        });
+        
+        elements.attachedFiles.appendChild(fileEl);
+    });
+    
+    // Показываем/скрываем панель файлов
+    elements.attachedFiles.style.display = attachedFiles.length > 0 ? 'flex' : 'none';
+}
+
+// Открыть файл
+function openFile(file) {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// Добавить файл
+function addAttachedFile(file) {
+    // Максимум 10 файлов, максимум 25MB каждый
+    if (attachedFiles.length >= 10) {
+        alert('Максимум 10 файлов');
+        return false;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+        alert(`Файл "${file.name}" слишком большой (макс. 25MB)`);
+        return false;
+    }
+    
+    attachedFiles.push(file);
+    renderAttachedFiles();
+    return true;
+}
+
+// Удалить файл
+function removeAttachedFile(event, index) {
+    event.stopPropagation(); // Не открывать файл при удалении
+    attachedFiles.splice(index, 1);
+    renderAttachedFiles();
+}
+
+// Сделать функции глобальными
+window.removeAttachedFile = removeAttachedFile;
 
 // Настройки пользователя
 let userSettings = {
@@ -266,27 +365,59 @@ function createMessageElement(msg) {
 async function sendMessage() {
     const text = elements.messageInput.value.trim();
     const peerAddress = state.peerAddress || state.currentPeer;
+    const filesToSend = [...attachedFiles];
 
-    if (!text || !peerAddress) {
-        console.log('❌ Не отправлено: text=', !!text, 'peerAddress=', peerAddress);
+    if ((!text && filesToSend.length === 0) || !peerAddress) {
+        console.log('❌ Не отправлено: text=', !!text, 'files=', filesToSend.length, 'peerAddress=', peerAddress);
         return;
     }
 
-    console.log('📤 Отправка сообщения:', { text, peerAddress });
+    console.log('📤 Отправка сообщения:', { text, files: filesToSend.length, peerAddress });
 
     try {
-        await invoke('send_message', {
-            peerAddress: peerAddress,
-            text: text,
-        });
-        console.log('✅ Сообщение отправлено');
+        // Отправляем текст сообщения
+        if (text) {
+            const sent = await invoke('send_message', {
+                peerAddress: peerAddress,
+                text: text,
+            });
+            
+            if (!sent) {
+                console.log('⚠️ Сообщение не отправлено (нет подключения)');
+                // Всё равно добавляем в локальный чат
+            } else {
+                console.log('✅ Сообщение отправлено');
+            }
+        }
 
-        // Перезагружаем сообщения чтобы получить актуальный статус доставки
+        // Отправляем файлы
+        for (const file of filesToSend) {
+            console.log('📁 Отправка файла:', file.name, formatFileSize(file.size));
+            
+            // Читаем файл как base64
+            const base64 = await readFileAsBase64(file);
+            
+            try {
+                await invoke('send_file_base64', {
+                    peerAddress: peerAddress,
+                    fileName: file.name,
+                    fileData: base64,
+                });
+                console.log('✅ Файл отправлен:', file.name);
+            } catch (fileError) {
+                console.error('❌ Ошибка отправки файла:', fileError);
+            }
+        }
+
+        // Перезагружаем сообщения чтобы получить актуальный статус
         const messages = await invoke('get_messages', { peerAddress });
         state.messages = messages;
         renderMessages();
 
+        // Очищаем
         elements.messageInput.value = '';
+        attachedFiles = [];
+        renderAttachedFiles();
         updateSendButton();
     } catch (error) {
         console.error('❌ Ошибка отправки:', error);
@@ -294,16 +425,31 @@ async function sendMessage() {
     }
 }
 
+// Прочитать файл как base64
+function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
 // Обновление статуса
 async function updateStatus() {
     try {
         const status = await invoke('get_connection_status');
         state.connected = status.connected;
-        state.peerAddress = status.peer_address;
         state.myPort = status.my_port;
         state.myName = status.my_name;
-
-        updateStatusDisplay(status.connected, status.peer_address);
+        
+        // Сохраняем peer_address если он есть
+        if (status.peer_address) {
+            state.peerAddress = status.peer_address;
+        }
+        
+        // Используем сохранённый peer_address для отображения
+        updateStatusDisplay(status.connected, state.peerAddress);
         updateUserProfile(status.my_name, status.my_port);
     } catch (error) {
         console.error('Failed to get status:', error);
@@ -459,45 +605,27 @@ function setupEventListeners() {
         updateUserProfile(state.myName, state.myPort);
         elements.settingsDialog.close();
     });
-    
-    // Прикрепление файла (подготовка)
+
+    // Прикрепление файла
     elements.attachBtn.addEventListener('click', () => {
         elements.fileInput.click();
     });
-    
-    elements.fileInput.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const peerAddress = state.peerAddress || state.currentPeer;
-            if (!peerAddress) {
-                alert('Сначала подключитесь к собеседнику');
-                elements.fileInput.value = '';
-                return;
-            }
-            
-            console.log('📁 Отправка файла:', file.name, file.size);
-            
-            try {
-                // Для отправки файла нужен полный путь, но браузеры не дают доступ к нему
-                // Поэтому показываем сообщение о будущей реализации
-                alert(`Файл выбран: ${file.name}\n\nОтправка файлов требует доступа к файловой системе.\nФайлы будут сохраняться в ~/Downloads/xam-messenger/`);
-                
-                // TODO: Реализовать через Tauri FS API
-                // await invoke('send_file', { peerAddress, filePath: file.path });
-                
-                elements.fileInput.value = '';
-            } catch (error) {
-                console.error('Ошибка отправки файла:', error);
-                alert('Ошибка отправки файла: ' + error);
-            }
-        }
+
+    elements.fileInput.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files);
+        files.forEach(file => addAttachedFile(file));
+        elements.fileInput.value = '';
     });
+
+    // Периодическое обновление статуса
+    setInterval(updateStatus, 5000);
 }
 
 // Обновление кнопки отправки
 function updateSendButton() {
     const hasText = elements.messageInput.value.trim().length > 0;
-    elements.sendBtn.disabled = !hasText || !state.connected;
+    const hasFiles = attachedFiles.length > 0;
+    elements.sendBtn.disabled = (!hasText && !hasFiles) || !state.connected;
 }
 
 // Периодическая проверка новых сообщений
@@ -537,6 +665,12 @@ async function checkNewMessages() {
         // Проверяем, есть ли новые сообщения
         if (messages.length > state.messages.length) {
             console.log('📬 Найдены новые сообщения:', messages.length - state.messages.length);
+            
+            // Устанавливаем peer_address если не установлен
+            if (!state.peerAddress) {
+                state.peerAddress = state.currentPeer;
+                await invoke('set_peer_address', { peerAddress: state.currentPeer });
+            }
             
             // Отправляем READ ACK для новых сообщений (✓ → ✓✓)
             const newMessages = messages.slice(state.messages.length);

@@ -339,8 +339,75 @@ body {
     gap: 12px;
     padding: 16px 20px;
     border-top: 1px solid var(--border);
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     align-items: center;
+}
+
+.input-area textarea {
+    flex: 1;
+}
+
+/* Прикреплённые файлы */
+.attached-files {
+    display: none;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 20px 8px 20px;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border);
+    max-height: 120px;
+    overflow-x: auto;
+}
+
+.attached-files:not(:empty) {
+    display: flex;
+}
+
+.attached-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border-radius: 8px;
+    font-size: 13px;
+    max-width: 250px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.attached-file:hover {
+    background: var(--bg-secondary);
+}
+
+.attached-file-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.attached-file-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+
+.attached-file-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    opacity: 0.6;
+    font-size: 16px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.attached-file-remove:hover {
+    opacity: 1;
+    background: var(--bg-tertiary);
 }
 
 .btn-attach {

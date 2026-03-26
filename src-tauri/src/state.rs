@@ -10,6 +10,7 @@ pub enum NetworkEvent {
     Connected { peer_address: String },
     MessageReceived { message: ChatMessage, peer_address: String },
     AckReceived { message_ids: Vec<String> },
+    DeliveryStatusUpdate { message_ids: Vec<String>, status: u8 },
     Disconnected,
 }
 
@@ -76,7 +77,7 @@ impl AppState {
         Ok(())
     }
 
-    pub fn send_message(&mut self, peer_address: &str, text: &str) -> Result<(), String> {
+    pub fn send_message(&mut self, peer_address: &str, text: &str) -> Result<bool, String> {
         // Автоматически устанавливаем peer_address если не установлен
         if self.peer_address.is_none() {
             self.peer_address = Some(peer_address.to_string());
@@ -112,8 +113,11 @@ impl AppState {
 
             // Сохраняем в историю
             self.history_mgr.save_message(peer_address, &final_message);
+            
+            Ok(ack_received)
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
     
     // Обновить статус доставки (⏳ → ✓)
@@ -147,6 +151,22 @@ impl AppState {
             network.send_ack(peer_address, &message_ids)?;
         }
         Ok(())
+    }
+    
+    // Обновить статус доставки для сообщений (вызывается при получении ACK)
+    pub fn update_delivery_status(&mut self, peer_address: &str, message_ids: &[String], status: u8) {
+        // Обновляем в кэше
+        if let Some(messages) = self.message_cache.get_mut(peer_address) {
+            for msg in messages.iter_mut() {
+                if message_ids.contains(&msg.id) && msg.delivery_status < status {
+                    msg.delivery_status = status;
+                    eprintln!("🔄 Статус сообщения {} обновлён: {} → {}", msg.id, msg.delivery_status, status);
+                }
+            }
+        }
+        
+        // Перезаписываем историю с новым статусом
+        self.history_mgr.update_delivery_status(peer_address, message_ids, status);
     }
 
     pub fn receive_message(&mut self, peer_address: &str, message: ChatMessage) {

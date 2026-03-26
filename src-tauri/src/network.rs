@@ -115,7 +115,13 @@ impl NetworkManager {
                         let ack_data = &msg_data[4..];
                         let message_ids: Vec<String> = ack_data.split(',').map(|s| s.to_string()).collect();
                         let _ = stream.write_all(b"ACK_OK");
-                        let _ = event_tx.send(NetworkEvent::AckReceived { message_ids });
+                        
+                        // Обновляем статус доставки на ✓✓ (прочитано)
+                        let _ = event_tx.send(NetworkEvent::DeliveryStatusUpdate { 
+                            message_ids: message_ids.clone(),
+                            status: 2,
+                        });
+                        
                         continue;
                     }
 
@@ -185,6 +191,8 @@ impl NetworkManager {
                     };
                     let _ = event_tx.send(event);
                     eprintln!("✅ Сообщение обработано, отправлено событие");
+                    
+                    // Примечание: peer_address должен устанавливаться через set_peer_address из фронтенда
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(100));
@@ -200,25 +208,27 @@ impl NetworkManager {
     // Отправить сообщение с ожиданием ACK
     pub fn send_message_with_ack(&mut self, peer_address: &str, message: &ChatMessage) -> Result<bool, String> {
         eprintln!("📤 Отправка сообщения на {}: {}", peer_address, message.text);
-        
-        // Проверяем существующее подключение или создаём новое
+
+        // Проверяем существующее подключение
         let mut connections = self.peer_connections.lock().map_err(|e| e.to_string())?;
         
-        let stream = connections.entry(peer_address.to_string()).or_insert_with(|| {
-            // Создаём новое подключение
+        // Если подключения нет - создаём
+        if !connections.contains_key(peer_address) {
             match TcpStream::connect(peer_address) {
-                Ok(s) => {
+                Ok(mut s) => {
                     s.set_read_timeout(Some(Duration::from_secs(30))).ok();
                     eprintln!("🔗 Подключение к {}", peer_address);
-                    s
+                    connections.insert(peer_address.to_string(), s);
                 }
-                Err(_) => {
-                    eprintln!("❌ Не удалось подключиться к {}", peer_address);
-                    panic!("Failed to connect") // Временное решение
+                Err(e) => {
+                    eprintln!("❌ Не удалось подключиться к {}: {}", peer_address, e);
+                    return Ok(false); // Возвращаем false вместо паники
                 }
             }
-        });
+        }
         
+        let stream = connections.get_mut(peer_address).ok_or("Connection not found")?;
+
         // Формат: "MSG|ID|Sender|Port|Text"
         let full_message = format!(
             "MSG|{}|{}|{}|{}",

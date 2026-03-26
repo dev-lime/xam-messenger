@@ -69,7 +69,7 @@ fn send_message(
     app_state: tauri::State<Mutex<AppState>>,
     peer_address: String,
     text: String,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut state = app_state.lock().map_err(|e| e.to_string())?;
     state.send_message(&peer_address, &text)
 }
@@ -160,6 +160,56 @@ fn mark_delivered(
 }
 
 #[tauri::command]
+async fn send_file_base64(
+    app_state: tauri::State<'_, Mutex<AppState>>,
+    peer_address: String,
+    file_name: String,
+    file_data: String,
+) -> Result<(), String> {
+    use std::io::Write;
+    
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    
+    // Парсим base64 (удаляем data:...;base64,)
+    let base64_data = file_data.split(',').nth(1).unwrap_or(&file_data);
+    
+    // Декодируем base64
+    let file_bytes = base64::decode(base64_data)
+        .map_err(|e| format!("Ошибка декодирования base64: {}", e))?;
+    
+    eprintln!("📁 Получен файл: {} ({} байт)", file_name, file_bytes.len());
+    
+    // Сохраняем в Downloads/xam-messenger/
+    let download_dir = dirs::download_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("xam-messenger");
+    
+    std::fs::create_dir_all(&download_dir)
+        .map_err(|e| format!("Ошибка создания директории: {}", e))?;
+    
+    // Генерируем уникальное имя
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let file_path = download_dir.join(format!("{}_{}", timestamp, file_name));
+    
+    std::fs::write(&file_path, &file_bytes)
+        .map_err(|e| format!("Ошибка сохранения файла: {}", e))?;
+    
+    eprintln!("✅ Файл сохранён: {:?}", file_path);
+    
+    Ok(())
+}
+
+fn format_file_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+#[tauri::command]
 fn mark_read(
     app_state: tauri::State<Mutex<AppState>>,
     peer_address: String,
@@ -167,6 +217,18 @@ fn mark_read(
 ) -> Result<(), String> {
     let mut state = app_state.lock().map_err(|e| e.to_string())?;
     state.mark_read(&peer_address, &message_ids);
+    Ok(())
+}
+
+#[tauri::command]
+fn update_delivery_status(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+    message_ids: Vec<String>,
+    status: u8,
+) -> Result<(), String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.update_delivery_status(&peer_address, &message_ids, status);
     Ok(())
 }
 
@@ -187,11 +249,13 @@ fn main() {
             send_ack,
             mark_delivered,
             mark_read,
+            update_delivery_status,
             get_connection_status,
             disconnect,
             set_peer_address,
             get_current_peer,
             send_file,
+            send_file_base64,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -115,6 +115,48 @@ impl HistoryManager {
         peers
     }
 
+    // Обновить статус доставки для сообщений
+    pub fn update_delivery_status(&self, peer_address: &str, message_ids: &[String], status: u8) {
+        let file_path = self.get_history_file(peer_address);
+        if !file_path.exists() {
+            return;
+        }
+        
+        // Читаем все сообщения
+        let file = match File::open(&file_path) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        
+        let reader = BufReader::new(file);
+        let mut messages: Vec<ChatMessage> = reader
+            .lines()
+            .filter_map(|line| line.ok())
+            .filter_map(|line| serde_json::from_str(&line).ok())
+            .collect();
+        
+        // Обновляем статус
+        let mut changed = false;
+        for msg in messages.iter_mut() {
+            if message_ids.contains(&msg.id) && msg.delivery_status < status {
+                msg.delivery_status = status;
+                changed = true;
+            }
+        }
+        
+        // Перезаписываем если были изменения
+        if changed {
+            if let Ok(file) = File::create(&file_path) {
+                let mut writer = std::io::BufWriter::new(file);
+                for msg in messages {
+                    if let Ok(json) = serde_json::to_string(&msg) {
+                        let _ = writeln!(writer, "{}", json);
+                    }
+                }
+            }
+        }
+    }
+
     fn restore_address_from_filename(&self, filename: &str) -> String {
         // Формат: "192_168_1_100_8080" -> "192.168.1.100:8080"
         let parts: Vec<&str> = filename.rsplitn(2, '_').collect();

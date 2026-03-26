@@ -42,6 +42,9 @@
                 </div>
             </div>
 
+            <!-- Прикреплённые файлы (появляется только при наличии файлов) -->
+            <div class="attached-files" id="attachedFiles" style="display: none;"></div>
+            
             <!-- Панель ввода -->
             <div class="input-area">
                 <button class="btn btn-attach" id="attachBtn" title="Прикрепить файл">📎</button>
@@ -56,7 +59,7 @@
             </div>
             
             <!-- Скрытый input для файлов -->
-            <input type="file" id="fileInput" style="display: none;">
+            <input type="file" id="fileInput" style="display: none;" multiple>
         </main>
     </div>
 
