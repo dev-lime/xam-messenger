@@ -75,7 +75,7 @@ function formatFileSize(bytes) {
 // Отобразить прикреплённые файлы
 function renderAttachedFiles() {
     elements.attachedFiles.innerHTML = '';
-    
+
     attachedFiles.forEach((file, index) => {
         const fileEl = document.createElement('div');
         fileEl.className = 'attached-file';
@@ -85,19 +85,23 @@ function renderAttachedFiles() {
             <span class="attached-file-name">${file.name}</span>
             <button class="attached-file-remove" onclick="removeAttachedFile(event, ${index})" title="Удалить">×</button>
         `;
-        
+
         // Клик по файлу - открыть
         fileEl.addEventListener('click', (e) => {
             if (!e.target.classList.contains('attached-file-remove')) {
                 openFile(file);
             }
         });
-        
+
         elements.attachedFiles.appendChild(fileEl);
     });
-    
+
     // Показываем/скрываем панель файлов
-    elements.attachedFiles.style.display = attachedFiles.length > 0 ? 'flex' : 'none';
+    const hasFiles = attachedFiles.length > 0;
+    elements.attachedFiles.style.display = hasFiles ? 'flex' : 'none';
+    
+    // Убираем border у input-area когда есть файлы
+    elements.messageInput.parentElement.classList.toggle('no-border', hasFiles);
 }
 
 // Открыть файл
