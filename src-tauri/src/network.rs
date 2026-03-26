@@ -159,7 +159,7 @@ impl NetworkManager {
                     eprintln!("📍 Нормализованный адрес: {}", normalized_peer_address);
 
                     let message = ChatMessage {
-                        id: msg_id,
+                        id: msg_id.clone(),
                         timestamp: chrono::Utc::now(),
                         sender,
                         text,
@@ -169,12 +169,17 @@ impl NetworkManager {
 
                     history_mgr.save_message(&normalized_peer_address, &message);
 
-                    // Отправляем подтверждение
+                    // Отправляем подтверждение доставки (OK)
                     let _ = stream.write_all(b"OK");
                     eprintln!("📤 Отправлено подтверждение OK");
 
+                    // Отправляем ACK обратно для обновления статуса (✓ доставлено)
+                    let ack_message = format!("ACK|{}", msg_id);
+                    let _ = stream.write_all(ack_message.as_bytes());
+                    eprintln!("📤 Отправлен ACK: {}", ack_message);
+
                     // Отправляем событие во фронтенд
-                    let event = NetworkEvent::MessageReceived { 
+                    let event = NetworkEvent::MessageReceived {
                         message: message.clone(),
                         peer_address: normalized_peer_address.clone(),
                     };
@@ -227,15 +232,39 @@ impl NetworkManager {
         }
         stream.flush().ok();
 
-        // Ждём подтверждение
+        // Ждём подтверждение (OK + ACK)
         let mut buffer = [0u8; 1024];
         stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
-        
+
         match stream.read(&mut buffer) {
             Ok(n) if n > 0 => {
                 let response = String::from_utf8_lossy(&buffer[..n]);
                 eprintln!("✅ Подтверждение получено: {}", response);
-                Ok(response == "OK")
+                
+                // Проверяем есть ли ACK в ответе
+                if response.starts_with("ACK|") {
+                    eprintln!("✅ ACK получен сразу");
+                    return Ok(true);
+                }
+                
+                let ok_received = response.contains("OK");
+                
+                // Если получили OK, пробуем прочитать ACK отдельно
+                if ok_received {
+                    stream.set_read_timeout(Some(Duration::from_millis(500))).ok();
+                    let mut ack_buffer = [0u8; 1024];
+                    if let Ok(ack_n) = stream.read(&mut ack_buffer) {
+                        if ack_n > 0 {
+                            let ack_response = String::from_utf8_lossy(&ack_buffer[..ack_n]);
+                            eprintln!("✅ ACK получен: {}", ack_response);
+                            if ack_response.starts_with("ACK|") {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+                
+                Ok(ok_received)
             }
             Ok(_) => {
                 eprintln!("⚠️ Пустой ответ");

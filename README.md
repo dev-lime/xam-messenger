@@ -1,175 +1,103 @@
-# Xam Messenger — Tauri + Rust
+# 💬 Xam Messenger
 
-LAN-мессенджер на Tauri v2 + Rust с красивым веб-интерфейсом.
+LAN-мессенджер на Tauri + Rust для общения в локальной сети.
 
 ## 🚀 Возможности
 
-- ✅ Обмен сообщениями в локальной сети
-- ✅ История переписок (JSONL)
-- ✅ Статусы прочтения (✓ / ✓✓)
-- ✅ Список последних контактов
-- ✅ Копирование сообщений
-- ✅ Кроссплатформенность (Windows, Linux, macOS)
+- Обмен сообщениями в LAN
+- История переписок (JSONL)
+- Статусы: ⏳ Отправлено → ✓ Доставлено → ✓✓ Прочитано
+- Список последних контактов
+- Копирование сообщений по клику
 
-## 📦 Установка
+## 📦 Быстрый старт
 
-### 1. Установите Rust
-
+### Установка Rust
 ```bash
-# macOS/Linux
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Windows - скачайте с https://rustup.rs/
 ```
 
-### 2. Установите зависимости
+### Зависимости
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install libwebkit2gtk-4.0-dev build-essential libssl-dev libgtk-3-dev
+```
 
 **macOS:**
 ```bash
 xcode-select --install
 ```
 
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt update
-sudo apt install -y libwebkit2gtk-4.0-dev build-essential libssl-dev \
-  libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-```
+**Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
 
-**Linux (Fedora):**
-```bash
-sudo dnf install webkit2gtk3-devel openssl-devel \
-  gtk3-devel libappindicator-gtk3-devel librsvg2-devel
-```
-
-**Windows:**
-- Установите [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-- Выберите "C++ build tools"
-
-### 3. Установите Tauri CLI (опционально)
-
-```bash
-cargo install tauri-cli
-```
-
-### 4. Сборка проекта
-
+### Запуск
 ```bash
 cd lan-messenger-tauri/src-tauri
-
-# Режим разработки
 cargo tauri dev
+```
 
-# Сборка релиза
+### Сборка
+```bash
 cargo tauri build
-```
-
-## 📁 Структура проекта
-
-```
-lan-messenger-tauri/
-├── src/                    # Frontend (HTML/CSS/JS)
-│   ├── index.html
-│   ├── styles.css
-│   └── app.js
-├── src-tauri/              # Backend (Rust)
-│   ├── src/
-│   │   ├── main.rs        # Tauri commands
-│   │   ├── types.rs       # Общие типы
-│   │   ├── network.rs     # Сетевая логика
-│   │   ├── history.rs     # История (JSONL)
-│   │   └── state.rs       # Состояние приложения
-│   ├── Cargo.toml
-│   └── tauri.conf.json
-└── README.md
 ```
 
 ## 🎮 Использование
 
-### Запуск на одном ПК (тест)
+### На одном ПК (тест)
+| Экземпляр | Порт | IP собеседника |
+|-----------|------|----------------|
+| 1 | 8080 | 127.0.0.1:8081 |
+| 2 | 8081 | 127.0.0.1:8080 |
 
-1. **Первый экземпляр:**
-   - Порт: `8080`
-   - Имя: `Кот1`
-   - IP собеседника: `127.0.0.1:8081`
+### На разных ПК
+| Компьютер | Порт | IP собеседника |
+|-----------|------|----------------|
+| 1 | 8080 | (пусто) |
+| 2 | 8081 | 192.168.1.100:8080 |
 
-2. **Второй экземпляр:**
-   - Порт: `8081`
-   - Имя: `Кот2`
-   - IP собеседника: `127.0.0.1:8080`
+## 📁 Хранение данных
 
-### Запуск на разных компьютерах
+```
+macOS: ~/Library/Application Support/xam-messenger/history/
+Linux: ~/.config/xam-messenger/history/
+Windows: %APPDATA%\xam-messenger\history\
+```
 
-1. **Компьютер 1:**
-   - Узнайте IP: `ipconfig` (Windows) или `ip addr` (Linux)
-   - Порт: `8080`
-   - IP собеседника: (оставьте пустым)
+Формат: JSONL (один JSON на строку)
 
-2. **Компьютер 2:**
-   - Порт: `8081`
-   - IP собеседника: `192.168.1.100:8080`
+## ⌨️ Горячие клавиши
 
-## 📬 Хранение данных
+| Клавиша | Действие |
+|---------|----------|
+| Enter | Отправить |
+| Ctrl+Enter | Новая строка |
+| Клик на сообщение | Копировать |
+| Клик на профиль | Настройки |
 
-История сохраняется в:
-- **Windows:** `%APPDATA%\xam-messenger\history\`
-- **Linux:** `~/.config/xam-messenger/history/`
-- **macOS:** `~/Library/Application Support/xam-messenger/history/`
+## 📊 Статусы сообщений
 
-Формат: JSONL (один JSON-объект на строку)
+| Статус | Значение |
+|--------|----------|
+| ⏳ | Отправлено |
+| ✓ | Доставлено собеседнику |
+| ✓✓ | Прочитано собеседником |
 
-## 🔧 Сборка под разные платформы
+## 🔧 Сборка
 
-### Windows
 ```bash
-cargo tauri build --target x86_64-pc-windows-msvc
+# Windows
+cargo tauri build
+
+# Linux
+cargo tauri build
+
+# macOS (Intel + Apple Silicon)
+cargo tauri build --target universal-apple-darwin
 ```
 
-### Linux
-```bash
-cargo tauri build --target x86_64-unknown-linux-gnu
-```
+Размер: ~10-15 MB
 
-### macOS
-```bash
-cargo tauri build --target x86_64-apple-darwin
-cargo tauri build --target aarch64-apple-darwin  # Apple Silicon
-```
+---
 
-## 📊 Размер бинарника
-
-После оптимизации (в режиме release):
-- **Windows:** ~8-12 MB
-- **Linux:** ~10-15 MB (зависит от системных библиотек)
-- **macOS:** ~10-14 MB
-
-## 🛠 Разработка
-
-### Горячая перезагрузка
-```bash
-cargo tauri dev
-```
-
-### Логирование
-```bash
-# В режиме разработки логи выводятся в консоль
-# В релизе используйте logger
-```
-
-## 📝 Протокол обмена
-
-```
-Сообщение: MSG|ID|Sender|Port|Text
-Подтверждение: ACK|id1,id2,id3
-Ответ на ACK: ACK_OK
-```
-
-## 🔐 Безопасность
-
-- Нет шифрования (учебный проект для LAN)
-- Доверенная локальная сеть
-- Нет аутентификации
-
-## 📄 Лицензия
-
-MIT
+**Учебный проект для LAN. Без шифрования.**

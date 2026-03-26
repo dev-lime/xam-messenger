@@ -167,13 +167,13 @@ async function loadMessages(peerAddress) {
             }
         }
         
-        // Отправляем ACK для непрочитанных сообщений (✓ → ✓✓)
+        // Отправляем READ ACK для непрочитанных сообщений (✓ → ✓✓)
         const unreadIds = messages
             .filter(m => !m.is_mine && m.delivery_status < 2)
             .map(m => m.id);
         
         if (unreadIds.length > 0) {
-            console.log('📤 Отправка ACK (прочитано) для', unreadIds.length, 'сообщений');
+            console.log('📤 Отправка READ ACK (прочитано) для', unreadIds.length, 'сообщений');
             try {
                 await invoke('mark_read', { peerAddress, messageIds: unreadIds });
                 await invoke('send_ack', { peerAddress, messageIds: unreadIds });
@@ -232,7 +232,7 @@ function createMessageElement(msg) {
         `;
     } else if (msg.is_mine) {
         // Своё сообщение с галочками
-        let statusIcon = '⏳';
+        let statusIcon = '🕐';
         let statusTitle = 'Отправлено';
         
         if (msg.delivery_status === 1) {
@@ -266,12 +266,12 @@ function createMessageElement(msg) {
 async function sendMessage() {
     const text = elements.messageInput.value.trim();
     const peerAddress = state.peerAddress || state.currentPeer;
-    
+
     if (!text || !peerAddress) {
         console.log('❌ Не отправлено: text=', !!text, 'peerAddress=', peerAddress);
         return;
     }
-    
+
     console.log('📤 Отправка сообщения:', { text, peerAddress });
 
     try {
@@ -281,17 +281,11 @@ async function sendMessage() {
         });
         console.log('✅ Сообщение отправлено');
 
-        // Добавляем сообщение локально
-        state.messages.push({
-            id: Date.now().toString(),
-            text: text,
-            is_mine: true,
-            timestamp: Math.floor(Date.now() / 1000),
-            sender: state.myName,
-            is_read: false,
-        });
-
+        // Перезагружаем сообщения чтобы получить актуальный статус доставки
+        const messages = await invoke('get_messages', { peerAddress });
+        state.messages = messages;
         renderMessages();
+
         elements.messageInput.value = '';
         updateSendButton();
     } catch (error) {
@@ -331,12 +325,13 @@ function updateStatusDisplay(connected, peerAddress) {
 }
 
 function updateUserProfile(name, address) {
-    // Показываем данные текущего пользователя (не собеседника!)
+    // Показываем данные текущего пользователя
     const displayName = userSettings.name || name || 'Не подключен';
     const avatar = userSettings.avatar || '👤';
-    
+
     elements.userName.textContent = displayName;
-    elements.userAddress.textContent = address ? `:${address}` : '--';
+    // address - это наш порт для входящих подключений
+    elements.userAddress.textContent = address ? `Порт ${address}` : '--';
     elements.userAvatar.textContent = avatar;
 }
 
@@ -543,13 +538,20 @@ async function checkNewMessages() {
         if (messages.length > state.messages.length) {
             console.log('📬 Найдены новые сообщения:', messages.length - state.messages.length);
             
-            // Отправляем ACK для новых сообщений (⏳ → ✓)
+            // Отправляем READ ACK для новых сообщений (✓ → ✓✓)
             const newMessages = messages.slice(state.messages.length);
             const newIds = newMessages.filter(m => !m.is_mine).map(m => m.id);
             
             if (newIds.length > 0) {
-                console.log('📤 Отправка ACK (доставлено) для', newIds.length, 'сообщений');
+                console.log('📤 Отправка READ ACK (прочитано) для', newIds.length, 'сообщений');
+                await invoke('mark_read', { peerAddress: state.currentPeer, messageIds: newIds });
                 await invoke('send_ack', { peerAddress: state.currentPeer, messageIds: newIds });
+                
+                // Обновляем статус локально
+                newIds.forEach(id => {
+                    const msg = messages.find(m => m.id === id);
+                    if (msg) msg.delivery_status = 2; // ✓✓
+                });
             }
             
             state.messages = messages;
