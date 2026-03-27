@@ -1,6 +1,6 @@
 // XAM Messenger Server - WebSocket + HTTP
 
-use actix_web::{web, App, HttpServer, HttpResponse, middleware, HttpRequest, Error as ActixError};
+use actix_web::{web, App, HttpServer, HttpResponse, middleware, Error as ActixError, HttpRequest};
 use actix_cors::Cors;
 use actix_ws::{Message, MessageStream};
 use actix_multipart::Multipart;
@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 use chrono::Utc;
+use std::collections::HashMap;
+use std::time::SystemTime;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct User { id: String, name: String }
@@ -27,6 +29,7 @@ struct ChatMessage {
 struct AppState {
     db: Arc<Mutex<Connection>>,
     tx: broadcast::Sender<serde_json::Value>,
+    online_users: Arc<Mutex<HashMap<String, u64>>>, // user_id -> timestamp последнего подключения
 }
 
 #[derive(Deserialize)]
@@ -80,8 +83,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     
     let db = Arc::new(Mutex::new(conn));
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
-    let state = AppState { db, tx };
-    
+    let online_users = Arc::new(Mutex::new(HashMap::new()));
+    let state = AppState { db, tx, online_users };
+
     log::info!("🚀 XAM Server на 0.0.0.0:8080");
 
     HttpServer::new(move || {
@@ -101,6 +105,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .route("/api/users", web::get().to(get_users))
             .route("/api/messages", web::get().to(get_messages))
             .route("/api/files", web::post().to(upload_file))
+            .route("/api/online", web::get().to(get_online_users))
     })
     .bind("0.0.0.0:8080")?
     .run()
@@ -145,12 +150,37 @@ async fn handle_ws(
                                         |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
                                     )
                                 }).unwrap();
-                                
+
                                 user_id = Some(user.id.clone());
+                                
+                                // Добавляем в онлайн
+                                let timestamp = SystemTime::now()
+                                    .duration_since(SystemTime::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs();
+                                state.online_users.lock().unwrap().insert(user.id.clone(), timestamp);
+                                
+                                // Отправляем список текущих онлайн пользователей
+                                let online_list: Vec<String> = state.online_users.lock().unwrap().keys().cloned().collect();
+                                for online_id in &online_list {
+                                    let _ = session.text(json!({
+                                        "type": "user_online",
+                                        "user_id": online_id.clone(),
+                                        "online": true
+                                    }).to_string()).await;
+                                }
+                                
+                                // Рассылаем остальным что этот пользователь подключился
+                                let _ = state.tx.send(json!({
+                                    "type": "user_online",
+                                    "user_id": user.id.clone(),
+                                    "online": true
+                                }));
+
                                 let _ = session.text(json!({
                                     "type": "registered", "user": user
                                 }).to_string()).await;
-                                
+
                                 log::info!("✅ {}: {}", user.name, user.id);
                             }
                             "message" => {
@@ -181,13 +211,19 @@ async fn handle_ws(
                             }
                             "ack" => {
                                 let status = if client_msg.status == "read" { 2 } else { 1 };
+                                let msg_id = client_msg.message_id.clone();
+                                log::info!("📨 ACK {} для {}", client_msg.status, msg_id);
+                                
                                 state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
                                     "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
                                     params![status, client_msg.message_id],
                                 ).unwrap();
-                                let _ = state.tx.send(json!({
-                                    "type": "ack", "message_id": client_msg.message_id, "status": client_msg.status
-                                }));
+                                
+                                let ack_msg = json!({
+                                    "type": "ack", "message_id": msg_id, "status": client_msg.status
+                                });
+                                log::info!("📤 Рассылка ACK: {}", ack_msg);
+                                let _ = state.tx.send(ack_msg);
                             }
                             "get_messages" => {
                                 let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
@@ -207,9 +243,21 @@ async fn handle_ws(
                             _ => {}
                         }
                     }
-                } else if matches!(msg, Ok(Message::Close(_)) | Err(_)) { 
+                } else if matches!(msg, Ok(Message::Close(_)) | Err(_)) {
                     log::info!("🔌 Клиент отключился");
-                    break; 
+                    
+                    // Удаляем из онлайн и рассылаем уведомление
+                    if let Some(uid) = &user_id {
+                        state.online_users.lock().unwrap().remove(uid);
+                        let _ = state.tx.send(json!({ 
+                            "type": "user_online", 
+                            "user_id": uid.clone(),
+                            "online": false
+                        }));
+                        log::info!("🔴 Пользователь {} офлайн", uid);
+                    }
+                    
+                    break;
                 }
             }
             Ok(msg) = rx.recv() => {
@@ -263,6 +311,12 @@ async fn get_users(data: web::Data<AppState>) -> HttpResponse {
         |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
     ).unwrap().filter_map(|r| r.ok()).collect();
     HttpResponse::Ok().json(json!({"success": true, "data": users}))
+}
+
+async fn get_online_users(data: web::Data<AppState>) -> HttpResponse {
+    let online = data.online_users.lock().unwrap();
+    let online_list: Vec<String> = online.keys().cloned().collect();
+    HttpResponse::Ok().json(json!({"success": true, "data": online_list}))
 }
 
 async fn get_messages(
@@ -361,3 +415,4 @@ async fn upload_file(
         "error": "No file uploaded"
     }))
 }
+

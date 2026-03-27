@@ -22,13 +22,23 @@ class ServerClient {
     
     // Добавляем серверы локальной сети
     addLocalNetworkServers() {
-        // Типичные адреса в локальной сети
-        const localIPs = [
-            '192.168.1.100', '192.168.0.100',
-            '192.168.1.1', '192.168.0.1',
+        // Сканируем типичные подсети
+        const subnets = [
+            '192.168.1.',
+            '192.168.0.',
+            '192.168.88.',
+            '10.0.0.',
+            '10.0.1.',
         ];
-        localIPs.forEach(ip => {
-            this.serverCandidates.push(`ws://${ip}:8080/ws`);
+        
+        // Для каждой подсети добавляем адреса 1-10 и 100-110
+        subnets.forEach(subnet => {
+            for (let i = 1; i <= 10; i++) {
+                this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
+            }
+            for (let i = 100; i <= 110; i++) {
+                this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
+            }
         });
     }
     
@@ -126,26 +136,31 @@ class ServerClient {
     // Обработка входящих сообщений
     handleMessage(data) {
         console.log('📩 Получено от сервера:', data);
-        
+
         switch (data.type) {
             case 'registered':
                 this.user = data.user;
                 console.log('✅ Зарегистрирован:', this.user);
                 break;
-                
+
             case 'message':
                 // Новое сообщение от другого клиента
                 this.notifyHandlers('message', data);
                 break;
-                
+
             case 'ack':
                 // Обновление статуса доставки
                 this.notifyHandlers('ack', data);
                 break;
-                
+
             case 'messages':
                 // История сообщений
                 this.notifyHandlers('messages', data.messages);
+                break;
+
+            case 'user_online':
+                // Статус онлайн пользователя
+                this.notifyHandlers('user_online', data);
                 break;
         }
     }

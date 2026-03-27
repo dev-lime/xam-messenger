@@ -35,6 +35,7 @@ let state = {
     peers: [],
     currentPeer: null,
     filteredMessages: [],
+    onlineUsers: new Set(), // ID пользователей онлайн
 };
 
 // Прикреплённые файлы
@@ -50,6 +51,7 @@ async function init() {
     serverClient.on('message', handleNewMessage);
     serverClient.on('ack', handleAck);
     serverClient.on('messages', handleMessages);
+    serverClient.on('user_online', handleUserOnline);
 
     setupEventListeners();
 
@@ -93,37 +95,32 @@ function handleNewMessage(msg) {
         const existingPeer = state.peers.find(p => p.id === msg.sender_id);
         if (!existingPeer) {
             loadPeers();
+        } else {
+            // Обновляем время активности в списке контактов
+            renderPeers();
         }
 
-        // Отправляем READ ACK
-        console.log('📤 READ ACK для', msg.id);
-        serverClient.sendAck(msg.id, 'read');
-        msg.delivery_status = 2;
-
-        // Обновляем статус в списках
-        const existingMsg = state.messages.find(m => m.id === msg.id);
-        if (existingMsg) {
-            existingMsg.delivery_status = 2;
-            const existingFiltered = state.filteredMessages?.find(m => m.id === msg.id);
-            if (existingFiltered) {
-                existingFiltered.delivery_status = 2;
-            }
-            renderMessages(!!state.currentPeer);
-        }
+        // НЕ отправляем READ ACK сразу - только когда чат открыт
+        // См. selectPeer() для отправки READ ACK при открытии чата
     }
 }
 
 // Обработка ACK
 function handleAck(data) {
-    console.log('📨 ACK:', data);
+    console.log('📨 ACK получен:', data);
     const msg = state.messages.find(m => m.id === data.message_id);
     if (msg) {
+        const oldStatus = msg.delivery_status;
         msg.delivery_status = data.status === 'read' ? 2 : 1;
+        console.log(`🔄 Статус сообщения ${data.message_id}: ${oldStatus} → ${msg.delivery_status}`);
+        
         const filteredMsg = state.filteredMessages?.find(m => m.id === data.message_id);
         if (filteredMsg) {
             filteredMsg.delivery_status = msg.delivery_status;
         }
         renderMessages(!!state.currentPeer);
+    } else {
+        console.log('⚠️ Сообщение не найдено для ACK:', data.message_id);
     }
 }
 
@@ -142,6 +139,24 @@ function handleMessages(messages) {
     } else {
         renderMessages();
     }
+}
+
+// Обработка статуса онлайн
+function handleUserOnline(data) {
+    console.log('🟢/🔴 Статус онлайн:', data);
+    if (data.online) {
+        const wasEmpty = state.onlineUsers.size === 0;
+        state.onlineUsers.add(data.user_id);
+        console.log('✅ Добавлен онлайн:', data.user_id, 'всего онлайн:', state.onlineUsers.size);
+        if (wasEmpty) {
+            console.log('📋 Обновляем peers, онлайн:', Array.from(state.onlineUsers));
+        }
+    } else {
+        state.onlineUsers.delete(data.user_id);
+        console.log('❌ Удалён из онлайн:', data.user_id);
+    }
+    // Обновляем список контактов
+    renderPeers();
 }
 
 // Подключение к серверу
@@ -174,6 +189,13 @@ async function connectToServer() {
         // Загружаем историю и пользователей
         serverClient.getMessages(1000);
         await loadPeers();
+        
+        // renderPeers() будет вызван автоматически когда придут события user_online
+        // Но добавим таймаут на случай если события уже пришли
+        setTimeout(() => {
+            console.log('🔄 Принудительное обновление peers после подключения');
+            renderPeers();
+        }, 500);
 
         elements.serverStatus.innerHTML = '<span style="color: var(--success);">✅ Подключено</span>';
 
@@ -255,6 +277,8 @@ function renderPeers() {
     if (!elements.peersList) return;
 
     elements.peersList.innerHTML = '';
+    
+    console.log('📋 renderPeers:', state.peers.length, 'пользователей, онлайн:', Array.from(state.onlineUsers));
 
     if (state.peers.length === 0) {
         elements.peersList.innerHTML = '<p style="padding: 20px; color: var(--text-tertiary); text-align: center;">Нет других пользователей</p>';
@@ -268,13 +292,44 @@ function renderPeers() {
         item.dataset.userName = peer.name;
         item.style.cursor = 'pointer';
 
+        // Находим последнее сообщение от этого пользователя
+        const lastMsg = state.messages
+            .filter(m => m.sender_id === peer.id)
+            .sort((a, b) => b.timestamp - a.timestamp)[0];
+
+        // Проверяем онлайн статус
+        const isOnline = state.onlineUsers.has(peer.id);
+        console.log('🔍 Пользователь', peer.name, peer.id.slice(0,8), 'онлайн:', isOnline);
+        
+        // Форматируем время
+        let timeStr = '';
+        if (isOnline) {
+            timeStr = 'в сети';
+        } else if (lastMsg) {
+            const lastTime = new Date(lastMsg.timestamp * 1000);
+            const now = new Date();
+            const diff = now - lastTime;
+            
+            if (diff < 60000) { // < 1 минуты
+                timeStr = 'был(а) только что';
+            } else if (diff < 3600000) { // < 1 часа
+                timeStr = 'был(а) в ' + lastTime.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            } else if (diff < 86400000) { // < 1 дня
+                timeStr = 'был(а) ' + lastTime.toLocaleDateString('ru-RU', { day: 'numeric', month: 'numeric' });
+            } else {
+                timeStr = 'был(а) ' + lastTime.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+            }
+        } else {
+            timeStr = 'давно не был(а)';
+        }
+
         item.innerHTML = `
             <span class="peer-icon">👤</span>
             <div class="peer-info">
                 <div class="peer-name">${escapeHtml(peer.name)}</div>
                 <div class="peer-address">ID: ${peer.id.slice(0, 8)}</div>
             </div>
-            <span class="peer-time">🟢</span>
+            <span class="peer-time ${isOnline ? 'online' : 'offline'}" title="${timeStr}">${isOnline ? 'в сети' : 'не в сети'}</span>
         `;
 
         item.addEventListener('click', (e) => {
@@ -296,6 +351,29 @@ function selectPeer(userId, userName) {
 
     updateStatusDisplay(true, `Чат с ${userName}`);
     loadMessagesForPeer(userId);
+
+    // Отправляем READ ACK для всех непрочитанных сообщений от этого пользователя
+    const unreadIds = state.messages
+        .filter(m => m.sender_id === userId && m.delivery_status < 2)
+        .map(m => m.id);
+
+    if (unreadIds.length > 0) {
+        console.log('📤 READ ACK для', unreadIds.length, 'сообщений');
+        unreadIds.forEach(id => {
+            serverClient.sendAck(id, 'read');
+            // Обновляем локально
+            const msg = state.messages.find(m => m.id === id);
+            if (msg) msg.delivery_status = 2;
+        });
+        const filteredIds = state.filteredMessages
+            .filter(m => unreadIds.includes(m.id))
+            .map(m => m.id);
+        filteredIds.forEach(id => {
+            const msg = state.filteredMessages.find(m => m.id === id);
+            if (msg) msg.delivery_status = 2;
+        });
+        renderMessages(true);
+    }
 }
 
 // Загрузка сообщений для выбранного пира
