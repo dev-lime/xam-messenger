@@ -66,25 +66,21 @@
     <!-- Диалог подключения -->
     <dialog id="connectDialog" class="dialog">
         <div class="dialog-header">
-            <h3>Подключение к чату</h3>
+            <h3>Добро пожаловать в XAM Messenger</h3>
         </div>
         <div class="dialog-content">
             <div class="form-group">
-                <label>Ваш порт</label>
-                <input type="text" id="portInput" value="8080" placeholder="8080">
+                <label>Ваше имя</label>
+                <input type="text" id="userNameInput" placeholder="Введите имя" maxlength="20">
             </div>
-            <div class="form-group">
-                <label>IP собеседника</label>
-                <input type="text" id="ipInput" placeholder="192.168.1.100:8080">
+            <p class="hint">💡 Для начала работы просто введите имя<br>
+               Сервер будет найден автоматически</p>
+            <div id="serverStatus" style="margin-top: 12px; font-size: 13px;">
+                <span style="color: var(--text-secondary);">🔍 Поиск сервера...</span>
             </div>
-            <p class="hint">💡 Для теста на одном ПК:<br>
-               Экземпляр 1: порт 8080<br>
-               Экземпляр 2: порт 8081<br>
-               IP собеседника: 127.0.0.1:8080</p>
         </div>
         <div class="dialog-actions">
-            <button class="btn" id="cancelConnect">Отмена</button>
-            <button class="btn btn-primary" id="confirmConnect">Подключиться</button>
+            <button class="btn btn-primary" id="confirmConnect" disabled>Войти</button>
         </div>
     </dialog>
 
@@ -110,6 +106,8 @@
         </div>
     </dialog>
 
-    <script src="app.js"></script>
+    <!-- Подключение клиента сервера -->
+    <script src="server-client.js"></script>
+    <script src="app-server.js"></script>
 </body>
 </html>

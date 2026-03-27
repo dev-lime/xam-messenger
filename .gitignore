@@ -3,6 +3,11 @@ src-tauri/target/
 src-tauri/dev/
 src-tauri/dist/
 
+# Server
+server/target/
+server/*.db
+server/files/
+
 # Node
 node_modules/
 

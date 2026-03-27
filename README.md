@@ -1,117 +1,249 @@
-# 💬 Xam Messenger
+# XAM Messenger
 
-LAN-мессенджер на Tauri + Rust для общения в локальной сети.
+Корпоративный мессенджер для локальной сети с поддержкой файлов и статусов доставки.
 
-## 🚀 Возможности
+## Особенности
 
-- Обмен сообщениями в LAN
-- История переписок (JSONL)
-- Статусы: ⏳ Отправлено → ✓ Доставлено → ✓✓ Прочитано
-- Список последних контактов
-- Копирование сообщений по клику
+- 🔒 **Только локальная сеть** — без интернета, полная приватность
+- 🚀 **Быстрый старт** — сервер + клиент, авто-обнаружение
+- 📁 **Файлообмен** — отправка файлов до 25MB
+- ✓✓ **Статусы** — доставлено / прочитано
+- 💾 **История** — SQLite для хранения сообщений
+- 🖥️ **Кроссплатформенно** — macOS, Linux, Windows
 
-## 📦 Быстрый старт
+## Быстрый старт
 
-### Установка Rust
+### 1. Запуск сервера
+
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+cd server
+./start.sh
 ```
 
-### Зависимости
-
-**Ubuntu/Debian:**
+Или напрямую:
 ```bash
-sudo apt install libwebkit2gtk-4.0-dev build-essential libssl-dev libgtk-3-dev
+./server/target/release/xam-server
 ```
 
-**macOS:**
+**Сервер слушает на `0.0.0.0:8080`**
+
+### 2. Запуск клиента
+
+**Вариант A: В браузере**
 ```bash
-xcode-select --install
+# Откройте файл в браузере
+open src/index.html
 ```
 
-**Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-
-### Запуск
+**Вариант B: Tauri приложение**
 ```bash
-cd lan-messenger-tauri/src-tauri
+cd src-tauri
 cargo tauri dev
 ```
 
-### Сборка
+### 3. Подключение
+
+1. Введите ваше имя
+2. Нажмите **"Войти"**
+3. Сервер найдётся автоматически ✨
+
+## Архитектура
+
+```
+┌────────────────────────────────────────────┐
+│  Сервер (порт 8080)                       │
+│  ┌─────────────────────────────────────┐  │
+│  │ WebSocket /ws                       │  │
+│  │ • Сообщения в реальном времени     │  │
+│  │ • Статусы доставки                 │  │
+│  └─────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────┐  │
+│  │ HTTP /api/*                         │  │
+│  │ • /api/register  - регистрация     │  │
+│  │ • /api/messages  - история         │  │
+│  └─────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────┐  │
+│  │ SQLite (~/.config/xam-messenger/)  │  │
+│  └─────────────────────────────────────┘  │
+└────────────────────────────────────────────┘
+                    ▲
+                    │ Авто-обнаружение
+                    │
+        ┌───────────┼───────────┐
+        │           │           │
+   ┌────▼────┐ ┌────▼────┐ ┌───▼────┐
+   │ Windows │ │  macOS  │ │ Linux  │
+   │ Tauri   │ │ Tauri   │ │ Tauri  │
+   └─────────┘ └─────────┘ └────────┘
+```
+
+## API
+
+### WebSocket (`ws://server:8080/ws`)
+
+**Регистрация:**
+```json
+{"type": "register", "name": "Артем"}
+```
+
+**Ответ:**
+```json
+{"type": "registered", "user": {"id": "...", "name": "Артем"}}
+```
+
+**Отправка сообщения:**
+```json
+{"type": "message", "text": "Привет всем!"}
+```
+
+**Подтверждение прочтения:**
+```json
+{"type": "ack", "message_id": "uuid", "status": "read"}
+```
+
+**Запрос истории:**
+```json
+{"type": "get_messages", "limit": 100}
+```
+
+### HTTP
+
+**POST /api/register**
 ```bash
-cargo tauri build
+curl -X POST http://localhost:8080/api/register \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Артем"}'
 ```
 
-### Сборка для Linux (из macOS/Windows)
+**GET /api/messages**
 ```bash
-# Через Docker
-./build-linux.sh
-
-# Или вручную на Linux машине:
-sudo apt install libwebkit2gtk-4.0-dev build-essential libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-cargo tauri build
+curl "http://localhost:8080/api/messages?limit=50"
 ```
 
-**Результат:**
-- `.deb` пакет для Debian/Ubuntu
-- `.AppImage` для остальных дистрибутивов
-
-## 🎮 Использование
-
-### На одном ПК (тест)
-| Экземпляр | Порт | IP собеседника |
-|-----------|------|----------------|
-| 1 | 8080 | 127.0.0.1:8081 |
-| 2 | 8081 | 127.0.0.1:8080 |
-
-### На разных ПК
-| Компьютер | Порт | IP собеседника |
-|-----------|------|----------------|
-| 1 | 8080 | (пусто) |
-| 2 | 8081 | 192.168.1.100:8080 |
-
-## 📁 Хранение данных
+## Структура проекта
 
 ```
-macOS: ~/Library/Application Support/xam-messenger/history/
-Linux: ~/.config/xam-messenger/history/
-Windows: %APPDATA%\xam-messenger\history\
+lan-messenger-tauri/
+├── server/                 # Сервер (Rust)
+│   ├── src/
+│   │   └── main.rs        # Основной код сервера
+│   ├── Cargo.toml         # Зависимости
+│   ├── start.sh           # Скрипт запуска
+│   └── target/release/    # Скомпилированный сервер
+│
+├── src/                    # Клиент (JavaScript/HTML/CSS)
+│   ├── index.html         # Главная страница
+│   ├── app-server.js      # Клиент для сервера
+│   ├── server-client.js   # WebSocket клиент
+│   ├── styles.css         # Стили
+│   └── app.js             # P2P версия (резерв)
+│
+├── src-tauri/              # Tauri приложение
+│   ├── src/
+│   │   ├── main.rs        # Tauri бэкенд
+│   │   ├── network.rs     # P2P сеть
+│   │   └── state.rs       # Состояние
+│   ├── Cargo.toml
+│   └── tauri.conf.json
+│
+└── README.md
 ```
 
-Формат: JSONL (один JSON на строку)
+## Статусы сообщений
 
-## ⌨️ Горячие клавиши
+| Статус | Значение | Когда |
+|--------|----------|-------|
+| ⏳ | Отправлено | Ждём доставки |
+| ✓ | Доставлено | Получатель получил |
+| ✓✓ | Прочитано | Получатель открыл чат |
 
-| Клавиша | Действие |
-|---------|----------|
-| Enter | Отправить |
-| Ctrl+Enter | Новая строка |
-| Клик на сообщение | Копировать |
-| Клик на профиль | Настройки |
+## База данных
 
-## 📊 Статусы сообщений
+**Расположение:** `~/.config/xam-messenger/xam.db`
 
-| Статус | Значение |
-|--------|----------|
-| ⏳ | Отправлено |
-| ✓ | Доставлено собеседнику |
-| ✓✓ | Прочитано собеседником |
+**Таблицы:**
+```sql
+users (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE
+)
 
-## 🔧 Сборка
+messages (
+    id TEXT PRIMARY KEY,
+    sender_id TEXT,
+    sender_name TEXT,
+    text TEXT,
+    timestamp INTEGER,
+    delivery_status INTEGER DEFAULT 0
+)
+```
+
+## Для разработчиков
+
+### Сборка сервера
 
 ```bash
-# Windows
-cargo tauri build
-
-# Linux
-cargo tauri build
-
-# macOS (Intel + Apple Silicon)
-cargo tauri build --target universal-apple-darwin
+cd server
+cargo build --release
+./target/release/xam-server
 ```
 
-Размер: ~10-15 MB
+### Сборка Tauri клиента
+
+```bash
+cd src-tauri
+cargo tauri build
+```
+
+### Зависимости сервера
+
+- `actix-web` — веб-фреймворк
+- `actix-ws` — WebSocket
+- `rusqlite` — SQLite
+- `serde` — сериализация
+- `uuid` — генерация ID
+- `chrono` — время
+
+### Логирование
+
+```bash
+# Отладочный режим
+RUST_LOG=debug ./target/release/xam-server
+
+# Только ошибки
+RUST_LOG=error ./target/release/xam-server
+```
+
+## Troubleshooting
+
+### Сервер не запускается
+
+```bash
+# Проверьте, не занят ли порт 8080
+lsof -i :8080
+
+# Если занят — убейте процесс
+kill -9 <PID>
+```
+
+### Клиент не подключается
+
+1. Убедитесь, что сервер запущен
+2. Проверьте firewall (порт 8080)
+3. Попробуйте localhost вместо IP
+
+### Ошибки компиляции
+
+```bash
+# Очистите и пересоберите
+cargo clean
+cargo build --release
+```
+
+## Лицензия
+
+MIT
 
 ---
 
-**Учебный проект для LAN. Без шифрования.**
+**XAM Messenger** — простой и надёжный мессенджер для вашей локальной сети.
