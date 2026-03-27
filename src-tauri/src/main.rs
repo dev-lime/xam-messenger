@@ -126,7 +126,17 @@ fn send_ack(
     message_ids: Vec<String>,
 ) -> Result<(), String> {
     let mut state = app_state.lock().map_err(|e| e.to_string())?;
-    state.send_ack(&peer_address, message_ids)
+    state.send_ack(&peer_address, message_ids, false)
+}
+
+#[tauri::command]
+fn send_read_ack(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+    message_ids: Vec<String>,
+) -> Result<(), String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.send_ack(&peer_address, message_ids, true)
 }
 
 #[tauri::command]
@@ -159,6 +169,15 @@ fn mark_delivered(
     let mut state = app_state.lock().map_err(|e| e.to_string())?;
     state.mark_delivered(&peer_address, &message_id);
     Ok(())
+}
+
+#[tauri::command]
+fn retry_undelivered(
+    app_state: tauri::State<Mutex<AppState>>,
+    peer_address: String,
+) -> Result<usize, String> {
+    let mut state = app_state.lock().map_err(|e| e.to_string())?;
+    state.retry_undelivered(&peer_address)
 }
 
 #[tauri::command]
@@ -284,7 +303,9 @@ fn main() {
             connect_to_peer,
             send_message,
             send_ack,
+            send_read_ack,
             mark_delivered,
+            retry_undelivered,
             mark_read,
             update_delivery_status,
             get_connection_status,

@@ -3,7 +3,7 @@ use crate::history::HistoryManager;
 use crate::network::NetworkManager;
 use anyhow::Result;
 use chrono::Timelike;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub enum NetworkEvent {
@@ -106,17 +106,35 @@ impl AppState {
                 eprintln!("⚠️ ACK не получен, сообщение не доставлено");
             }
 
-            // Сохраняем в кэш
+            // Сохраняем в кэш (всегда, даже если не доставлено)
             self.message_cache
                 .entry(peer_address.to_string())
                 .or_insert_with(Vec::new)
                 .push(final_message.clone());
 
-            // Сохраняем в историю
+            // Сохраняем в историю (всегда, даже если не доставлено)
             self.history_mgr.save_message(peer_address, &final_message);
-            
+
             Ok(ack_received)
         } else {
+            // Нет сети - всё равно сохраняем сообщение для повторной отправки
+            let message = ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                timestamp: chrono::Utc::now(),
+                sender: self.my_name.clone(),
+                text: text.to_string(),
+                is_mine: true,
+                delivery_status: 0, // ⏳
+                files: Vec::new(),
+            };
+
+            self.message_cache
+                .entry(peer_address.to_string())
+                .or_insert_with(Vec::new)
+                .push(message.clone());
+
+            self.history_mgr.save_message(peer_address, &message);
+
             Ok(false)
         }
     }
@@ -128,9 +146,44 @@ impl AppState {
                 if msg.id == message_id && msg.delivery_status == 0 {
                     msg.delivery_status = 1; // ✓ Доставлено
                     eprintln!("📨 Сообщение {} доставлено", message_id);
+                    // Обновляем в истории
+                    self.history_mgr.save_message(peer_address, msg);
                     break;
                 }
             }
+        }
+    }
+
+    // Повторная отправка недоставленных сообщений
+    pub fn retry_undelivered(&mut self, peer_address: &str) -> Result<usize, String> {
+        if let Some(ref mut network) = self.network {
+            let mut retry_count = 0;
+            
+            // Ищем сообщения со статусом 0 (⏳) для этого пира
+            if let Some(messages) = self.message_cache.get_mut(peer_address) {
+                for msg in messages.iter_mut() {
+                    if msg.delivery_status == 0 {
+                        eprintln!("🔄 Повторная отправка сообщения {}", msg.id);
+                        let ack_received = network.send_message_with_ack(peer_address, msg).unwrap_or(false);
+                        if ack_received {
+                            msg.delivery_status = 1; // ✓ Доставлено
+                            retry_count += 1;
+                            eprintln!("✅ Сообщение {} доставлено при повторной отправке", msg.id);
+                        }
+                    }
+                }
+            }
+            
+            // Обновляем историю
+            if let Some(messages) = self.message_cache.get(peer_address) {
+                for msg in messages.iter() {
+                    self.history_mgr.save_message(peer_address, msg);
+                }
+            }
+            
+            Ok(retry_count)
+        } else {
+            Ok(0)
         }
     }
     
@@ -147,9 +200,10 @@ impl AppState {
         }
     }
     
-    pub fn send_ack(&mut self, peer_address: &str, message_ids: Vec<String>) -> Result<(), String> {
+    pub fn send_ack(&mut self, peer_address: &str, message_ids: Vec<String>, is_read_ack: bool) -> Result<(), String> {
         if let Some(ref mut network) = self.network {
-            network.send_ack(peer_address, &message_ids)?;
+            let my_port = self.my_port.as_deref().unwrap_or("0");
+            network.send_ack(peer_address, &message_ids, is_read_ack, my_port)?;
         }
         Ok(())
     }
@@ -190,20 +244,8 @@ impl AppState {
     }
 
     pub fn get_messages(&self, peer_address: &str) -> Vec<ChatMessage> {
-        // Всегда загружаем из истории (там все сообщения)
+        // Всегда загружаем ТОЛЬКО из истории (там актуальные статусы)
         let mut messages = self.history_mgr.load_messages(peer_address, 1000);
-        
-        // Если есть сообщения в кэше для этого пира - добавляем их
-        if let Some(cached) = self.message_cache.get(peer_address) {
-            // Собираем ID существующих сообщений
-            let existing_ids: HashSet<String> = messages.iter().map(|m| m.id.clone()).collect();
-            // Добавляем только те, которых нет в истории
-            for msg in cached {
-                if !existing_ids.contains(&msg.id) {
-                    messages.push(msg.clone());
-                }
-            }
-        }
         
         // Сортируем по времени
         messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));

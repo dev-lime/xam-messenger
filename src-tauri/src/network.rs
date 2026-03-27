@@ -38,8 +38,9 @@ impl NetworkManager {
 
         // Запускаем сервер входящих подключений
         let peer_conn_clone = peer_connections.clone();
+        let port_clone = port.clone();
         thread::spawn(move || {
-            Self::run_server(listener, event_tx_clone, history_mgr_clone, running_clone, peer_conn_clone);
+            Self::run_server(listener, event_tx_clone, history_mgr_clone, running_clone, peer_conn_clone, port_clone);
         });
 
         Ok(Self {
@@ -58,6 +59,7 @@ impl NetworkManager {
         history_mgr: HistoryManager,
         running: Arc<AtomicBool>,
         peer_connections: Arc<Mutex<HashMap<String, TcpStream>>>,
+        port: String,
     ) {
         listener.set_nonblocking(true).ok();
         eprintln!("🟢 Сервер запущен на порту {}", listener.local_addr().map(|a| a.port()).unwrap_or(0));
@@ -69,9 +71,10 @@ impl NetworkManager {
                     let event_tx = event_tx.clone();
                     let history_mgr = history_mgr.clone();
                     let peer_conn = peer_connections.clone();
+                    let my_port = port.clone();
 
                     thread::spawn(move || {
-                        Self::handle_connection(stream, addr.to_string(), event_tx, history_mgr, peer_conn);
+                        Self::handle_connection(stream, addr.to_string(), event_tx, history_mgr, peer_conn, my_port);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -91,6 +94,7 @@ impl NetworkManager {
         event_tx: Sender<NetworkEvent>,
         history_mgr: HistoryManager,
         _peer_connections: Arc<Mutex<HashMap<String, TcpStream>>>,
+        my_port: String,
     ) {
         eprintln!("📥 Обработка подключения от {}", peer_address);
 
@@ -131,18 +135,56 @@ impl NetworkManager {
                     let msg_data = String::from_utf8_lossy(&buffer[..n]).trim().to_string();
                     eprintln!("📩 Получено от {}: {}", peer_address, msg_data);
 
+                    // Нормализуем peer_address для ACK (берём IP клиента)
+                    let client_ip = peer_address.split(':').next().unwrap_or("127.0.0.1");
+                    
                     // Проверяем тип сообщения
+                    if msg_data.starts_with("READ_ACK|") {
+                        // READ_ACK — подтверждение прочтения (статус 2, ✓✓)
+                        // Формат: READ_ACK|port|msg1,msg2,...
+                        eprintln!("📨 READ_ACK подтверждение (прочитано)");
+                        let parts: Vec<&str> = msg_data.splitn(3, '|').collect();
+                        if parts.len() < 3 {
+                            eprintln!("❌ Неверный формат READ_ACK");
+                            continue;
+                        }
+                        let sender_port = parts[1];
+                        let ack_data = parts[2];
+                        let message_ids: Vec<String> = ack_data.split(',').map(|s| s.to_string()).collect();
+                        let _ = stream.write_all(b"READ_ACK_OK\n");
+
+                        // Нормализуем адрес: IP клиента + порт из сообщения
+                        let normalized_address = format!("{}:{}", client_ip, sender_port);
+                        
+                        // Обновляем статус доставки на ✓✓ (прочитано) в истории
+                        history_mgr.update_delivery_status(&normalized_address, &message_ids, 2);
+
+                        eprintln!("📤 Статус обновлён на ✓✓ для {} сообщений (адрес: {})", message_ids.len(), normalized_address);
+
+                        continue;
+                    }
+
                     if msg_data.starts_with("ACK|") {
-                        eprintln!("📨 ACK подтверждение");
-                        let ack_data = &msg_data[4..];
+                        // ACK — подтверждение доставки (статус 1, ✓)
+                        // Формат: ACK|port|msg1,msg2,...
+                        eprintln!("📨 ACK подтверждение (доставлено)");
+                        let parts: Vec<&str> = msg_data.splitn(3, '|').collect();
+                        if parts.len() < 3 {
+                            eprintln!("❌ Неверный формат ACK");
+                            continue;
+                        }
+                        let sender_port = parts[1];
+                        let ack_data = parts[2];
                         let message_ids: Vec<String> = ack_data.split(',').map(|s| s.to_string()).collect();
                         let _ = stream.write_all(b"ACK_OK\n");
 
-                        // Обновляем статус доставки на ✓✓ (прочитано)
-                        let _ = event_tx.send(NetworkEvent::DeliveryStatusUpdate {
-                            message_ids: message_ids.clone(),
-                            status: 2,
-                        });
+                        // Нормализуем адрес: IP клиента + порт из сообщения
+                        let normalized_address = format!("{}:{}", client_ip, sender_port);
+                        
+                        // Обновляем статус доставки на ✓ (доставлено) в истории
+                        history_mgr.update_delivery_status(&normalized_address, &message_ids, 1);
+
+                        eprintln!("📤 Статус обновлён на ✓ для {} сообщений (адрес: {})", message_ids.len(), normalized_address);
 
                         continue;
                     }
@@ -195,10 +237,11 @@ impl NetworkManager {
                     let _ = stream.write_all(b"OK\n");
                     eprintln!("📤 Отправлено подтверждение OK");
 
-                    // Отправляем ACK обратно для обновления статуса (✓ доставлено)
-                    let ack_message = format!("ACK|{}\n", msg_id);
+                    // Отправляем ACK для обновления статуса на ✓ (доставлено)
+                    // Формат: ACK|port|msg_id
+                    let ack_message = format!("ACK|{}|{}\n", my_port, msg_id);
                     let _ = stream.write_all(ack_message.as_bytes());
-                    eprintln!("📤 Отправлен ACK: {}", ack_message);
+                    eprintln!("📤 Отправлен ACK (доставлено): {}", ack_message);
 
                     // Отправляем событие во фронтенд
                     let event = NetworkEvent::MessageReceived {
@@ -303,19 +346,20 @@ impl NetworkManager {
         }
     }
 
-    // Отправить ACK
-    pub fn send_ack(&mut self, peer_address: &str, message_ids: &[String]) -> Result<bool, String> {
-        eprintln!("📤 Отправка ACK для {} сообщений", message_ids.len());
-        
+    // Отправить ACK или READ_ACK
+    pub fn send_ack(&mut self, peer_address: &str, message_ids: &[String], is_read_ack: bool, my_port: &str) -> Result<bool, String> {
+        let ack_type = if is_read_ack { "READ_ACK" } else { "ACK" };
+        eprintln!("📤 Отправка {} для {} сообщений", ack_type, message_ids.len());
+
         let mut connections = self.peer_connections.lock().map_err(|e| e.to_string())?;
-        
+
         let stream = match connections.get_mut(peer_address) {
             Some(s) => s,
             None => {
                 // Создаём новое подключение для ACK
                 match TcpStream::connect(peer_address) {
                     Ok(s) => {
-                        eprintln!("🔗 Подключение к {} для ACK", peer_address);
+                        eprintln!("🔗 Подключение к {} для {}", peer_address, ack_type);
                         connections.insert(peer_address.to_string(), s);
                         connections.get_mut(peer_address).unwrap()
                     }
@@ -326,9 +370,11 @@ impl NetworkManager {
                 }
             }
         };
-        
-        let ack_message = format!("ACK|{}", message_ids.join(","));
-        eprintln!("📝 Отправляем ACK: {}", ack_message);
+
+        let ack_prefix = if is_read_ack { "READ_ACK" } else { "ACK" };
+        // Формат: ACK|port|msg1,msg2,...
+        let ack_message = format!("{}|{}|{}\n", ack_prefix, my_port, message_ids.join(","));
+        eprintln!("📝 Отправляем: {}", ack_message);
         
         if let Err(e) = stream.write_all(ack_message.as_bytes()) {
             eprintln!("❌ Ошибка отправки ACK: {}", e);
@@ -339,12 +385,13 @@ impl NetworkManager {
         // Ждём подтверждение
         let mut buffer = [0u8; 1024];
         stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
-        
+
         match stream.read(&mut buffer) {
             Ok(n) if n > 0 => {
-                let response = String::from_utf8_lossy(&buffer[..n]);
-                eprintln!("✅ ACK подтверждение: {}", response);
-                Ok(response == "ACK_OK")
+                let response = String::from_utf8_lossy(&buffer[..n]).trim().to_string();
+                let expected = if is_read_ack { "READ_ACK_OK" } else { "ACK_OK" };
+                eprintln!("✅ {} подтверждение: {}", ack_type, response);
+                Ok(response == expected)
             }
             _ => Ok(false)
         }

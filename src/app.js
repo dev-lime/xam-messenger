@@ -178,9 +178,12 @@ async function init() {
     }
 
     setupEventListeners();
-    
-    // Периодическая проверка новых сообщений
-    setInterval(checkNewMessages, 1000);
+
+    // Запрашиваем разрешение на уведомления
+    requestNotificationPermission();
+
+    // Периодическая проверка новых сообщений (чаще для лучшей реакции)
+    setInterval(checkNewMessages, 200);
 }
 
 // Загрузка списка контактов
@@ -263,9 +266,21 @@ async function selectPeer(address) {
             // Подключаемся к собеседнику
             await invoke('connect_to_peer', { peerAddress: address });
             state.connected = true;
-            
+
             updateStatusDisplay(true, address);
             console.log('✅ Подключено к', address, 'на порту', myPort);
+
+            // Повторная отправка недоставленных сообщений
+            try {
+                const retryCount = await invoke('retry_undelivered', { peerAddress: address });
+                if (retryCount > 0) {
+                    console.log('🔄 Повторно отправлено сообщений:', retryCount);
+                    // Обновляем сообщения
+                    await loadMessages(address);
+                }
+            } catch (e) {
+                console.warn('Failed to retry undelivered:', e);
+            }
         } catch (error) {
             console.error('❌ Ошибка подключения:', error);
             // Всё равно показываем чат
@@ -279,13 +294,14 @@ async function selectPeer(address) {
 // Загрузка сообщений
 async function loadMessages(peerAddress) {
     console.log('📂 Загрузка сообщений для:', peerAddress);
-    
+
     try {
         const messages = await invoke('get_messages', { peerAddress });
         console.log('📚 Загружено сообщений:', messages.length);
-        
+        console.log('📋 Статусы сообщений:', messages.map(m => ({ id: m.id.slice(0,8), is_mine: m.is_mine, status: m.delivery_status })));
+
         state.messages = messages;
-        
+
         // Если peer_address не установлен, устанавливаем его
         if (!state.peerAddress && peerAddress) {
             state.peerAddress = peerAddress;
@@ -295,30 +311,26 @@ async function loadMessages(peerAddress) {
                 console.warn('Failed to set peer_address:', e);
             }
         }
-        
-        // Отправляем READ ACK для непрочитанных сообщений (✓ → ✓✓)
+
+        // Отправляем READ ACK для всех непрочитанных сообщений при загрузке чата
         const unreadIds = messages
             .filter(m => !m.is_mine && m.delivery_status < 2)
             .map(m => m.id);
-        
+
         if (unreadIds.length > 0) {
             console.log('📤 Отправка READ ACK (прочитано) для', unreadIds.length, 'сообщений');
-            try {
-                await invoke('mark_read', { peerAddress, messageIds: unreadIds });
-                await invoke('send_ack', { peerAddress, messageIds: unreadIds });
-                
-                // Обновляем статус локально
-                unreadIds.forEach(id => {
-                    const msg = state.messages.find(m => m.id === id);
-                    if (msg) msg.delivery_status = 2; // ✓✓
-                });
-            } catch (e) {
-                console.warn('Failed to send read ACK:', e);
-            }
+            await invoke('mark_read', { peerAddress, messageIds: unreadIds });
+            await invoke('send_read_ack', { peerAddress, messageIds: unreadIds });
+
+            // Обновляем статус локально
+            unreadIds.forEach(id => {
+                const msg = state.messages.find(m => m.id === id);
+                if (msg) msg.delivery_status = 2; // ✓✓
+            });
         }
-        
+
         renderMessages();
-        
+
         // Обновляем статус - показываем что подключены
         updateStatusDisplay(true, peerAddress);
     } catch (error) {
@@ -329,7 +341,7 @@ async function loadMessages(peerAddress) {
 // Рендеринг сообщений
 function renderMessages() {
     console.log('🎨 Рендеринг сообщений:', state.messages.length);
-    
+
     elements.messages.innerHTML = '';
 
     if (state.messages.length === 0) {
@@ -337,7 +349,22 @@ function renderMessages() {
         return;
     }
 
+    let lastDate = null;
+
     state.messages.forEach(msg => {
+        // Проверяем дату сообщения
+        const msgDate = new Date(msg.timestamp * 1000);
+        const dateStr = msgDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+        
+        // Если дата отличается от предыдущей - добавляем разделитель
+        if (lastDate !== dateStr) {
+            const dateEl = document.createElement('div');
+            dateEl.className = 'message-date-separator';
+            dateEl.textContent = dateStr;
+            elements.messages.appendChild(dateEl);
+            lastDate = dateStr;
+        }
+
         const messageEl = createMessageElement(msg);
         elements.messages.appendChild(messageEl);
     });
@@ -363,15 +390,18 @@ function createMessageElement(msg) {
         // Своё сообщение с галочками
         let statusIcon = '🕐';
         let statusTitle = 'Отправлено';
-        
+
         if (msg.delivery_status === 1) {
             statusIcon = '✓';
             statusTitle = 'Доставлено';
         } else if (msg.delivery_status === 2) {
             statusIcon = '✓✓';
             statusTitle = 'Прочитано';
+        } else if (msg.delivery_status === 0) {
+            statusIcon = '⏳';
+            statusTitle = 'Отправлено... (повтор при подключении)';
         }
-        
+
         // Проверяем, сообщение с файлами ли это
         if (msg.files && msg.files.length > 0) {
             const filesHtml = msg.files.map(f => `
@@ -381,7 +411,7 @@ function createMessageElement(msg) {
                     <span class="file-size">${formatFileSize(f.size)}</span>
                 </div>
             `).join('');
-            
+
             div.innerHTML = `
                 <div class="files-container">
                     ${filesHtml}
@@ -809,15 +839,16 @@ async function checkNewMessages() {
                 await invoke('set_peer_address', { peerAddress: state.currentPeer });
             }
 
-            // Находим новые сообщения (те, которых нет в state.messages)
+            // Находим новые входящие сообщения
             const existingIds = new Set(state.messages.map(m => m.id));
-            const newMessages = messages.filter(m => !existingIds.has(m.id));
-            const newIds = newMessages.filter(m => !m.is_mine).map(m => m.id);
+            const newMessages = messages.filter(m => !existingIds.has(m.id) && !m.is_mine);
+            const newIncomingIds = newMessages.map(m => m.id);
 
-            if (newIds.length > 0) {
-                console.log('📤 Отправка READ ACK для', newIds.length, 'сообщений');
-                await invoke('mark_read', { peerAddress: state.currentPeer, messageIds: newIds });
-                await invoke('send_ack', { peerAddress: state.currentPeer, messageIds: newIds });
+            // Всегда отправляем READ_ACK для новых сообщений
+            if (newIncomingIds.length > 0) {
+                console.log('📤 Новые сообщения — отправляем READ_ACK');
+                await invoke('mark_read', { peerAddress: state.currentPeer, messageIds: newIncomingIds });
+                await invoke('send_read_ack', { peerAddress: state.currentPeer, messageIds: newIncomingIds });
             }
 
             state.messages = messages;
@@ -827,9 +858,11 @@ async function checkNewMessages() {
 
         // Проверяем обновления статуса доставки для существующих сообщений
         let needsRender = false;
-        messages.forEach((newMsg, i) => {
-            if (state.messages[i] && state.messages[i].delivery_status !== newMsg.delivery_status) {
-                state.messages[i].delivery_status = newMsg.delivery_status;
+        messages.forEach((newMsg, idx) => {
+            const oldMsg = state.messages[idx];
+            if (oldMsg && oldMsg.id === newMsg.id && oldMsg.delivery_status !== newMsg.delivery_status) {
+                console.log(`🔄 Статус сообщения ${newMsg.id}: ${oldMsg.delivery_status} → ${newMsg.delivery_status}`);
+                state.messages[idx].delivery_status = newMsg.delivery_status;
                 needsRender = true;
             }
         });
@@ -841,3 +874,66 @@ async function checkNewMessages() {
 
 // Запуск
 init();
+
+// ============ Уведомления ============
+
+// Запрос разрешения на уведомления
+function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+}
+
+// Показать уведомление
+function showNotification(sender, messages) {
+    if (!('Notification' in window)) {
+        console.log('🔔 Уведомления не поддерживаются');
+        return;
+    }
+
+    if (Notification.permission === 'granted') {
+        const lastMsg = messages[messages.length - 1];
+        const body = lastMsg.text || (lastMsg.files?.length > 0 ? '📎 Файл' : 'Новое сообщение');
+        
+        const notification = new Notification(sender, {
+            body,
+            icon: '/icon.png', // Иконка приложения
+            tag: 'xam-messenger', // Группировка уведомлений
+            requireInteraction: false,
+        });
+
+        // Клик по уведомлению — открыть приложение
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+    }
+}
+
+// Обработчик изменения видимости окна
+document.addEventListener('visibilitychange', async () => {
+    console.log('👁️ visibilitychange:', document.visibilityState, 'hidden:', document.hidden);
+    
+    if (document.visibilityState === 'visible' && state.currentPeer) {
+        // Окно стало видимым — проверяем непрочитанные
+        console.log('👁️ Окно стало видимым, проверяем непрочитанные');
+        
+        const messages = await invoke('get_messages', { peerAddress: state.currentPeer });
+        const unreadIds = messages
+            .filter(m => !m.is_mine && m.delivery_status < 2)
+            .map(m => m.id);
+
+        if (unreadIds.length > 0) {
+            console.log('📤 Отправка READ ACK после возврата в фокус');
+            await invoke('mark_read', { peerAddress: state.currentPeer, messageIds: unreadIds });
+            await invoke('send_read_ack', { peerAddress: state.currentPeer, messageIds: unreadIds });
+            
+            // Обновляем локальный статус
+            unreadIds.forEach(id => {
+                const msg = state.messages.find(m => m.id === id);
+                if (msg) msg.delivery_status = 2;
+            });
+            renderMessages();
+        }
+    }
+});
