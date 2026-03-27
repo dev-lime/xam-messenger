@@ -211,6 +211,14 @@ body {
     font-weight: 500;
     font-size: 13px;
     margin-left: auto;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+
+.status:hover {
+    background: var(--bg-secondary);
 }
 
 /* Chat */

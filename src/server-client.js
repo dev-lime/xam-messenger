@@ -194,26 +194,31 @@ class ServerClient {
     }
 
     // Отправка текстового сообщения
-    sendMessage(text) {
+    sendMessage(text, recipientId = null) {
         this.send({
             type: 'message',
             text,
             files: [],
+            recipient_id: recipientId,
         });
     }
 
     // Отправка файла
-    async sendFile(file) {
+    async sendFile(file, recipientId = null) {
+        // Создаём FormData для multipart/form-data
+        const formData = new FormData();
+        formData.append('file', file);
+
         // Загружаем файл на сервер
         const response = await fetch(`${this.httpUrl}/files`, {
             method: 'POST',
-            body: file,
+            body: formData,
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
-            // Отправляем сообщение с файлом
+            // Отправляем сообщение с файлом через WebSocket
             this.send({
                 type: 'message',
                 text: `📎 Файл: ${file.name}`,
@@ -222,7 +227,11 @@ class ServerClient {
                     size: file.size,
                     path: result.data.path,
                 }],
+                recipient_id: recipientId,
             });
+            return true;
+        } else {
+            throw new Error(result.error || 'Failed to upload file');
         }
     }
 

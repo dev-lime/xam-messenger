@@ -3,22 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Xam Messenger</title>
+    <title>XAM Messenger</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="app">
         <!-- Левая панель - список контактов -->
         <aside class="sidebar">
-            <!-- Список контактов -->
             <div class="peers-list" id="peersList">
                 <!-- Контакты будут загружены сюда -->
             </div>
-            
-            <!-- Плавающая кнопка подключения -->
-            <button class="fab fab-connect" id="connectBtn" title="Подключиться">
-                <span>+</span>
-            </button>
         </aside>
 
         <!-- Основная панель - чат -->
@@ -32,7 +26,7 @@
                         <div class="user-address-header" id="userAddress">--</div>
                     </div>
                 </div>
-                <div class="status" id="status">⚫ Не подключен</div>
+                <div class="status" id="status">⚫ Не в сети</div>
             </header>
 
             <!-- Список сообщений -->
@@ -42,9 +36,9 @@
                 </div>
             </div>
 
-            <!-- Прикреплённые файлы (появляется только при наличии файлов) -->
+            <!-- Прикреплённые файлы -->
             <div class="attached-files" id="attachedFiles" style="display: none;"></div>
-            
+
             <!-- Панель ввода -->
             <div class="input-area">
                 <button class="btn btn-attach" id="attachBtn" title="Прикрепить файл">📎</button>
@@ -57,7 +51,7 @@
                     <span>➤</span>
                 </button>
             </div>
-            
+
             <!-- Скрытый input для файлов -->
             <input type="file" id="fileInput" style="display: none;" multiple>
         </main>
@@ -73,8 +67,8 @@
                 <label>Ваше имя</label>
                 <input type="text" id="userNameInput" placeholder="Введите имя" maxlength="20">
             </div>
-            <p class="hint">💡 Для начала работы просто введите имя<br>
-               Сервер будет найден автоматически</p>
+            <p class="hint">💡 Введите имя для подключения к серверу<br>
+               Сервер будет найден автоматически в локальной сети</p>
             <div id="serverStatus" style="margin-top: 12px; font-size: 13px;">
                 <span style="color: var(--text-secondary);">🔍 Поиск сервера...</span>
             </div>
@@ -98,7 +92,7 @@
                 <label>Аватар (эмодзи)</label>
                 <input type="text" id="settingsAvatarInput" placeholder="👤" maxlength="2">
             </div>
-            <p class="hint">Эти настройки сохранятся для следующих подключений</p>
+            <p class="hint">Настройки сохранятся в браузере</p>
         </div>
         <div class="dialog-actions">
             <button class="btn" id="cancelSettings">Отмена</button>
@@ -106,8 +100,8 @@
         </div>
     </dialog>
 
-    <!-- Подключение клиента сервера -->
+    <!-- Клиент -->
     <script src="server-client.js"></script>
-    <script src="app-server.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
