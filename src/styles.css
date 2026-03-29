@@ -72,8 +72,16 @@ body {
 }
 
 .peer-icon {
+    color: black;
     font-size: 28px;
     margin-right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: var(--bg-tertiary);
+    border-radius: 50%;
 }
 
 .peer-info {

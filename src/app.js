@@ -57,6 +57,7 @@ async function init() {
     serverClient.on('ack', handleAck);
     serverClient.on('messages', handleMessages);
     serverClient.on('user_online', handleUserOnline);
+    serverClient.on('user_updated', handleUserUpdated);
 
     setupEventListeners();
 
@@ -238,9 +239,28 @@ function handleUserOnline(data) {
     renderPeers();
 }
 
+// Обработка обновления профиля (аватара)
+function handleUserUpdated(data) {
+    log(`👤 Пользователь ${data.user_id} обновил аватар: ${data.avatar}`);
+    
+    // Находим пользователя и обновляем его аватар
+    const peer = state.peers.find(p => p.id === data.user_id);
+    if (peer) {
+        peer.avatar = data.avatar;
+        renderPeers();
+    }
+    
+    // Если это текущий пользователь, обновляем state.user и UI
+    if (data.user_id === state.user?.id) {
+        state.user.avatar = data.avatar;
+        updateUserProfile(state.user.name, elements.userAddress.textContent);
+    }
+}
+
 // Подключение к серверу
 async function connectToServer() {
     const name = elements.userNameInput.value.trim();
+    const avatar = userSettings?.avatar || '👤';
 
     if (!name) {
         alert('Введите ваше имя');
@@ -254,8 +274,8 @@ async function connectToServer() {
         // Находим и подключаемся к серверу
         await serverClient.connect();
 
-        // Регистрируемся
-        const user = await serverClient.register(name);
+        // Регистрируемся с аватаром
+        const user = await serverClient.register(name, avatar);
         state.user = user;
         state.connected = true;
 
@@ -433,6 +453,9 @@ function renderPeers() {
         // Проверяем онлайн статус
         const isOnline = state.onlineUsers.has(peer.id);
 
+        // Получаем аватар пользователя (из данных или по умолчанию)
+        const peerAvatar = peer.avatar || '👤';
+
         // Форматируем время
         let timeStr = '';
         if (isOnline) {
@@ -456,7 +479,7 @@ function renderPeers() {
         }
 
         item.innerHTML = `
-            <span class="peer-icon">👤</span>
+            <span class="peer-icon">${peerAvatar}</span>
             <div class="peer-info">
                 <div class="peer-name">${escapeHtml(peer.name)}</div>
                 <div class="peer-address">ID: ${peer.id.slice(0, 8)}</div>
@@ -700,7 +723,8 @@ function updateStatusDisplay(connected, statusText) {
 
 // Обновление профиля
 function updateUserProfile(name, status) {
-    const avatar = userSettings?.avatar || '👤';
+    // Берём аватар из данных пользователя (с сервера), а не из localStorage
+    const avatar = state.user?.avatar || userSettings?.avatar || '👤';
     elements.userName.textContent = name || 'Не подключен';
     elements.userAddress.textContent = status || '--';
     elements.userAvatar.textContent = avatar;
@@ -909,9 +933,22 @@ function setupEventListeners() {
         if (name && state.user) {
             state.user.name = name;
             userSettings = { name, avatar };
+            saveUserSettings();
             updateUserProfile(name, elements.userAddress.textContent);
+            
+            // Отправляем обновлённый профиль на сервер
+            if (state.connected) {
+                serverClient.send({
+                    type: 'update_profile',
+                    text: avatar
+                });
+                log(`👤 Профиль обновлён: ${name}, аватар: ${avatar}`);
+            }
         }
-        elements.settingsDialog.close();
+        // Закрываем диалог
+        if (elements.settingsDialog) {
+            elements.settingsDialog.close();
+        }
     });
 }
 

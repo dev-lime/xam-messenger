@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct User { id: String, name: String }
+struct User { id: String, name: String, avatar: String }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct FileData {
@@ -72,9 +72,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Таблицы
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE)",
+        "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
         [],
     )?;
+    // Миграция: добавляем колонку avatar если её нет (для старых баз)
+    conn.execute(
+        "ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT '👤'",
+        [],
+    ).ok(); // Игнорируем ошибку если колонка уже существует
+    
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
@@ -95,6 +101,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         )",
         [],
     )?;
+    
+    // Обновляем существующих пользователей аватаром по умолчанию
+    conn.execute(
+        "UPDATE users SET avatar = '👤' WHERE avatar IS NULL OR avatar = ''",
+        [],
+    ).ok();
     
     let db = Arc::new(Mutex::new(conn));
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
@@ -151,15 +163,23 @@ async fn handle_client_msg(
     match client_msg.msg_type.as_str() {
         "register" => {
             let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+            
+            // Получаем аватар из запроса или используем значение по умолчанию
+            let avatar = if !client_msg.text.is_empty() { 
+                client_msg.text.clone() 
+            } else { 
+                "👤".to_string()
+            };
+            
             let user: User = conn.query_row(
-                "INSERT OR IGNORE INTO users (id, name) VALUES (?1, ?2) RETURNING id, name",
-                params![Uuid::new_v4().to_string(), client_msg.name],
-                |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
+                "INSERT OR IGNORE INTO users (id, name, avatar) VALUES (?1, ?2, ?3) RETURNING id, name, avatar",
+                params![Uuid::new_v4().to_string(), client_msg.name, avatar],
+                |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
             ).or_else(|_| {
                 conn.query_row(
-                    "SELECT id, name FROM users WHERE name = ?1",
+                    "SELECT id, name, avatar FROM users WHERE name = ?1",
                     params![client_msg.name],
-                    |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
+                    |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
                 )
             }).unwrap();
 
@@ -194,6 +214,36 @@ async fn handle_client_msg(
             }).to_string()).await;
 
             log::info!("✅ {}: {}", user.name, user.id);
+        }
+        "update_profile" => {
+            let uid = match &user_id {
+                Some(id) => id.clone(),
+                None => {
+                    log::warn!("⚠️ Обновление профиля до регистрации");
+                    return;
+                }
+            };
+            
+            let new_avatar = if !client_msg.text.is_empty() {
+                client_msg.text.clone()
+            } else {
+                "👤".to_string()
+            };
+            
+            log::info!("👤 Обновление профиля: user={}, avatar={}", uid, new_avatar);
+            
+            let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+            conn.execute(
+                "UPDATE users SET avatar = ?1 WHERE id = ?2",
+                params![new_avatar, uid],
+            ).unwrap();
+            
+            // Обновляем онлайн пользователей и рассылаем новый аватар
+            let _ = state.tx.send(json!({
+                "type": "user_updated",
+                "user_id": uid,
+                "avatar": new_avatar
+            }));
         }
         "message" => {
             let uid = match &user_id {
@@ -383,8 +433,13 @@ async fn handle_ws(
                         break;
                     }
                     Err(e) => {
-                        log::error!("❌ Ошибка WebSocket: {}", e);
-
+                        // I/O error: payload reached EOF - это нормальное поведение при разрыве соединения
+                        if e.to_string().contains("payload reached EOF") {
+                            log::debug!("🔌 Клиент отключился (разрыв соединения)");
+                        } else {
+                            log::error!("❌ Ошибка WebSocket: {}", e);
+                        }
+                        
                         // Удаляем из онлайн
                         if let Some(uid) = &user_id {
                             state.online_users.lock().unwrap().remove(uid);
@@ -430,32 +485,32 @@ async fn register(data: web::Data<AppState>, body: web::Json<RegisterReq>) -> Ht
 
     // Пробуем найти существующего пользователя или создать нового
     let user = match db.query_row(
-        "SELECT id, name FROM users WHERE name = ?1",
+        "SELECT id, name, avatar FROM users WHERE name = ?1",
         params![name],
-        |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
+        |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
     ) {
         Ok(u) => u,
         Err(_) => {
             match db.query_row(
-                "INSERT INTO users (id, name) VALUES (?1, ?2) RETURNING id, name",
+                "INSERT INTO users (id, name) VALUES (?1, ?2) RETURNING id, name, avatar",
                 params![Uuid::new_v4().to_string(), name],
-                |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
+                |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
             ) {
                 Ok(u) => u,
                 Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
             }
         }
     };
-    
+
     HttpResponse::Ok().json(json!({"success": true, "data": user}))
 }
 
 async fn get_users(data: web::Data<AppState>) -> HttpResponse {
     let conn = data.db.lock().unwrap_or_else(|e| e.into_inner());
-    let mut stmt = conn.prepare("SELECT id, name FROM users ORDER BY name").unwrap();
+    let mut stmt = conn.prepare("SELECT id, name, avatar FROM users ORDER BY name").unwrap();
     let users: Vec<User> = stmt.query_map(
         params![],
-        |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
+        |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
     ).unwrap().filter_map(|r| r.ok()).collect();
     HttpResponse::Ok().json(json!({"success": true, "data": users}))
 }
@@ -645,7 +700,7 @@ mod tests {
         // Создаём таблицы
         let conn = db.lock().unwrap();
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE)",
+            "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
             [],
         )
         .unwrap();
@@ -653,7 +708,7 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
                 text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
-                recipient_id TEXT, files TEXT
+                recipient_id TEXT, files TEXT DEFAULT '[]'
             )",
             [],
         )
@@ -1329,6 +1384,7 @@ mod tests {
         let user = User {
             id: "test-id".to_string(),
             name: "Test User".to_string(),
+            avatar: "👤".to_string(),
         };
 
         let json = serde_json::to_string(&user).unwrap();
