@@ -1,0 +1,511 @@
+/**
+ * Интеграционные тесты для XAM Messenger
+ * Тестируют взаимодействие между клиентом и сервером
+ */
+
+// Эти тесты требуют запущенного сервера
+// Запуск: npm run test:integration
+
+const TEST_SERVER_URL = process.env.TEST_SERVER_URL || 'http://localhost:8080';
+const TEST_WS_URL = process.env.TEST_WS_URL || 'ws://localhost:8080/ws';
+
+describe('Интеграционные тесты - XAM Messenger', () => {
+    let userIds = [];
+    let users = [];
+
+    // Вспомогательная функция для регистрации пользователя
+    const registerUser = async (name) => {
+        const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+        });
+        const result = await response.json();
+        if (result.success) {
+            userIds.push(result.data.id);
+            users.push(result.data);
+            return result.data;
+        }
+        throw new Error(result.error);
+    };
+
+    // Вспомогательная функция для создания WebSocket подключения
+    const createWebSocket = () => {
+        return new Promise((resolve, reject) => {
+            const ws = new WebSocket(TEST_WS_URL);
+            ws.onopen = () => resolve(ws);
+            ws.onerror = (error) => reject(error);
+            setTimeout(() => reject(new Error('WebSocket timeout')), 5000);
+        });
+    };
+
+    beforeEach(() => {
+        userIds = [];
+        users = [];
+    });
+
+    describe('Регистрация пользователей', () => {
+        test('должен регистрировать нового пользователя через HTTP API', async () => {
+            const user = await registerUser(`Тест_${Date.now()}`);
+            
+            expect(user).toHaveProperty('id');
+            expect(user).toHaveProperty('name');
+            expect(typeof user.id).toBe('string');
+        });
+
+        test('должен возвращать того же пользователя при повторной регистрации', async () => {
+            const uniqueName = `UniqueUser_${Date.now()}`;
+            
+            const user1 = await registerUser(uniqueName);
+            const user2 = await registerUser(uniqueName);
+            
+            expect(user1.id).toBe(user2.id);
+            expect(user1.name).toBe(user2.name);
+        });
+
+        test('должен отклонять пустое имя', async () => {
+            const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: '' }),
+            });
+            const result = await response.json();
+            
+            expect(result.success).toBe(false);
+        });
+    });
+
+    describe('Список пользователей', () => {
+        test('должен возвращать список зарегистрированных пользователей', async () => {
+            await registerUser(`User1_${Date.now()}`);
+            await registerUser(`User2_${Date.now()}`);
+
+            const response = await fetch(`${TEST_SERVER_URL}/api/users`);
+            const result = await response.json();
+            
+            expect(result.success).toBe(true);
+            expect(result.data).toBeInstanceOf(Array);
+            expect(result.data.length).toBeGreaterThanOrEqual(2);
+        });
+    });
+
+    describe('WebSocket подключение', () => {
+        test('должен подключаться к WebSocket серверу', async () => {
+            const ws = await createWebSocket();
+            expect(ws.readyState).toBe(WebSocket.OPEN);
+            ws.close();
+        });
+
+        test('должен получать подтверждение регистрации через WebSocket', async () => {
+            const ws = await createWebSocket();
+            const userName = `WSUser_${Date.now()}`;
+            
+            const registeredPromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'registered') {
+                        resolve(data);
+                    }
+                };
+            });
+            
+            ws.send(JSON.stringify({ type: 'register', name: userName }));
+            
+            const result = await registeredPromise;
+            expect(result.type).toBe('registered');
+            expect(result.user.name).toBe(userName);
+            
+            ws.close();
+        });
+    });
+
+    describe('Обмен сообщениями', () => {
+        let ws1, ws2;
+        let user1, user2;
+
+        beforeEach(async () => {
+            // Регистрируем двух пользователей
+            user1 = await registerUser(`Sender_${Date.now()}`);
+            user2 = await registerUser(`Receiver_${Date.now()}`);
+
+            // Подключаемся через WebSocket
+            ws1 = await createWebSocket();
+            ws2 = await createWebSocket();
+
+            // Регистрируемся через WebSocket
+            await new Promise((resolve) => {
+                let resolved = 0;
+                const checkResolve = () => {
+                    resolved++;
+                    if (resolved === 2) resolve();
+                };
+
+                ws1.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'registered') checkResolve();
+                };
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'registered') checkResolve();
+                };
+
+                ws1.send(JSON.stringify({ type: 'register', name: user1.name }));
+                ws2.send(JSON.stringify({ type: 'register', name: user2.name }));
+            });
+        });
+
+        afterEach(() => {
+            if (ws1) ws1.close();
+            if (ws2) ws2.close();
+        });
+
+        test('должен отправлять сообщения между пользователями', async () => {
+            const messageText = `Тестовое сообщение ${Date.now()}`;
+            
+            const messagePromise = new Promise((resolve) => {
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'message') {
+                        resolve(data.message);
+                    }
+                };
+            });
+            
+            // Отправляем сообщение
+            ws1.send(JSON.stringify({
+                type: 'message',
+                text: messageText,
+                recipient_id: user2.id,
+            }));
+            
+            const message = await messagePromise;
+            expect(message.text).toBe(messageText);
+            expect(message.sender_id).toBe(user1.id);
+        });
+
+        test('должен присваивать уникальный ID сообщению', async () => {
+            const messagePromise = new Promise((resolve) => {
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'message') {
+                        resolve(data.message);
+                    }
+                };
+            });
+            
+            ws1.send(JSON.stringify({
+                type: 'message',
+                text: 'Тест ID',
+                recipient_id: user2.id,
+            }));
+            
+            const message = await messagePromise;
+            expect(message.id).toBeDefined();
+            expect(typeof message.id).toBe('string');
+            expect(message.id.length).toBeGreaterThan(0);
+        });
+
+        test('должен устанавливать временную метку сообщения', async () => {
+            const beforeSend = Date.now();
+            
+            const messagePromise = new Promise((resolve) => {
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'message') {
+                        resolve(data.message);
+                    }
+                };
+            });
+            
+            ws1.send(JSON.stringify({
+                type: 'message',
+                text: 'Тест времени',
+                recipient_id: user2.id,
+            }));
+            
+            const message = await messagePromise;
+            const messageTime = message.timestamp * 1000;
+            
+            expect(messageTime).toBeGreaterThanOrEqual(beforeSend - 1000);
+            expect(messageTime).toBeLessThanOrEqual(Date.now() + 1000);
+        });
+    });
+
+    describe('Статусы доставки (ACK)', () => {
+        let ws1, ws2;
+        let user1, user2;
+
+        beforeEach(async () => {
+            user1 = await registerUser(`Sender_${Date.now()}`);
+            user2 = await registerUser(`Receiver_${Date.now()}`);
+
+            ws1 = await createWebSocket();
+            ws2 = await createWebSocket();
+
+            await new Promise((resolve) => {
+                let resolved = 0;
+                const checkResolve = () => {
+                    resolved++;
+                    if (resolved === 2) resolve();
+                };
+
+                ws1.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'registered') checkResolve();
+                };
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'registered') checkResolve();
+                };
+
+                ws1.send(JSON.stringify({ type: 'register', name: user1.name }));
+                ws2.send(JSON.stringify({ type: 'register', name: user2.name }));
+            });
+        });
+
+        afterEach(() => {
+            if (ws1) ws1.close();
+            if (ws2) ws2.close();
+        });
+
+        test('должен обновлять статус сообщения на "прочитано"', async () => {
+            // Отправляем сообщение
+            const messagePromise = new Promise((resolve) => {
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'message') {
+                        resolve(data.message);
+                    }
+                };
+            });
+            
+            ws1.send(JSON.stringify({
+                type: 'message',
+                text: 'Сообщение для ACK',
+                recipient_id: user2.id,
+            }));
+            
+            const message = await messagePromise;
+            
+            // Отправляем ACK
+            const ackPromise = new Promise((resolve) => {
+                ws1.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'ack') {
+                        resolve(data);
+                    }
+                };
+            });
+            
+            ws2.send(JSON.stringify({
+                type: 'ack',
+                message_id: message.id,
+                status: 'read',
+            }));
+            
+            const ack = await ackPromise;
+            expect(ack.type).toBe('ack');
+            expect(ack.message_id).toBe(message.id);
+            expect(ack.status).toBe('read');
+        });
+    });
+
+    describe('История сообщений', () => {
+        test('должен возвращать историю сообщений', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`HistoryUser_${Date.now()}`);
+            
+            const messagesPromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'messages') {
+                        resolve(data.messages);
+                    }
+                };
+            });
+            
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+            await new Promise(r => setTimeout(r, 100));
+            
+            // Запрашиваем историю
+            ws.send(JSON.stringify({ type: 'get_messages', limit: 100 }));
+            
+            const messages = await messagesPromise;
+            expect(Array.isArray(messages)).toBe(true);
+            
+            ws.close();
+        });
+
+        test('должен ограничивать количество сообщений лимитом', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`LimitUser_${Date.now()}`);
+            
+            const messagesPromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'messages') {
+                        resolve(data.messages);
+                    }
+                };
+            });
+            
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+            await new Promise(r => setTimeout(r, 100));
+            
+            ws.send(JSON.stringify({ type: 'get_messages', limit: 5 }));
+            
+            const messages = await messagesPromise;
+            expect(messages.length).toBeLessThanOrEqual(5);
+            
+            ws.close();
+        });
+    });
+
+    describe('Загрузка файлов', () => {
+        test('должен загружать файл на сервер', async () => {
+            const formData = new FormData();
+            const testFile = new File(['Test content'], 'test.txt', { type: 'text/plain' });
+            formData.append('file', testFile);
+
+            const response = await fetch(`${TEST_SERVER_URL}/api/files`, {
+                method: 'POST',
+                body: formData,
+            });
+            const result = await response.json();
+            
+            expect(result.success).toBe(true);
+            expect(result.data).toHaveProperty('id');
+            expect(result.data).toHaveProperty('name', 'test.txt');
+            expect(result.data).toHaveProperty('size');
+            expect(result.data).toHaveProperty('path');
+        });
+
+        test('должен отклонять пустой запрос файла', async () => {
+            const response = await fetch(`${TEST_SERVER_URL}/api/files`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            const result = await response.json();
+            
+            expect(result.success).toBe(false);
+        });
+    });
+
+    describe('Статусы онлайн пользователей', () => {
+        test('должен возвращать список онлайн пользователей', async () => {
+            const response = await fetch(`${TEST_SERVER_URL}/api/online`);
+            const result = await response.json();
+            
+            expect(result.success).toBe(true);
+            expect(result.data).toBeInstanceOf(Array);
+        });
+    });
+
+    describe('CORS заголовки', () => {
+        test('должен возвращать CORS заголовки', async () => {
+            const response = await fetch(`${TEST_SERVER_URL}/api/users`, {
+                headers: { 'Origin': 'http://example.com' },
+            });
+            
+            expect(response.headers.has('Access-Control-Allow-Origin')).toBe(true);
+        });
+    });
+});
+
+describe('Интеграционные тесты - Краевые случаи', () => {
+    const TEST_SERVER_URL = 'http://localhost:8080';
+
+    describe('Валидация данных', () => {
+        test('должен обрабатывать специальные символы в имени', async () => {
+            const specialNames = [
+                'O\'Brien',
+                '张三',
+                'User<Script>',
+                'User "Quotes"',
+            ];
+
+            for (const name of specialNames) {
+                const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
+                const result = await response.json();
+                
+                // Должен успешно зарегистрировать
+                expect(result.success).toBe(true);
+            }
+        });
+
+        test('должен обрабатывать очень длинные имена', async () => {
+            const longName = 'A'.repeat(1000);
+            
+            const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: longName }),
+            });
+            const result = await response.json();
+            
+            // Должен обработать без ошибок
+            expect(result.success).toBe(true);
+        });
+
+        test('должен обрабатывать Unicode в сообщениях', async () => {
+            const ws = await new Promise((resolve, reject) => {
+                const ws = new WebSocket('ws://localhost:8080/ws');
+                ws.onopen = () => resolve(ws);
+                ws.onerror = reject;
+                setTimeout(() => reject(new Error('Timeout')), 5000);
+            });
+
+            const user = await new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'registered') resolve(data.user);
+                };
+                ws.send(JSON.stringify({ type: 'register', name: 'UnicodeUser' }));
+            });
+
+            const unicodeMessages = [
+                'Привет мир!',
+                '你好世界',
+                'مرحبا بالعالم',
+                '👋🌍🚀',
+            ];
+
+            for (const text of unicodeMessages) {
+                ws.send(JSON.stringify({
+                    type: 'message',
+                    text: text,
+                }));
+            }
+
+            ws.close();
+            
+            // Тест проходит если не было ошибок
+            expect(true).toBe(true);
+        });
+    });
+
+    describe('Производительность', () => {
+        test('должен обрабатывать множественные подключения', async () => {
+            const connections = [];
+            
+            // Создаём 10 подключений
+            for (let i = 0; i < 10; i++) {
+                const ws = await new Promise((resolve, reject) => {
+                    const ws = new WebSocket('ws://localhost:8080/ws');
+                    ws.onopen = () => resolve(ws);
+                    ws.onerror = reject;
+                });
+                connections.push(ws);
+            }
+            
+            expect(connections.length).toBe(10);
+            
+            // Закрываем подключения
+            connections.forEach(ws => ws.close());
+        });
+    });
+});

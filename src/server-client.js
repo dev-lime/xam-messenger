@@ -145,7 +145,7 @@ class ServerClient {
 
             case 'message':
                 // Новое сообщение от другого клиента
-                this.notifyHandlers('message', data);
+                this.notifyHandlers('message', data.message);
                 break;
 
             case 'ack':
@@ -218,8 +218,18 @@ class ServerClient {
         });
     }
 
-    // Отправка файла
-    async sendFile(file, recipientId = null) {
+    // Отправка сообщения с файлами
+    sendMessageWithFiles(text, files, recipientId = null) {
+        this.send({
+            type: 'message',
+            text,
+            files,
+            recipient_id: recipientId,
+        });
+    }
+
+    // Загрузка файла (возвращает информацию о файле)
+    async uploadFile(file) {
         // Создаём FormData для multipart/form-data
         const formData = new FormData();
         formData.append('file', file);
@@ -233,21 +243,28 @@ class ServerClient {
         const result = await response.json();
 
         if (result.success) {
-            // Отправляем сообщение с файлом через WebSocket
-            this.send({
-                type: 'message',
-                text: `📎 Файл: ${file.name}`,
-                files: [{
-                    name: file.name,
-                    size: file.size,
-                    path: result.data.path,
-                }],
-                recipient_id: recipientId,
-            });
-            return true;
+            return {
+                name: file.name,
+                size: file.size,
+                path: result.data.path,
+            };
         } else {
             throw new Error(result.error || 'Failed to upload file');
         }
+    }
+
+    // Отправка файла (устаревший метод, используется uploadFile)
+    async sendFile(file, recipientId = null) {
+        const fileData = await this.uploadFile(file);
+        
+        // Отправляем сообщение с файлом через WebSocket
+        this.send({
+            type: 'message',
+            text: `📎 Файл: ${file.name}`,
+            files: [fileData],
+            recipient_id: recipientId,
+        });
+        return true;
     }
 
     // Подтверждение прочтения

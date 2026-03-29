@@ -73,6 +73,33 @@ function handleNewMessage(msg) {
     const exists = state.messages.some(m => m.id === msg.id);
     if (exists) return;
 
+    // Если это наше сообщение (от того же sender_id), ищем локальное сообщение и заменяем его
+    if (isMine) {
+        const localMsgIndex = state.messages.findIndex(m => 
+            m.id.startsWith('local_') && 
+            m.sender_id === state.user?.id &&
+            m.text === msg.text &&
+            Math.abs(m.timestamp - msg.timestamp) < 5 // В пределах 5 секунд
+        );
+
+        if (localMsgIndex !== -1) {
+            console.log('🔄 Замена локального сообщения на реальное:', msg.id);
+            // Сохраняем delivery_status из локального сообщения
+            msg.delivery_status = state.messages[localMsgIndex].delivery_status;
+            // Заменяем локальное сообщение реальным
+            state.messages[localMsgIndex] = msg;
+            
+            // Обновляем отфильтрованные сообщения
+            const filteredIndex = state.filteredMessages.findIndex(m => m.id.startsWith('local_'));
+            if (filteredIndex !== -1) {
+                state.filteredMessages[filteredIndex] = msg;
+            }
+            
+            renderMessages(!!state.currentPeer);
+            return;
+        }
+    }
+
     state.messages.push(msg);
 
     // Обновляем отфильтрованные сообщения если выбран чат
@@ -108,12 +135,19 @@ function handleNewMessage(msg) {
 // Обработка ACK
 function handleAck(data) {
     console.log('📨 ACK получен:', data);
+    
+    // Игнорируем ACK которые мы отправили сами
+    if (data.sender_id === state.user?.id) {
+        console.log('⚠️ Игнорируем ACK от себя:', data.sender_id);
+        return;
+    }
+    
     const msg = state.messages.find(m => m.id === data.message_id);
     if (msg) {
         const oldStatus = msg.delivery_status;
         msg.delivery_status = data.status === 'read' ? 2 : 1;
         console.log(`🔄 Статус сообщения ${data.message_id}: ${oldStatus} → ${msg.delivery_status}`);
-        
+
         const filteredMsg = state.filteredMessages?.find(m => m.id === data.message_id);
         if (filteredMsg) {
             filteredMsg.delivery_status = msg.delivery_status;
@@ -220,38 +254,52 @@ async function sendMessage() {
         return;
     }
 
-    if (text) {
-        console.log('📤 Отправка сообщения:', text);
-        serverClient.sendMessage(text, state.currentPeer);
+    // Генерируем локальный ID для отслеживания
+    const localId = 'local_' + Date.now();
+    const filesData = [];
 
-        // Добавляем локально
-        state.messages.push({
-            id: 'local_' + Date.now(),
-            sender_id: state.user.id,
-            sender_name: state.user.name,
-            text,
-            timestamp: Date.now() / 1000,
-            delivery_status: 0,
-            files: [],
-            recipient_id: state.currentPeer,
-        });
-
-        if (state.currentPeer) {
-            state.filteredMessages.push(state.messages[state.messages.length - 1]);
-            renderMessages(true);
-        } else {
-            renderMessages();
+    // Если есть файлы, сначала загружаем их
+    if (filesToSend.length > 0) {
+        for (const file of filesToSend) {
+            try {
+                console.log('📁 Загрузка файла:', file.name);
+                const fileResult = await serverClient.uploadFile(file);
+                if (fileResult) {
+                    filesData.push({
+                        name: file.name,
+                        size: file.size,
+                        path: fileResult.path,
+                    });
+                }
+            } catch (error) {
+                console.error('❌ Ошибка загрузки файла:', error);
+            }
         }
     }
 
-    // Отправка файлов
-    for (const file of filesToSend) {
-        try {
-            console.log('📁 Отправка файла:', file.name);
-            await serverClient.sendFile(file, state.currentPeer);
-        } catch (error) {
-            console.error('❌ Ошибка отправки файла:', error);
-        }
+    // Отправляем единое сообщение с текстом и файлами
+    const messageData = {
+        id: localId,
+        sender_id: state.user.id,
+        sender_name: state.user.name,
+        text: text || (filesData.length > 0 ? `📎 Файлов: ${filesData.length}` : ''),
+        timestamp: Date.now() / 1000,
+        delivery_status: 0,
+        files: filesData,
+        recipient_id: state.currentPeer,
+    };
+
+    console.log('📤 Отправка сообщения:', messageData);
+    serverClient.sendMessageWithFiles(text, filesData, state.currentPeer);
+
+    // Добавляем локально
+    state.messages.push(messageData);
+
+    if (state.currentPeer) {
+        state.filteredMessages.push(messageData);
+        renderMessages(true);
+    } else {
+        renderMessages();
     }
 
     // Очистка
@@ -442,7 +490,11 @@ function createMessageElement(msg) {
 
         if (msg.files && msg.files.length > 0) {
             const filesHtml = msg.files.map(f => `
-                <div class="file-item" data-filename="${escapeHtml(f.name)}" data-filesize="${f.size}">
+                <div class="file-item" 
+                     data-filename="${escapeHtml(f.name)}" 
+                     data-filesize="${f.size}"
+                     data-filepath="${escapeHtml(f.path || '')}"
+                     onclick="downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')">
                     <span class="file-icon">${getFileIcon(f.name)}</span>
                     <span class="file-name">${escapeHtml(f.name)}</span>
                     <span class="file-size">${formatFileSize(f.size)}</span>
@@ -470,7 +522,11 @@ function createMessageElement(msg) {
     } else {
         if (msg.files && msg.files.length > 0) {
             const filesHtml = msg.files.map(f => `
-                <div class="file-item" data-filename="${escapeHtml(f.name)}" data-filesize="${f.size}">
+                <div class="file-item" 
+                     data-filename="${escapeHtml(f.name)}" 
+                     data-filesize="${f.size}"
+                     data-filepath="${escapeHtml(f.path || '')}"
+                     onclick="downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')">
                     <span class="file-icon">${getFileIcon(f.name)}</span>
                     <span class="file-name">${escapeHtml(f.name)}</span>
                     <span class="file-size">${formatFileSize(f.size)}</span>
@@ -557,6 +613,54 @@ function getFileIcon(filename) {
     };
     return icons[ext] || '📎';
 }
+
+// Скачивание файла
+window.downloadFile = async (filepath, filename) => {
+    if (!filepath) {
+        alert('Путь к файлу не указан');
+        return;
+    }
+    
+    console.log('📥 Скачивание файла:', filename, filepath);
+    
+    try {
+        // Для локальных путей используем fetch
+        const fileUrl = filepath.startsWith('http') 
+            ? filepath 
+            : `http://localhost:8080/api/files/download?path=${encodeURIComponent(filepath)}`;
+        
+        const response = await fetch(fileUrl);
+        
+        if (!response.ok) {
+            // Если файл недоступен, пробуем скачать как blob с сервера
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            return;
+        }
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+        console.log('✅ Файл скачан:', filename);
+    } catch (error) {
+        console.error('❌ Ошибка скачивания:', error);
+        alert(`Не удалось скачать файл: ${error.message}`);
+    }
+};
 
 // Отображение прикреплённых файлов
 function renderAttachedFiles() {

@@ -10,6 +10,12 @@ server/files/
 
 # Node
 node_modules/
+package-lock.json
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output/
 
 # OS
 .DS_Store
@@ -22,3 +28,7 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Test artifacts
+test-results/
+.jest/

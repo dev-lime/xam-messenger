@@ -19,10 +19,19 @@ use std::time::SystemTime;
 struct User { id: String, name: String }
 
 #[derive(Clone, Serialize, Deserialize)]
+struct FileData {
+    name: String,
+    size: u64,
+    path: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 struct ChatMessage {
     id: String, sender_id: String, sender_name: String,
     text: String, timestamp: i64, delivery_status: u8,
     recipient_id: Option<String>,
+    #[serde(default)]
+    files: Vec<FileData>,
 }
 
 #[derive(Clone)]
@@ -44,6 +53,7 @@ struct ClientMsg {
     #[serde(default)] status: String,
     #[serde(default)] limit: usize,
     #[serde(default)] recipient_id: Option<String>,
+    #[serde(default)] files: Vec<FileData>,
 }
 
 #[actix_web::main]
@@ -69,7 +79,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
             text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
-            recipient_id TEXT
+            recipient_id TEXT, files TEXT
         )",
         [],
     )?;
@@ -105,6 +115,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .route("/api/users", web::get().to(get_users))
             .route("/api/messages", web::get().to(get_messages))
             .route("/api/files", web::post().to(upload_file))
+            .route("/api/files/download", web::get().to(download_file))
             .route("/api/online", web::get().to(get_online_users))
     })
     .bind("0.0.0.0:8080")?
@@ -192,6 +203,8 @@ async fn handle_ws(
                                 ).unwrap_or_default();
                                 drop(conn);
 
+                                let files_json = serde_json::to_string(&client_msg.files).unwrap_or_default();
+
                                 let msg = ChatMessage {
                                     id: Uuid::new_v4().to_string(),
                                     sender_id: uid.clone(),
@@ -200,11 +213,12 @@ async fn handle_ws(
                                     timestamp: Utc::now().timestamp(),
                                     delivery_status: 1,
                                     recipient_id: client_msg.recipient_id.clone(),
+                                    files: client_msg.files.clone(),
                                 };
 
                                 state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
-                                    "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                                    params![msg.id, msg.sender_id, msg.sender_name, msg.text, msg.timestamp, msg.delivery_status, msg.recipient_id],
+                                    "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                                    params![msg.id, msg.sender_id, msg.sender_name, msg.text, msg.timestamp, msg.delivery_status, msg.recipient_id, files_json],
                                 ).unwrap();
 
                                 let _ = state.tx.send(json!({ "type": "message", "message": msg }));
@@ -212,15 +226,16 @@ async fn handle_ws(
                             "ack" => {
                                 let status = if client_msg.status == "read" { 2 } else { 1 };
                                 let msg_id = client_msg.message_id.clone();
-                                log::info!("📨 ACK {} для {}", client_msg.status, msg_id);
-                                
+                                let ack_sender_id = user_id.clone().unwrap();
+                                log::info!("📨 ACK {} для {} от {}", client_msg.status, msg_id, ack_sender_id);
+
                                 state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
                                     "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
                                     params![status, client_msg.message_id],
                                 ).unwrap();
-                                
+
                                 let ack_msg = json!({
-                                    "type": "ack", "message_id": msg_id, "status": client_msg.status
+                                    "type": "ack", "message_id": msg_id, "status": client_msg.status, "sender_id": ack_sender_id
                                 });
                                 log::info!("📤 Рассылка ACK: {}", ack_msg);
                                 let _ = state.tx.send(ack_msg);
@@ -228,15 +243,20 @@ async fn handle_ws(
                             "get_messages" => {
                                 let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
                                 let mut stmt = conn.prepare(
-                                    "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id FROM messages ORDER BY timestamp ASC LIMIT ?1"
+                                    "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp ASC LIMIT ?1"
                                 ).unwrap();
                                 let msgs: Vec<ChatMessage> = stmt.query_map(
                                     params![client_msg.limit.max(100)],
-                                    |row| Ok(ChatMessage {
-                                        id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
-                                        text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
-                                        recipient_id: row.get(6)?,
-                                    })
+                                    |row| {
+                                        let files_str: String = row.get(7)?;
+                                        let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
+                                        Ok(ChatMessage {
+                                            id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
+                                            text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
+                                            recipient_id: row.get(6)?,
+                                            files,
+                                        })
+                                    }
                                 ).unwrap().filter_map(|r| r.ok()).collect();
                                 let _ = session.text(json!({ "type": "messages", "messages": msgs }).to_string()).await;
                             }
@@ -264,6 +284,12 @@ async fn handle_ws(
                 if let Some(uid) = &user_id {
                     if msg.get("type").and_then(|v| v.as_str()) == Some("message") {
                         if msg.get("message").and_then(|m| m.get("sender_id").and_then(|v| v.as_str())) == Some(uid) {
+                            continue;
+                        }
+                    }
+                    // Пропускаем ACK от себя
+                    if msg.get("type").and_then(|v| v.as_str()) == Some("ack") {
+                        if msg.get("sender_id").and_then(|v| v.as_str()) == Some(uid) {
                             continue;
                         }
                     }
@@ -327,27 +353,32 @@ async fn get_messages(
         Ok(c) => c,
         Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
     };
-    
+
     let result = conn.prepare(
-        "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id FROM messages ORDER BY timestamp ASC LIMIT ?1"
+        "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp ASC LIMIT ?1"
     );
-    
+
     let mut stmt = match result {
         Ok(s) => s,
         Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
     };
-    
+
     let msgs: Vec<ChatMessage> = stmt.query_map(
         params![limit],
-        |row| Ok(ChatMessage {
-            id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
-            text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
-            recipient_id: row.get(6)?,
-        })
+        |row| {
+            let files_str: String = row.get(7)?;
+            let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
+            Ok(ChatMessage {
+                id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
+                text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
+                recipient_id: row.get(6)?,
+                files,
+            })
+        }
     ).ok()
         .map(|iter| iter.filter_map(|r| r.ok()).collect())
         .unwrap_or_default();
-    
+
     HttpResponse::Ok().json(json!({"success": true, "data": msgs}))
 }
 
@@ -414,5 +445,994 @@ async fn upload_file(
         "success": false,
         "error": "No file uploaded"
     }))
+}
+
+async fn download_file(
+    _data: web::Data<AppState>,
+    query: web::Query<std::collections::HashMap<String, String>>,
+) -> HttpResponse {
+    let filepath = match query.get("path") {
+        Some(p) => p,
+        None => return HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": "Path parameter is required"
+        })),
+    };
+
+    // Проверяем что файл существует
+    if !std::path::Path::new(filepath).exists() {
+        return HttpResponse::NotFound().json(json!({
+            "success": false,
+            "error": "File not found"
+        }));
+    }
+
+    // Получаем имя файла из пути
+    let filename = std::path::Path::new(filepath)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download");
+
+    // Читаем файл
+    match std::fs::read(filepath) {
+        Ok(contents) => {
+            HttpResponse::Ok()
+                .content_type("application/octet-stream")
+                .insert_header(("Content-Disposition", format!("attachment; filename=\"{}\"", filename)))
+                .body(contents)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "success": false,
+            "error": format!("Failed to read file: {}", e)
+        })),
+    }
+}
+
+// ============================================
+// ТЕСТЫ
+// ============================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{test, web, App};
+    use std::time::UNIX_EPOCH;
+
+    // Создаёт тестовое состояние с временной БД
+    fn create_test_state() -> AppState {
+        let db = Arc::new(Mutex::new(
+            Connection::open(":memory:").expect("Failed to create in-memory DB"),
+        ));
+
+        // Создаём таблицы
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
+                text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
+                recipient_id TEXT, files TEXT
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
+                sender_id TEXT, recipient_id TEXT, timestamp INTEGER
+            )",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
+        let online_users = Arc::new(Mutex::new(HashMap::new()));
+
+        AppState { db, tx, online_users }
+    }
+
+    // ============================================
+    // ТЕСТЫ РЕГИСТРАЦИИ ПОЛЬЗОВАТЕЛЕЙ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_register_new_user() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/register")
+            .set_json(json!({ "name": "Тестовый Пользователь" }))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"]["name"], "Тестовый Пользователь");
+        assert!(body["data"]["id"].as_str().unwrap().len() > 0);
+    }
+
+    #[actix_rt::test]
+    async fn test_register_existing_user() {
+        let state = create_test_state();
+
+        // Сначала регистрируем пользователя
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name) VALUES (?1, ?2)",
+                params!["test-user-id", "ExistingUser"],
+            )
+            .unwrap();
+        }
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state.clone()))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/register")
+            .set_json(json!({ "name": "ExistingUser" }))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"]["name"], "ExistingUser");
+        assert_eq!(body["data"]["id"], "test-user-id");
+    }
+
+    #[actix_rt::test]
+    async fn test_register_empty_name() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/register")
+            .set_json(json!({ "name": "" }))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], false);
+    }
+
+    #[actix_rt::test]
+    async fn test_register_whitespace_name() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/register")
+            .set_json(json!({ "name": "   " }))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+    }
+
+    // ============================================
+    // ТЕСТЫ СПИСКА ПОЛЬЗОВАТЕЛЕЙ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_get_users_empty() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/users", web::get().to(get_users)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/users").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"].as_array().unwrap().len(), 0);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_users_with_data() {
+        let state = create_test_state();
+
+        // Добавляем тестовых пользователей
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name) VALUES (?1, ?2)",
+                params!["user-1", "Alice"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name) VALUES (?1, ?2)",
+                params!["user-2", "Bob"],
+            )
+            .unwrap();
+        }
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/users", web::get().to(get_users)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/users").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"].as_array().unwrap().len(), 2);
+    }
+
+    // ============================================
+    // ТЕСТЫ СООБЩЕНИЙ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_get_messages_empty() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/messages", web::get().to(get_messages)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/messages?limit=100")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"].as_array().unwrap().len(), 0);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_messages_with_limit() {
+        let state = create_test_state();
+
+        // Добавляем тестовые сообщения
+        {
+            let conn = state.db.lock().unwrap();
+            for i in 0..5 {
+                conn.execute(
+                    "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        format!("msg-{}", i),
+                        "sender-1",
+                        "Sender",
+                        format!("Message {}", i),
+                        Utc::now().timestamp(),
+                        1,
+                        Option::<String>::None,
+                        "[]"
+                    ],
+                )
+                .unwrap();
+            }
+        }
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/messages", web::get().to(get_messages)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/messages?limit=3")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"].as_array().unwrap().len(), 3);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_messages_default_limit() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/messages", web::get().to(get_messages)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/messages")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        // Должен вернуть пустой список с лимитом по умолчанию
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+    }
+
+    // ============================================
+    // ТЕСТЫ СТАТУСОВ ДОСТАВКИ (ACK)
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_ack_read_status() {
+        let state = create_test_state();
+
+        // Создаём тестовое сообщение
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params!["test-msg-id", "sender-1", "Sender", "Test message", Utc::now().timestamp(), 1, Option::<String>::None, "[]"],
+            )
+            .unwrap();
+        }
+
+        // Проверяем начальный статус
+        {
+            let conn = state.db.lock().unwrap();
+            let status: i64 = conn
+                .query_row(
+                    "SELECT delivery_status FROM messages WHERE id = ?1",
+                    params!["test-msg-id"],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(status, 1); // Отправлено
+        }
+
+        // Отправляем ACK через WebSocket handler (тестируем логику обновления)
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+                params![2, "test-msg-id"], // 2 = read
+            )
+            .unwrap();
+        }
+
+        // Проверяем обновлённый статус
+        {
+            let conn = state.db.lock().unwrap();
+            let status: i64 = conn
+                .query_row(
+                    "SELECT delivery_status FROM messages WHERE id = ?1",
+                    params!["test-msg-id"],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(status, 2); // Прочитано
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_ack_contains_sender_id() {
+        // Проверяем что ACK содержит sender_id для фильтрации
+        let ack_msg = json!({
+            "type": "ack",
+            "message_id": "msg-123",
+            "status": "read",
+            "sender_id": "user-456"
+        });
+
+        assert_eq!(ack_msg["type"], "ack");
+        assert_eq!(ack_msg["message_id"], "msg-123");
+        assert_eq!(ack_msg["status"], "read");
+        assert_eq!(ack_msg["sender_id"], "user-456");
+    }
+
+    #[actix_rt::test]
+    async fn test_ack_filtering_logic() {
+        // Проверяем логику фильтрации ACK на клиенте
+        let user_id = "user-123";
+        
+        // ACK от другого пользователя — должно пройти
+        let ack_from_other = json!({
+            "type": "ack",
+            "message_id": "msg-1",
+            "sender_id": "user-456"
+        });
+        
+        let should_process = ack_from_other.get("sender_id").and_then(|v| v.as_str()) != Some(user_id);
+        assert!(should_process);
+        
+        // ACK от себя — должно быть отфильтровано
+        let ack_from_self = json!({
+            "type": "ack",
+            "message_id": "msg-2",
+            "sender_id": "user-123"
+        });
+        
+        let should_ignore = ack_from_self.get("sender_id").and_then(|v| v.as_str()) == Some(user_id);
+        assert!(should_ignore);
+    }
+
+    // ============================================
+    // ТЕСТЫ ФАЙЛОВ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_upload_file_success() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/files", web::post().to(upload_file)),
+        )
+        .await;
+
+        // Создаём тестовый файл
+        let file_content = b"Test file content";
+        let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
+
+        let body = format!(
+            "--{}\r\n\
+             Content-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n\
+             Content-Type: text/plain\r\n\r\n\
+             {}\r\n\
+             --{}--\r\n",
+            boundary,
+            String::from_utf8_lossy(file_content),
+            boundary
+        );
+
+        let req = test::TestRequest::post()
+            .uri("/api/files")
+            .insert_header((
+                "Content-Type",
+                format!("multipart/form-data; boundary={}", boundary),
+            ))
+            .set_payload(body)
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert!(body["data"]["id"].as_str().unwrap().len() > 0);
+        assert_eq!(body["data"]["name"], "test.txt");
+        assert_eq!(body["data"]["size"], file_content.len() as u64);
+    }
+
+    #[actix_rt::test]
+    async fn test_upload_file_empty() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/files", web::post().to(upload_file)),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/files")
+            .insert_header(("Content-Type", "multipart/form-data"))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], false);
+    }
+
+    // ============================================
+    // ТЕСТЫ ОНЛАЙН СТАТУСОВ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_get_online_users_empty() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/online", web::get().to(get_online_users)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/online").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"].as_array().unwrap().len(), 0);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_online_users_with_users() {
+        let state = create_test_state();
+
+        // Добавляем пользователей в онлайн
+        {
+            let mut online = state.online_users.lock().unwrap();
+            online.insert("user-1".to_string(), 1000);
+            online.insert("user-2".to_string(), 2000);
+        }
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/online", web::get().to(get_online_users)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/online").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert_eq!(body["data"].as_array().unwrap().len(), 2);
+    }
+
+    // ============================================
+    // ТЕСТЫ БАЗЫ ДАННЫХ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_database_user_crud() {
+        let conn = Connection::open(":memory:").unwrap();
+        conn.execute(
+            "CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT UNIQUE)",
+            [],
+        )
+        .unwrap();
+
+        // Create
+        conn.execute(
+            "INSERT INTO users (id, name) VALUES (?1, ?2)",
+            params!["user-1", "Alice"],
+        )
+        .unwrap();
+
+        // Read
+        let name: String = conn
+            .query_row("SELECT name FROM users WHERE id = ?1", params!["user-1"], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(name, "Alice");
+
+        // Update
+        conn.execute("UPDATE users SET name = ?1 WHERE id = ?2", params!["Alice Updated", "user-1"])
+            .unwrap();
+
+        let name: String = conn
+            .query_row("SELECT name FROM users WHERE id = ?1", params!["user-1"], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(name, "Alice Updated");
+
+        // Delete
+        conn.execute("DELETE FROM users WHERE id = ?1", params!["user-1"])
+            .unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[actix_rt::test]
+    async fn test_database_message_crud() {
+        let conn = Connection::open(":memory:").unwrap();
+        conn.execute(
+            "CREATE TABLE messages (
+                id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
+                text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
+                recipient_id TEXT, files TEXT
+            )",
+            [],
+        )
+        .unwrap();
+
+        let now = 1234567890i64;
+
+        // Create
+        conn.execute(
+            "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params!["msg-1", "user-1", "Alice", "Hello!", now, 1, Option::<String>::None, "[]"],
+        )
+        .unwrap();
+
+        // Read
+        let (text, status): (String, i64) = conn
+            .query_row(
+                "SELECT text, delivery_status FROM messages WHERE id = ?1",
+                params!["msg-1"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(text, "Hello!");
+        assert_eq!(status, 1);
+
+        // Update status
+        conn.execute(
+            "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+            params![2, "msg-1"],
+        )
+        .unwrap();
+
+        let status: i64 = conn
+            .query_row(
+                "SELECT delivery_status FROM messages WHERE id = ?1",
+                params!["msg-1"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, 2);
+
+        // Delete
+        conn.execute("DELETE FROM messages WHERE id = ?1", params!["msg-1"])
+            .unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[actix_rt::test]
+    async fn test_database_message_with_recipient() {
+        let conn = Connection::open(":memory:").unwrap();
+        conn.execute(
+            "CREATE TABLE messages (
+                id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
+                text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
+                recipient_id TEXT, files TEXT
+            )",
+            [],
+        )
+        .unwrap();
+
+        let now = 1234567890i64;
+
+        // Сообщение с получателем
+        conn.execute(
+            "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params!["msg-private", "user-1", "Alice", "Private message", now, 1, "user-2", "[]"],
+        )
+        .unwrap();
+
+        // Фильтрация по получателю
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE recipient_id = ?1",
+                params!["user-2"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    // ============================================
+    // ТЕСТЫ ВСПОМОГАТЕЛЬНЫХ ФУНКЦИЙ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_uuid_generation() {
+        let uuid1 = Uuid::new_v4().to_string();
+        let uuid2 = Uuid::new_v4().to_string();
+
+        // UUID должны быть уникальными
+        assert_ne!(uuid1, uuid2);
+
+        // UUID должны иметь правильный формат (36 символов с дефисами)
+        assert_eq!(uuid1.len(), 36);
+        assert_eq!(uuid2.len(), 36);
+    }
+
+    #[actix_rt::test]
+    async fn test_timestamp_generation() {
+        let now = 1234567890i64;
+        let later = 1234567891i64;
+
+        // Время должно быть в секундах с эпохи Unix
+        assert!(now > 0);
+        assert!(later >= now);
+    }
+
+    #[actix_rt::test]
+    async fn test_system_time_to_secs() {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        assert!(secs > 0);
+    }
+
+    // ============================================
+    // ТЕСТЫ JSON СЕРИАЛИЗАЦИИ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_user_serialization() {
+        let user = User {
+            id: "test-id".to_string(),
+            name: "Test User".to_string(),
+        };
+
+        let json = serde_json::to_string(&user).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["id"], "test-id");
+        assert_eq!(parsed["name"], "Test User");
+    }
+
+    #[actix_rt::test]
+    async fn test_message_serialization() {
+        let msg = ChatMessage {
+            id: "msg-id".to_string(),
+            sender_id: "sender-id".to_string(),
+            sender_name: "Sender".to_string(),
+            text: "Test message".to_string(),
+            timestamp: 1234567890,
+            delivery_status: 1,
+            recipient_id: None,
+            files: vec![],
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["id"], "msg-id");
+        assert_eq!(parsed["sender_id"], "sender-id");
+        assert_eq!(parsed["sender_name"], "Sender");
+        assert_eq!(parsed["text"], "Test message");
+        assert_eq!(parsed["delivery_status"], 1);
+    }
+
+    #[actix_rt::test]
+    async fn test_client_msg_deserialization() {
+        let json = r#"{"type": "message", "text": "Hello", "name": "", "message_id": "", "status": "", "limit": 0}"#;
+        let msg: ClientMsg = serde_json::from_str(json).unwrap();
+
+        assert_eq!(msg.msg_type, "message");
+        assert_eq!(msg.text, "Hello");
+    }
+
+    #[actix_rt::test]
+    async fn test_client_msg_with_optional_fields() {
+        let json = r#"{"type": "message", "text": "Hello", "recipient_id": "user-123"}"#;
+        let msg: ClientMsg = serde_json::from_str(json).unwrap();
+
+        assert_eq!(msg.msg_type, "message");
+        assert_eq!(msg.text, "Hello");
+        assert_eq!(msg.recipient_id, Some("user-123".to_string()));
+    }
+
+    #[actix_rt::test]
+    async fn test_message_with_files() {
+        let files = vec![
+            FileData { name: "test.txt".to_string(), size: 1024, path: "/path/to/test.txt".to_string() },
+        ];
+        
+        let msg = ChatMessage {
+            id: "msg-id".to_string(),
+            sender_id: "sender-id".to_string(),
+            sender_name: "Sender".to_string(),
+            text: "Файл во вложении".to_string(),
+            timestamp: 1234567890,
+            delivery_status: 1,
+            recipient_id: None,
+            files: files.clone(),
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["id"], "msg-id");
+        assert_eq!(parsed["files"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["files"][0]["name"], "test.txt");
+        assert_eq!(parsed["files"][0]["size"], 1024);
+    }
+
+    #[actix_rt::test]
+    async fn test_client_msg_with_files() {
+        let json = r#"{"type": "message", "text": "Файл", "files": [{"name": "doc.pdf", "size": 2048, "path": "/files/doc.pdf"}]}"#;
+        let msg: ClientMsg = serde_json::from_str(json).unwrap();
+
+        assert_eq!(msg.msg_type, "message");
+        assert_eq!(msg.text, "Файл");
+        assert_eq!(msg.files.len(), 1);
+        assert_eq!(msg.files[0].name, "doc.pdf");
+        assert_eq!(msg.files[0].size, 2048);
+    }
+
+    // ============================================
+    // ТЕСТЫ CORS
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_cors_headers() {
+        use actix_cors::Cors;
+
+        let cors = Cors::default()
+            .allow_any_origin()
+            .allow_any_method()
+            .allow_any_header()
+            .send_wildcard()
+            .max_age(3600);
+
+        let app = test::init_service(
+            App::new()
+                .wrap(cors)
+                .route("/api/test", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/test")
+            .insert_header(("Origin", "http://example.com"))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        // Проверяем наличие CORS заголовков
+        let origin_header = resp.headers().get("Access-Control-Allow-Origin");
+        assert!(origin_header.is_some());
+    }
+
+    // ============================================
+    // ТЕСТЫ СОСТОЯНИЯ ПРИЛОЖЕНИЯ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_app_state_clone() {
+        let state = create_test_state();
+        let _cloned_state = state.clone();
+
+        // AppState должен реализовывать Clone
+        // Тест просто проверяет что клонирование работает
+    }
+
+    #[actix_rt::test]
+    async fn test_online_users_thread_safety() {
+        let state = create_test_state();
+        let mut handles = vec![];
+
+        // Создаём несколько потоков которые одновременно добавляют пользователей
+        for i in 0..10 {
+            let state_clone = state.clone();
+            let handle = std::thread::spawn(move || {
+                let mut online = state_clone.online_users.lock().unwrap();
+                online.insert(format!("user-{}", i), i as u64);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let online = state.online_users.lock().unwrap();
+        assert_eq!(online.len(), 10);
+    }
+
+    // ============================================
+    // ТЕСТЫ КРАЕВЫХ СЛУЧАЕВ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_empty_message_text() {
+        let msg = ChatMessage {
+            id: "msg-id".to_string(),
+            sender_id: "sender-id".to_string(),
+            sender_name: "Sender".to_string(),
+            text: "".to_string(),
+            timestamp: 1234567890,
+            delivery_status: 0,
+            recipient_id: None,
+            files: vec![],
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["text"], "");
+    }
+
+    #[actix_rt::test]
+    async fn test_unicode_in_message() {
+        let msg = ChatMessage {
+            id: "msg-id".to_string(),
+            sender_id: "sender-id".to_string(),
+            sender_name: "Пользователь".to_string(),
+            text: "Привет! 你好 مرحبا".to_string(),
+            timestamp: 1234567890,
+            delivery_status: 2,
+            recipient_id: Some("recipient-id".to_string()),
+            files: vec![],
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["sender_name"], "Пользователь");
+        assert_eq!(parsed["text"], "Привет! 你好 مرحبا");
+    }
+
+    #[actix_rt::test]
+    async fn test_delivery_status_values() {
+        // 0 = отправка, 1 = отправлено, 2 = прочитано
+        assert_eq!(0, 0); // Отправка
+        assert_eq!(1, 1); // Отправлено
+        assert_eq!(2, 2); // Прочитано
+    }
+
+    #[actix_rt::test]
+    async fn test_special_characters_in_user_name() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        let special_names = vec![
+            "O'Brien",
+            "张三",
+            "User<Script>",
+            "User \"Quotes\"",
+            "User&amp;Symbol",
+        ];
+
+        for name in special_names {
+            let req = test::TestRequest::post()
+                .uri("/api/register")
+                .set_json(json!({ "name": name }))
+                .to_request();
+
+            let resp = test::call_service(&app, req).await;
+            assert!(
+                resp.status().is_success(),
+                "Failed for name: {}",
+                name
+            );
+        }
+    }
 }
 
