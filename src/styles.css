@@ -342,6 +342,7 @@ body {
     font-size: 14px;
     line-height: 1.4;
     word-wrap: break-word;
+    margin-bottom: 8px;
 }
 
 .message-text.file-message {

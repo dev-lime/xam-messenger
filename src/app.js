@@ -609,7 +609,7 @@ function createMessageElement(msg) {
                     <span class="file-info">
                         <span class="file-name-row">
                             <span class="file-name">${escapeHtml(f.name)}</span>
-                            <button class="file-download-btn" 
+                            <button class="file-download-btn"
                                     onclick="event.stopPropagation(); downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')"
                                     title="Скачать файл">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
@@ -623,6 +623,7 @@ function createMessageElement(msg) {
             `).join('');
 
             div.innerHTML = `
+                ${msg.text ? `<div class="message-text">${escapeHtml(msg.text)}</div>` : ''}
                 <div class="files-container">
                     ${filesHtml}
                 </div>
@@ -652,7 +653,7 @@ function createMessageElement(msg) {
                     <span class="file-info">
                         <span class="file-name-row">
                             <span class="file-name">${escapeHtml(f.name)}</span>
-                            <button class="file-download-btn" 
+                            <button class="file-download-btn"
                                     onclick="event.stopPropagation(); downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')"
                                     title="Скачать файл">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
@@ -667,6 +668,7 @@ function createMessageElement(msg) {
 
             div.innerHTML = `
                 <div class="message-sender">👤 ${escapeHtml(msg.sender_name)}</div>
+                ${msg.text ? `<div class="message-text">${escapeHtml(msg.text)}</div>` : ''}
                 <div class="files-container">
                     ${filesHtml}
                 </div>
