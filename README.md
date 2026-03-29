@@ -2,11 +2,14 @@
 
 Корпоративный мессенджер для локальной сети с поддержкой файлов и статусов доставки.
 
+**Версия:** 1.0.0  
+**Минимальные версии:** Rust 1.75+, Node.js 18+
+
 ## Особенности
 
 - 🔒 **Только локальная сеть** — без интернета, полная приватность
 - 🚀 **Быстрый старт** — сервер + клиент, авто-обнаружение
-- 📁 **Файлообмен** — отправка файлов до 25MB
+- 📁 **Файлообмен** — отправка файлов до 100MB
 - ✓✓ **Статусы** — доставлено / прочитано
 - 💾 **История** — SQLite для хранения сообщений
 - 🖥️ **Универсальный клиент** — работает в браузере и Tauri
@@ -154,6 +157,10 @@ lan-messenger-tauri/
 │   ├── Cargo.toml         # Зависимости
 │   └── tauri.conf.json    # Конфигурация Tauri
 │
+├── .github/
+│   └── workflows/         # CI/CD конфигурация
+├── DISCOVERY.md           # Протокол обнаружения сервера
+├── Dockerfile.linux       # Docker для Linux сборки
 └── README.md
 ```
 
@@ -184,7 +191,8 @@ messages (
     text TEXT,
     timestamp INTEGER,
     delivery_status INTEGER DEFAULT 0,
-    recipient_id TEXT
+    recipient_id TEXT,
+    files TEXT DEFAULT '[]'
 )
 
 files (
@@ -197,6 +205,36 @@ files (
     timestamp INTEGER
 )
 ```
+
+## Тестирование
+
+### Запуск всех тестов
+
+```bash
+# Тесты сервера (Rust)
+cd server
+cargo test
+
+# Тесты клиента (JavaScript)
+cd ..
+npm install
+npm test
+
+# Интеграционные тесты (требуется запущенный сервер)
+npm run test:integration
+```
+
+### Покрытие тестами
+
+| Компонент | Тестов | Статус |
+|-----------|--------|--------|
+| Сервер (Rust) | 35 | ✅ |
+| Клиент (JS) | 82 | ⚠️ 58 passed |
+| Интеграция | 20+ | ✅ |
+
+### CI/CD
+
+GitHub Actions автоматически запускает тесты при push в `main`/`master` и при создании Pull Request.
 
 ## Для разработчиков
 
@@ -228,6 +266,12 @@ RUST_LOG=debug ./target/release/xam-server
 RUST_LOG=error ./target/release/xam-server
 ```
 
+### Сборка для Linux
+
+```bash
+./build-linux.sh
+```
+
 ## Troubleshooting
 
 ### Сервер не запускается
@@ -254,6 +298,32 @@ cd server
 cargo clean
 cargo build --release
 ```
+
+### Ошибки тестов клиента
+
+```bash
+# Переустановите зависимости
+rm -rf node_modules package-lock.json
+npm install
+
+# Запустите тесты заново
+npm test
+```
+
+### Файлы не загружаются
+
+- Проверьте права на запись в `~/.local/share/xam-messenger/files/` (Linux) или `~/Library/Application Support/xam-messenger/files/` (macOS)
+- Максимальный размер файла: 100MB
+
+## Безопасность
+
+**Важно:** Мессенджер предназначен для использования в доверенной локальной сети (LAN).
+
+- ✅ XSS защита через экранирование пользовательских данных
+- ✅ SQL injection защита через параметризованные запросы
+- ✅ CORS настроен для localhost и LAN
+- ⚠️ Нет шифрования трафика (WebSocket без TLS)
+- ⚠️ Нет аутентификации (любой в LAN может подключиться)
 
 ## Лицензия
 

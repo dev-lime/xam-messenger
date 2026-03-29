@@ -760,8 +760,8 @@ function setupEventListeners() {
     elements.fileInput.addEventListener('change', (e) => {
         const files = Array.from(e.target.files);
         files.forEach(file => {
-            if (file.size > 25 * 1024 * 1024) {
-                alert(`Файл "${file.name}" слишком большой (макс. 25MB)`);
+            if (file.size > 100 * 1024 * 1024) {
+                alert(`Файл "${file.name}" слишком большой (макс. 100MB)`);
                 return;
             }
             attachedFiles.push(file);

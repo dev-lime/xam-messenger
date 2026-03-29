@@ -459,8 +459,10 @@ describe('Интеграционные тесты - Краевые случаи'
                 setTimeout(() => reject(new Error('Timeout')), 5000);
             });
 
+            // eslint-disable-next-line no-unused-vars
             const user = await new Promise((resolve) => {
                 ws.onmessage = (event) => {
+                    // eslint-disable-next-line no-unused-vars
                     const data = JSON.parse(event.data);
                     if (data.type === 'registered') resolve(data.user);
                 };

@@ -499,53 +499,57 @@ async fn upload_file(
         }));
     }
 
-    while let Ok(Some(mut field)) = payload.try_next().await {
-        // Сначала получаем имя файла
-        let filename: String = field.content_disposition()
-            .as_ref()
-            .and_then(|cd| cd.get_filename())
-            .unwrap_or("unnamed")
-            .to_string();
+    // Получаем первое поле (файл)
+    match payload.try_next().await {
+        Ok(Some(mut field)) => {
+            // Сначала получаем имя файла
+            let filename: String = field.content_disposition()
+                .as_ref()
+                .and_then(|cd| cd.get_filename())
+                .unwrap_or("unnamed")
+                .to_string();
 
-        let filepath = upload_dir.join(format!("{}_{}", Uuid::new_v4(), filename));
+            let filepath = upload_dir.join(format!("{}_{}", Uuid::new_v4(), filename));
 
-        let mut size = 0u64;
-        let mut file_bytes = Vec::new();
+            let mut size = 0u64;
+            let mut file_bytes = Vec::new();
 
-        while let Some(chunk) = field.try_next().await.ok().flatten() {
-            size += chunk.len() as u64;
-            file_bytes.extend_from_slice(&chunk);
-        }
+            while let Some(chunk) = field.try_next().await.ok().flatten() {
+                size += chunk.len() as u64;
+                file_bytes.extend_from_slice(&chunk);
+            }
 
-        if let Err(e) = std::fs::write(&filepath, &file_bytes) {
-            return HttpResponse::InternalServerError().json(json!({
-                "success": false,
-                "error": format!("Failed to save file: {}", e)
+            if let Err(e) = std::fs::write(&filepath, &file_bytes) {
+                return HttpResponse::InternalServerError().json(json!({
+                    "success": false,
+                    "error": format!("Failed to save file: {}", e)
+                }));
+            }
+
+            let file_id = Uuid::new_v4().to_string();
+            let conn = data.db.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = conn.execute(
+                "INSERT INTO files (id, name, path, size, sender_id, recipient_id, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![file_id, &filename, filepath.to_string_lossy(), size, "", "", Utc::now().timestamp()],
+            );
+
+            return HttpResponse::Ok().json(json!({
+                "success": true,
+                "data": {
+                    "id": file_id,
+                    "name": filename,
+                    "size": size,
+                    "path": filepath.to_string_lossy()
+                }
             }));
         }
-
-        let file_id = Uuid::new_v4().to_string();
-        let conn = data.db.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = conn.execute(
-            "INSERT INTO files (id, name, path, size, sender_id, recipient_id, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![file_id, &filename, filepath.to_string_lossy(), size, "", "", Utc::now().timestamp()],
-        );
-
-        return HttpResponse::Ok().json(json!({
-            "success": true,
-            "data": {
-                "id": file_id,
-                "name": filename,
-                "size": size,
-                "path": filepath.to_string_lossy()
-            }
-        }));
+        Ok(None) | Err(_) => {
+            return HttpResponse::BadRequest().json(json!({
+                "success": false,
+                "error": "No file uploaded"
+            }));
+        }
     }
-
-    HttpResponse::BadRequest().json(json!({
-        "success": false,
-        "error": "No file uploaded"
-    }))
 }
 
 async fn download_file(

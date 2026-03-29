@@ -51,8 +51,9 @@ class MockWebSocket {
         }, 10);
     }
 
+    // eslint-disable-next-line no-unused-vars
     send(data) {
-        // Mock send
+        // Mock send - data intentionally unused
     }
 
     close() {
