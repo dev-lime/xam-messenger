@@ -18,7 +18,7 @@ use std::time::SystemTime;
 #[derive(Clone, Serialize, Deserialize)]
 struct User { id: String, name: String }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 struct FileData {
     name: String,
     size: u64,
@@ -44,7 +44,7 @@ struct AppState {
 #[derive(Deserialize)]
 struct RegisterReq { name: String }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ClientMsg {
     #[serde(rename = "type")] msg_type: String,
     #[serde(default)] text: String,
@@ -196,12 +196,21 @@ async fn handle_ws(
                             }
                             "message" => {
                                 let uid = user_id.clone().unwrap();
+                                
+                                log::info!("📩 Raw message: {:?}", client_msg);
+                                log::info!("📩 Files received: {} items", client_msg.files.len());
+                                for (i, f) in client_msg.files.iter().enumerate() {
+                                    log::info!("  File {}: name={}, size={}, path={}", i, f.name, f.size, f.path);
+                                }
+                                
                                 let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
                                 let uname: String = conn.query_row(
                                     "SELECT name FROM users WHERE id = ?1", params![uid],
                                     |row| row.get(0)
                                 ).unwrap_or_default();
                                 drop(conn);
+
+                                log::info!("📩 Получено сообщение: text={}, files={}", client_msg.text, client_msg.files.len());
 
                                 let files_json = serde_json::to_string(&client_msg.files).unwrap_or_default();
 
@@ -216,11 +225,14 @@ async fn handle_ws(
                                     files: client_msg.files.clone(),
                                 };
 
+                                log::info!("💾 Сохраняем сообщение с {} файлами", msg.files.len());
+
                                 state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
                                     "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                                     params![msg.id, msg.sender_id, msg.sender_name, msg.text, msg.timestamp, msg.delivery_status, msg.recipient_id, files_json],
                                 ).unwrap();
 
+                                log::info!("📤 Рассылка сообщения: id={}, files={}", msg.id, msg.files.len());
                                 let _ = state.tx.send(json!({ "type": "message", "message": msg }));
                             }
                             "ack" => {

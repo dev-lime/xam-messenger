@@ -45,7 +45,7 @@ class ServerClient {
     // Автоматическое обнаружение сервера
     async discoverServer() {
         console.log('🔍 Поиск сервера...');
-        
+
         for (const url of this.serverCandidates) {
             try {
                 const found = await this.tryConnect(url, 1000);
@@ -87,32 +87,32 @@ class ServerClient {
     async connect(serverUrl = null) {
         // Если URL не передан, находим сервер
         const url = serverUrl || await this.discoverServer();
-        
+
         this.serverUrl = url;
         this.httpUrl = url.replace('ws://', 'http://').replace('/ws', '/api');
-        
+
         console.log('🔌 Подключение к', url);
-        
+
         return new Promise((resolve, reject) => {
             try {
                 this.ws = new WebSocket(url);
-                
+
                 this.ws.onopen = () => {
                     console.log('✅ Подключено к серверу');
                     this.reconnectAttempts = 0;
                     resolve();
                 };
-                
+
                 this.ws.onclose = () => {
                     console.log('🔌 Отключено от сервера');
                     this.attemptReconnect();
                 };
-                
+
                 this.ws.onerror = (error) => {
                     console.error('❌ Ошибка WebSocket:', error);
                     reject(error);
                 };
-                
+
                 this.ws.onmessage = (event) => {
                     this.handleMessage(JSON.parse(event.data));
                 };
@@ -135,31 +135,31 @@ class ServerClient {
 
     // Обработка входящих сообщений
     handleMessage(data) {
-        console.log('📩 Получено от сервера:', data);
-
         switch (data.type) {
             case 'registered':
                 this.user = data.user;
-                console.log('✅ Зарегистрирован:', this.user);
                 break;
 
             case 'message':
                 // Новое сообщение от другого клиента
+                console.log('📨 Message:', {
+                    id: data.message?.id,
+                    text: data.message?.text,
+                    files: data.message?.files,
+                    filesCount: data.message?.files?.length
+                });
                 this.notifyHandlers('message', data.message);
                 break;
 
             case 'ack':
-                // Обновление статуса доставки
                 this.notifyHandlers('ack', data);
                 break;
 
             case 'messages':
-                // История сообщений
                 this.notifyHandlers('messages', data.messages);
                 break;
 
             case 'user_online':
-                // Статус онлайн пользователя
                 this.notifyHandlers('user_online', data);
                 break;
         }

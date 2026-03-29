@@ -64,7 +64,13 @@ async function init() {
 
 // Обработка нового сообщения
 function handleNewMessage(msg) {
-    console.log('📩 Новое сообщение:', msg);
+    console.log('📩 Новое сообщение:', {
+        id: msg.id,
+        text: msg.text,
+        files: msg.files,
+        filesCount: msg.files?.length,
+        sender_id: msg.sender_id
+    });
 
     const isForMe = msg.recipient_id === state.user?.id || !msg.recipient_id;
     const isMine = msg.sender_id === state.user?.id;
@@ -83,7 +89,6 @@ function handleNewMessage(msg) {
         );
 
         if (localMsgIndex !== -1) {
-            console.log('🔄 Замена локального сообщения на реальное:', msg.id);
             // Сохраняем delivery_status из локального сообщения
             msg.delivery_status = state.messages[localMsgIndex].delivery_status;
             // Заменяем локальное сообщение реальным
@@ -112,6 +117,12 @@ function handleNewMessage(msg) {
         if (isInCurrentChat) {
             state.filteredMessages.push(msg);
             renderMessages(true);
+            
+            // Если получили сообщение в открытом чате — отправляем READ ACK
+            if (!isMine) {
+                serverClient.sendAck(msg.id, 'read');
+                msg.delivery_status = 2;
+            }
         }
     } else {
         renderMessages();
@@ -123,44 +134,32 @@ function handleNewMessage(msg) {
         if (!existingPeer) {
             loadPeers();
         } else {
-            // Обновляем время активности в списке контактов
             renderPeers();
         }
-
-        // НЕ отправляем READ ACK сразу - только когда чат открыт
-        // См. selectPeer() для отправки READ ACK при открытии чата
     }
 }
 
 // Обработка ACK
 function handleAck(data) {
-    console.log('📨 ACK получен:', data);
-    
     // Игнорируем ACK которые мы отправили сами
     if (data.sender_id === state.user?.id) {
-        console.log('⚠️ Игнорируем ACK от себя:', data.sender_id);
         return;
     }
-    
+
     const msg = state.messages.find(m => m.id === data.message_id);
     if (msg) {
-        const oldStatus = msg.delivery_status;
         msg.delivery_status = data.status === 'read' ? 2 : 1;
-        console.log(`🔄 Статус сообщения ${data.message_id}: ${oldStatus} → ${msg.delivery_status}`);
 
         const filteredMsg = state.filteredMessages?.find(m => m.id === data.message_id);
         if (filteredMsg) {
             filteredMsg.delivery_status = msg.delivery_status;
         }
         renderMessages(!!state.currentPeer);
-    } else {
-        console.log('⚠️ Сообщение не найдено для ACK:', data.message_id);
     }
 }
 
 // Обработка истории сообщений
 function handleMessages(messages) {
-    console.log('📚 История:', messages.length, 'сообщений');
     state.messages = messages;
 
     // Фильтруем для текущего чата
@@ -177,17 +176,10 @@ function handleMessages(messages) {
 
 // Обработка статуса онлайн
 function handleUserOnline(data) {
-    console.log('🟢/🔴 Статус онлайн:', data);
     if (data.online) {
-        const wasEmpty = state.onlineUsers.size === 0;
         state.onlineUsers.add(data.user_id);
-        console.log('✅ Добавлен онлайн:', data.user_id, 'всего онлайн:', state.onlineUsers.size);
-        if (wasEmpty) {
-            console.log('📋 Обновляем peers, онлайн:', Array.from(state.onlineUsers));
-        }
     } else {
         state.onlineUsers.delete(data.user_id);
-        console.log('❌ Удалён из онлайн:', data.user_id);
     }
     // Обновляем список контактов
     renderPeers();
@@ -214,8 +206,6 @@ async function connectToServer() {
         state.user = user;
         state.connected = true;
 
-        console.log('✅ Подключен:', user.name, user.id);
-
         // Обновляем UI
         updateUserProfile(user.name, 'В сети');
         updateStatusDisplay(true, 'В сети');
@@ -223,11 +213,9 @@ async function connectToServer() {
         // Загружаем историю и пользователей
         serverClient.getMessages(1000);
         await loadPeers();
-        
+
         // renderPeers() будет вызван автоматически когда придут события user_online
-        // Но добавим таймаут на случай если события уже пришли
         setTimeout(() => {
-            console.log('🔄 Принудительное обновление peers после подключения');
             renderPeers();
         }, 500);
 
@@ -289,7 +277,12 @@ async function sendMessage() {
         recipient_id: state.currentPeer,
     };
 
-    console.log('📤 Отправка сообщения:', messageData);
+    console.log('📤 Отправка сообщения:', {
+        id: localId,
+        text,
+        filesCount: filesData.length,
+        files: filesData
+    });
     serverClient.sendMessageWithFiles(text, filesData, state.currentPeer);
 
     // Добавляем локально
@@ -325,8 +318,6 @@ function renderPeers() {
     if (!elements.peersList) return;
 
     elements.peersList.innerHTML = '';
-    
-    console.log('📋 renderPeers:', state.peers.length, 'пользователей, онлайн:', Array.from(state.onlineUsers));
 
     if (state.peers.length === 0) {
         elements.peersList.innerHTML = '<p style="padding: 20px; color: var(--text-tertiary); text-align: center;">Нет других пользователей</p>';
@@ -347,8 +338,7 @@ function renderPeers() {
 
         // Проверяем онлайн статус
         const isOnline = state.onlineUsers.has(peer.id);
-        console.log('🔍 Пользователь', peer.name, peer.id.slice(0,8), 'онлайн:', isOnline);
-        
+
         // Форматируем время
         let timeStr = '';
         if (isOnline) {
@@ -357,7 +347,7 @@ function renderPeers() {
             const lastTime = new Date(lastMsg.timestamp * 1000);
             const now = new Date();
             const diff = now - lastTime;
-            
+
             if (diff < 60000) { // < 1 минуты
                 timeStr = 'был(а) только что';
             } else if (diff < 3600000) { // < 1 часа
@@ -406,7 +396,6 @@ function selectPeer(userId, userName) {
         .map(m => m.id);
 
     if (unreadIds.length > 0) {
-        console.log('📤 READ ACK для', unreadIds.length, 'сообщений');
         unreadIds.forEach(id => {
             serverClient.sendAck(id, 'read');
             // Обновляем локально
@@ -436,6 +425,26 @@ function loadMessagesForPeer(userId) {
 // Рендеринг сообщений
 function renderMessages(useFiltered = false) {
     elements.messages.innerHTML = '';
+
+    // Если нет выбранного чата, показываем пустое состояние и скрываем ввод
+    if (!state.currentPeer) {
+        elements.messages.innerHTML = `
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-tertiary); text-align: center; padding: 40px;">
+                <div style="font-size: 18px; margin-bottom: 10px;">Выберите чат</div>
+                <div style="font-size: 14px;">Выберите контакт из списка слева чтобы начать общение</div>
+            </div>
+        `;
+        // Скрываем панель ввода
+        if (elements.messageInput) {
+            elements.messageInput.closest('.input-area').style.display = 'none';
+        }
+        return;
+    }
+
+    // Показываем панель ввода когда чат выбран
+    if (elements.messageInput) {
+        elements.messageInput.closest('.input-area').style.display = 'flex';
+    }
 
     const messagesToRender = (useFiltered && state.filteredMessages) ? state.filteredMessages : state.messages;
 
@@ -621,30 +630,12 @@ window.downloadFile = async (filepath, filename) => {
         return;
     }
     
-    console.log('📥 Скачивание файла:', filename, filepath);
-    
     try {
-        // Для локальных путей используем fetch
         const fileUrl = filepath.startsWith('http') 
             ? filepath 
             : `http://localhost:8080/api/files/download?path=${encodeURIComponent(filepath)}`;
         
         const response = await fetch(fileUrl);
-        
-        if (!response.ok) {
-            // Если файл недоступен, пробуем скачать как blob с сервера
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-            return;
-        }
-        
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -654,10 +645,7 @@ window.downloadFile = async (filepath, filename) => {
         a.click();
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
-        
-        console.log('✅ Файл скачан:', filename);
     } catch (error) {
-        console.error('❌ Ошибка скачивания:', error);
         alert(`Не удалось скачать файл: ${error.message}`);
     }
 };
