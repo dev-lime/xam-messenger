@@ -600,14 +600,25 @@ function createMessageElement(msg) {
 
         if (msg.files && msg.files.length > 0) {
             const filesHtml = msg.files.map(f => `
-                <div class="file-item" 
-                     data-filename="${escapeHtml(f.name)}" 
+                <div class="file-item"
+                     data-filename="${escapeHtml(f.name)}"
                      data-filesize="${f.size}"
                      data-filepath="${escapeHtml(f.path || '')}"
-                     onclick="downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')">
+                     onclick="openFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')">
                     <span class="file-icon">${getFileIcon(f.name)}</span>
-                    <span class="file-name">${escapeHtml(f.name)}</span>
-                    <span class="file-size">${formatFileSize(f.size)}</span>
+                    <span class="file-info">
+                        <span class="file-name-row">
+                            <span class="file-name">${escapeHtml(f.name)}</span>
+                            <button class="file-download-btn" 
+                                    onclick="event.stopPropagation(); downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')"
+                                    title="Скачать файл">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 5v14M5 12l7 7 7-7"/>
+                                </svg>
+                            </button>
+                        </span>
+                        <span class="file-size">${formatFileSize(f.size)}</span>
+                    </span>
                 </div>
             `).join('');
 
@@ -632,14 +643,25 @@ function createMessageElement(msg) {
     } else {
         if (msg.files && msg.files.length > 0) {
             const filesHtml = msg.files.map(f => `
-                <div class="file-item" 
-                     data-filename="${escapeHtml(f.name)}" 
+                <div class="file-item"
+                     data-filename="${escapeHtml(f.name)}"
                      data-filesize="${f.size}"
                      data-filepath="${escapeHtml(f.path || '')}"
-                     onclick="downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')">
+                     onclick="openFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')">
                     <span class="file-icon">${getFileIcon(f.name)}</span>
-                    <span class="file-name">${escapeHtml(f.name)}</span>
-                    <span class="file-size">${formatFileSize(f.size)}</span>
+                    <span class="file-info">
+                        <span class="file-name-row">
+                            <span class="file-name">${escapeHtml(f.name)}</span>
+                            <button class="file-download-btn" 
+                                    onclick="event.stopPropagation(); downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')"
+                                    title="Скачать файл">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 5v14M5 12l7 7 7-7"/>
+                                </svg>
+                            </button>
+                        </span>
+                        <span class="file-size">${formatFileSize(f.size)}</span>
+                    </span>
                 </div>
             `).join('');
 
@@ -724,18 +746,52 @@ function getFileIcon(filename) {
     return icons[ext] || '📎';
 }
 
+// Открытие файла — скачивание и открытие системой
+window.openFile = async (filepath, filename) => {
+    if (!filepath) {
+        alert('Путь к файлу не указан');
+        return;
+    }
+
+    try {
+        const fileUrl = filepath.startsWith('http')
+            ? filepath
+            : `http://localhost:8080/api/files/download?path=${encodeURIComponent(filepath)}`;
+
+        // Скачиваем файл
+        const response = await fetch(fileUrl);
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        
+        // Создаём временную ссылку и кликаем для скачивания
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        
+        // Очищаем
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+        log(`📁 Файл скачан: ${filename}`);
+    } catch (error) {
+        alert(`Не удалось открыть файл: ${error.message}`);
+    }
+};
+
 // Скачивание файла
 window.downloadFile = async (filepath, filename) => {
     if (!filepath) {
         alert('Путь к файлу не указан');
         return;
     }
-    
+
     try {
-        const fileUrl = filepath.startsWith('http') 
-            ? filepath 
+        const fileUrl = filepath.startsWith('http')
+            ? filepath
             : `http://localhost:8080/api/files/download?path=${encodeURIComponent(filepath)}`;
-        
+
         const response = await fetch(fileUrl);
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);

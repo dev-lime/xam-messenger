@@ -384,12 +384,59 @@ body {
     flex-shrink: 0;
 }
 
+/* Контейнер для информации о файле */
+.file-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* Строка с именем файла и кнопкой */
+.file-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .file-name {
     flex: 1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     font-size: 14px;
+}
+
+/* Монохромная кнопка загрузки */
+.file-download-btn {
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: inherit;
+    opacity: 0.6;
+}
+
+.file-download-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.file-download-btn:active {
+    transform: scale(0.95);
+}
+
+.file-download-btn svg {
+    stroke: currentColor;
 }
 
 .file-size {
