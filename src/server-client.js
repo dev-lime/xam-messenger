@@ -291,11 +291,12 @@ class ServerClient {
         });
     }
 
-    // Загрузка истории сообщений
-    getMessages(limit = 100) {
+    // Загрузка истории сообщений с пагинацией
+    getMessages(limit = 50, offset = 0) {
         this.send({
             type: 'get_messages',
             limit,
+            text: offset.toString(), // Используем text поле для offset
         });
     }
 

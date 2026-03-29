@@ -250,12 +250,43 @@ body {
     overflow-y: auto;
     padding: 20px;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Кнопка загрузки старых сообщений */
+.load-more-container {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+
+.btn-load-more {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-load-more:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.btn-load-more:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .messages {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    flex: 1;
 }
 
 /* Разделитель дат */

@@ -32,3 +32,6 @@ npm-debug.log*
 # Test artifacts
 test-results/
 .jest/
+
+# Qwen
+.qwen/settings.json

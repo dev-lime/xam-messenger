@@ -24,6 +24,7 @@ const elements = {
     saveSettings: document.getElementById('saveSettings'),
     settingsNameInput: document.getElementById('settingsNameInput'),
     settingsAvatarInput: document.getElementById('settingsAvatarInput'),
+    loadMoreBtn: document.getElementById('loadMoreBtn'),
 };
 
 // Состояние
@@ -36,6 +37,10 @@ let state = {
     currentPeer: null,
     filteredMessages: [],
     onlineUsers: new Set(), // ID пользователей онлайн
+    messageOffset: 0,       // Текущий offset для пагинации
+    messageLimit: 50,       // Количество сообщений за один запрос
+    isLoadingMessages: false,
+    hasMoreMessages: true,
 };
 
 // Прикреплённые файлы
@@ -186,12 +191,30 @@ function handleAck(data) {
 }
 
 // Обработка истории сообщений
-function handleMessages(messages) {
-    state.messages = messages;
+function handleMessages(data) {
+    // Поддержка нового формата с пагинацией
+    const messages = Array.isArray(data) ? data : data.messages;
+    const offset = data.offset || 0;
+    const hasMore = data.has_more !== undefined ? data.has_more : offset > 0;
+    
+    if (offset === 0) {
+        // Первая загрузка - заменяем все сообщения
+        state.messages = messages;
+        state.messageOffset = messages.length;
+    } else {
+        // Подгрузка старых - добавляем в начало
+        state.messages = [...messages, ...state.messages];
+        state.messageOffset += messages.length;
+    }
+    
+    state.hasMoreMessages = hasMore && messages.length > 0;
+    state.isLoadingMessages = false;
+    
+    log(`📚 Загружено сообщений: ${messages.length}, всего: ${state.messages.length}, offset: ${state.messageOffset}`);
 
     // Фильтруем для текущего чата
     if (state.currentPeer) {
-        state.filteredMessages = messages.filter(m => {
+        state.filteredMessages = state.messages.filter(m => {
             return (m.sender_id === state.user?.id && m.recipient_id === state.currentPeer) ||
                    (m.sender_id === state.currentPeer && (m.recipient_id === state.user?.id || !m.recipient_id));
         });
@@ -199,6 +222,9 @@ function handleMessages(messages) {
     } else {
         renderMessages();
     }
+    
+    // Обновляем видимость кнопки загрузки
+    updateLoadMoreButton();
 }
 
 // Обработка статуса онлайн
@@ -237,8 +263,10 @@ async function connectToServer() {
         updateUserProfile(user.name, 'В сети');
         updateStatusDisplay(true, 'В сети');
 
-        // Загружаем историю и пользователей
-        serverClient.getMessages(1000);
+        // Сбрасываем пагинацию и загружаем историю
+        state.messageOffset = 0;
+        state.hasMoreMessages = true;
+        serverClient.getMessages(state.messageLimit, 0);
         await loadPeers();
 
         // renderPeers() будет вызван автоматически когда придут события user_online
@@ -355,6 +383,30 @@ async function loadPeers() {
     }
 }
 
+// Загрузка старых сообщений
+async function loadMoreMessages() {
+    if (state.isLoadingMessages || !state.hasMoreMessages) return;
+    
+    state.isLoadingMessages = true;
+    updateLoadMoreButton();
+    
+    log(`📚 Загрузка старых сообщений (offset: ${state.messageOffset})`);
+    serverClient.getMessages(state.messageLimit, state.messageOffset);
+}
+
+// Обновление кнопки загрузки
+function updateLoadMoreButton() {
+    if (!elements.loadMoreBtn || !elements.loadMoreContainer) return;
+    
+    const shouldShow = state.hasMoreMessages && state.currentPeer;
+    elements.loadMoreContainer.style.display = shouldShow ? 'block' : 'none';
+    
+    if (elements.loadMoreBtn) {
+        elements.loadMoreBtn.disabled = state.isLoadingMessages || !state.hasMoreMessages;
+        elements.loadMoreBtn.textContent = state.isLoadingMessages ? '⏳ Загрузка...' : '⏳ Загрузить старые сообщения';
+    }
+}
+
 // Рендеринг контактов
 function renderPeers() {
     if (!elements.peersList) return;
@@ -430,7 +482,14 @@ function selectPeer(userId, userName) {
     });
 
     updateStatusDisplay(true, `Чат с ${userName}`);
+    
+    // Сбрасываем пагинацию при выборе нового чата
+    state.messageOffset = 0;
+    state.hasMoreMessages = true;
     loadMessagesForPeer(userId);
+    
+    // Обновляем кнопку загрузки
+    updateLoadMoreButton();
 
     // Отправляем READ ACK для всех непрочитанных сообщений от этого пользователя
     const unreadIds = state.messages
@@ -770,6 +829,11 @@ function setupEventListeners() {
         renderAttachedFiles();
         updateSendButton();
     });
+
+    // Обработчик кнопки "Загрузить старые сообщения"
+    if (elements.loadMoreBtn) {
+        elements.loadMoreBtn.addEventListener('click', loadMoreMessages);
+    }
 
     elements.userProfileHeader.addEventListener('click', () => {
         elements.settingsNameInput.value = state.user?.name || '';

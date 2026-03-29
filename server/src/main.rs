@@ -267,11 +267,19 @@ async fn handle_client_msg(
         }
         "get_messages" => {
             let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+            
+            // Поддержка пагинации: limit (по умолчанию 50, макс 200) и offset (по умолчанию 0)
+            let limit = client_msg.limit.max(1).min(200);
+            let offset = client_msg.text.parse::<usize>().unwrap_or(0);
+            
+            log::debug!("📚 Загрузка сообщений: limit={}, offset={}", limit, offset);
+            
             let mut stmt = conn.prepare(
-                "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp ASC LIMIT ?1"
+                "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
             ).unwrap();
+            
             let msgs: Vec<ChatMessage> = stmt.query_map(
-                params![client_msg.limit.max(100)],
+                params![limit, offset],
                 |row| {
                     let files_str: String = row.get(7)?;
                     let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
@@ -283,7 +291,19 @@ async fn handle_client_msg(
                     })
                 }
             ).unwrap().filter_map(|r| r.ok()).collect();
-            let _ = session.text(json!({ "type": "messages", "messages": msgs }).to_string()).await;
+            
+            // Возвращаем сообщения в правильном порядке (старые → новые)
+            let msgs: Vec<ChatMessage> = msgs.into_iter().rev().collect();
+            
+            log::debug!("📚 Загружено {} сообщений", msgs.len());
+            
+            let _ = session.text(json!({ 
+                "type": "messages", 
+                "messages": msgs,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset > 0
+            }).to_string()).await;
         }
         _ => {
             log::warn!("⚠️ Неизвестный тип сообщения: {}", client_msg.msg_type);
@@ -449,14 +469,16 @@ async fn get_online_users(data: web::Data<AppState>) -> HttpResponse {
 async fn get_messages(
     data: web::Data<AppState>, query: web::Query<std::collections::HashMap<String, String>>,
 ) -> HttpResponse {
-    let limit: usize = query.get("limit").and_then(|s| s.parse().ok()).unwrap_or(100);
+    let limit: usize = query.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).max(1).min(200);
+    let offset: usize = query.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    
     let conn = match data.db.lock() {
         Ok(c) => c,
         Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
     };
 
     let result = conn.prepare(
-        "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp ASC LIMIT ?1"
+        "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
     );
 
     let mut stmt = match result {
@@ -465,7 +487,7 @@ async fn get_messages(
     };
 
     let msgs: Vec<ChatMessage> = stmt.query_map(
-        params![limit],
+        params![limit, offset],
         |row| {
             let files_str: String = row.get(7)?;
             let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
@@ -477,10 +499,21 @@ async fn get_messages(
             })
         }
     ).ok()
-        .map(|iter| iter.filter_map(|r| r.ok()).collect())
+        .map(|iter| {
+            // Разворачиваем чтобы вернуть в правильном порядке (старые → новые)
+            let mut msgs: Vec<ChatMessage> = iter.filter_map(|r| r.ok()).collect();
+            msgs.reverse();
+            msgs
+        })
         .unwrap_or_default();
 
-    HttpResponse::Ok().json(json!({"success": true, "data": msgs}))
+    HttpResponse::Ok().json(json!({
+        "success": true,
+        "data": msgs,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset > 0
+    }))
 }
 
 async fn upload_file(
