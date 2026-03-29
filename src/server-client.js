@@ -103,8 +103,8 @@ class ServerClient {
                     resolve();
                 };
 
-                this.ws.onclose = () => {
-                    console.log('🔌 Отключено от сервера');
+                this.ws.onclose = (event) => {
+                    console.log('🔌 Отключено от сервера:', event.code, event.reason);
                     this.attemptReconnect();
                 };
 
@@ -114,6 +114,7 @@ class ServerClient {
                 };
 
                 this.ws.onmessage = (event) => {
+                    console.log('📩 WebSocket message received:', event.data.substring(0, 200));
                     this.handleMessage(JSON.parse(event.data));
                 };
             } catch (error) {
@@ -152,6 +153,7 @@ class ServerClient {
                 break;
 
             case 'ack':
+                console.log('📨 ACK received:', data);
                 this.notifyHandlers('ack', data);
                 break;
 
@@ -220,12 +222,25 @@ class ServerClient {
 
     // Отправка сообщения с файлами
     sendMessageWithFiles(text, files, recipientId = null) {
-        this.send({
+        const message = {
             type: 'message',
             text,
             files,
             recipient_id: recipientId,
-        });
+        };
+        console.log('📤 WebSocket send:', JSON.stringify(message, null, 2));
+        console.log('🔌 WebSocket state:', this.ws?.readyState, 'OPEN=', WebSocket.OPEN);
+        
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            try {
+                this.ws.send(JSON.stringify(message));
+                console.log('✅ Файлы отправлены в WebSocket');
+            } catch (error) {
+                console.error('❌ Ошибка отправки в WebSocket:', error);
+            }
+        } else {
+            console.error('❌ WebSocket не готов! readyState=', this.ws?.readyState);
+        }
     }
 
     // Загрузка файла (возвращает информацию о файле)

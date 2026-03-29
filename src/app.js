@@ -141,20 +141,47 @@ function handleNewMessage(msg) {
 
 // Обработка ACK
 function handleAck(data) {
-    // Игнорируем ACK которые мы отправили сами
+    console.log('📨 ACK получен:', data);
+    
+    // Игнорируем ACK которые мы отправили сами (когда мы прочитали чужое сообщение)
     if (data.sender_id === state.user?.id) {
+        console.log('⚠️ Игнорируем свой ACK');
         return;
     }
 
-    const msg = state.messages.find(m => m.id === data.message_id);
+    // Ищем сообщение по реальному ID
+    let msg = state.messages.find(m => m.id === data.message_id);
+    
+    // Если не нашли, ищем по локальному ID (для отправителя)
+    if (!msg) {
+        // Ищем сообщение которое было отправлено недавно (в пределах 10 секунд)
+        const localMsg = state.messages.find(m => 
+            m.id.startsWith('local_') &&
+            m.sender_id === state.user?.id &&
+            Math.abs(Date.now()/1000 - m.timestamp) < 10
+        );
+        
+        // Если нашли локальное сообщение, обновляем его ID на реальный
+        if (localMsg) {
+            console.log('🔄 Найдено локальное сообщение, обновляем ID:', localMsg.id, '→', data.message_id);
+            localMsg.id = data.message_id;
+            msg = localMsg;
+        }
+    }
+    
     if (msg) {
+        const oldStatus = msg.delivery_status;
         msg.delivery_status = data.status === 'read' ? 2 : 1;
+        console.log(`🔄 Статус сообщения ${data.message_id}: ${oldStatus} → ${msg.delivery_status}`);
 
-        const filteredMsg = state.filteredMessages?.find(m => m.id === data.message_id);
+        const filteredMsg = state.filteredMessages?.find(m => m.id === data.message_id || m.id.startsWith('local_'));
         if (filteredMsg) {
             filteredMsg.delivery_status = msg.delivery_status;
+            filteredMsg.id = data.message_id;
         }
         renderMessages(!!state.currentPeer);
+    } else {
+        console.log('⚠️ Сообщение не найдено для ACK:', data.message_id);
     }
 }
 
@@ -263,6 +290,15 @@ async function sendMessage() {
                 console.error('❌ Ошибка загрузки файла:', error);
             }
         }
+        
+        // Ждём чтобы WebSocket успел восстановиться после HTTP запроса
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // Проверяем что WebSocket ещё открыт
+        if (serverClient.ws?.readyState !== WebSocket.OPEN) {
+            console.log('⚠️ WebSocket закрыт, ждём переподключения...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
     }
 
     // Отправляем единое сообщение с текстом и файлами
@@ -283,7 +319,13 @@ async function sendMessage() {
         filesCount: filesData.length,
         files: filesData
     });
+    
+    console.log('🔌 WebSocket readyState:', serverClient.ws?.readyState);
+    console.log('🔌 connected:', state.connected);
+    
     serverClient.sendMessageWithFiles(text, filesData, state.currentPeer);
+    
+    console.log('✅ Сообщение отправлено в WebSocket');
 
     // Добавляем локально
     state.messages.push(messageData);

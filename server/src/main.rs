@@ -69,7 +69,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(db_path.parent().unwrap())?;
     
     let conn = Connection::open(&db_path)?;
-    
+
     // Таблицы
     conn.execute(
         "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE)",
@@ -79,13 +79,18 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
             text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
-            recipient_id TEXT, files TEXT
+            recipient_id TEXT
         )",
         [],
     )?;
+    // Миграция: добавляем колонку files если её нет
+    conn.execute(
+        "ALTER TABLE messages ADD COLUMN files TEXT DEFAULT '[]'",
+        [],
+    ).ok(); // Игнорируем ошибку если колонка уже существует
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
-            id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER, 
+            id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
             sender_id TEXT, recipient_id TEXT, timestamp INTEGER
         )",
         [],
@@ -110,6 +115,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .wrap(cors)
             .app_data(web::Data::new(state.clone()))
             .wrap(middleware::Logger::default())
+            // Увеличиваем лимит payload для загрузки файлов (до 100MB)
+            .app_data(web::PayloadConfig::new(100 * 1024 * 1024))
             .route("/ws", web::get().to(ws_handler))
             .route("/api/register", web::post().to(register))
             .route("/api/users", web::get().to(get_users))
@@ -121,7 +128,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     .bind("0.0.0.0:8080")?
     .run()
     .await?;
-    
+
     Ok(())
 }
 
@@ -134,6 +141,156 @@ async fn ws_handler(
     Ok(response)
 }
 
+/// Обработка клиентского сообщения с логированием ошибок
+async fn handle_client_msg(
+    client_msg: ClientMsg,
+    user_id: &mut Option<String>,
+    session: &mut actix_ws::Session,
+    state: &AppState,
+) {
+    match client_msg.msg_type.as_str() {
+        "register" => {
+            let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+            let user: User = conn.query_row(
+                "INSERT OR IGNORE INTO users (id, name) VALUES (?1, ?2) RETURNING id, name",
+                params![Uuid::new_v4().to_string(), client_msg.name],
+                |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
+            ).or_else(|_| {
+                conn.query_row(
+                    "SELECT id, name FROM users WHERE name = ?1",
+                    params![client_msg.name],
+                    |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
+                )
+            }).unwrap();
+
+            *user_id = Some(user.id.clone());
+
+            // Добавляем в онлайн
+            let timestamp = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            state.online_users.lock().unwrap().insert(user.id.clone(), timestamp);
+
+            // Отправляем список текущих онлайн пользователей
+            let online_list: Vec<String> = state.online_users.lock().unwrap().keys().cloned().collect();
+            for online_id in &online_list {
+                let _ = session.text(json!({
+                    "type": "user_online",
+                    "user_id": online_id.clone(),
+                    "online": true
+                }).to_string()).await;
+            }
+
+            // Рассылаем остальным что этот пользователь подключился
+            let _ = state.tx.send(json!({
+                "type": "user_online",
+                "user_id": user.id.clone(),
+                "online": true
+            }));
+
+            let _ = session.text(json!({
+                "type": "registered", "user": user
+            }).to_string()).await;
+
+            log::info!("✅ {}: {}", user.name, user.id);
+        }
+        "message" => {
+            let uid = match &user_id {
+                Some(id) => id.clone(),
+                None => {
+                    log::warn!("⚠️ Получено сообщение до регистрации пользователя");
+                    return;
+                }
+            };
+
+            log::info!("📩 Raw message: {:?}", client_msg);
+            log::info!("📩 Files received: {} items", client_msg.files.len());
+            for (i, f) in client_msg.files.iter().enumerate() {
+                log::info!("  File {}: name={}, size={}, path={}", i, f.name, f.size, f.path);
+            }
+
+            let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+            let uname: String = conn.query_row(
+                "SELECT name FROM users WHERE id = ?1", params![uid],
+                |row| row.get(0)
+            ).unwrap_or_default();
+            drop(conn);
+
+            log::info!("📩 Получено сообщение: text={}, files={}", client_msg.text, client_msg.files.len());
+
+            let files_json = serde_json::to_string(&client_msg.files).unwrap_or_default();
+
+            let msg = ChatMessage {
+                id: Uuid::new_v4().to_string(),
+                sender_id: uid.clone(),
+                sender_name: uname,
+                text: client_msg.text.clone(),
+                timestamp: Utc::now().timestamp(),
+                delivery_status: 1,
+                recipient_id: client_msg.recipient_id.clone(),
+                files: client_msg.files.clone(),
+            };
+
+            log::info!("💾 Сохраняем сообщение с {} файлами", msg.files.len());
+
+            state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![msg.id, msg.sender_id, msg.sender_name, msg.text, msg.timestamp, msg.delivery_status, msg.recipient_id, files_json],
+            ).unwrap();
+
+            log::info!("📤 Рассылка сообщения: id={}, files={}", msg.id, msg.files.len());
+            let _ = state.tx.send(json!({ "type": "message", "message": msg }));
+        }
+        "ack" => {
+            let ack_sender_id = match &user_id {
+                Some(id) => id.clone(),
+                None => {
+                    log::warn!("⚠️ Получен ACK до регистрации пользователя");
+                    return;
+                }
+            };
+            let status = if client_msg.status == "read" { 2 } else { 1 };
+            let msg_id = client_msg.message_id.clone();
+            log::info!("📨 ACK {} для {} от {}", client_msg.status, msg_id, ack_sender_id);
+
+            state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
+                "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+                params![status, client_msg.message_id],
+            ).unwrap();
+
+            let ack_msg = json!({
+                "type": "ack", "message_id": msg_id, "status": client_msg.status, "sender_id": ack_sender_id
+            });
+            log::info!("📤 Рассылка ACK: {}", ack_msg);
+            let _ = state.tx.send(ack_msg);
+        }
+        "get_messages" => {
+            let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+            let mut stmt = conn.prepare(
+                "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp ASC LIMIT ?1"
+            ).unwrap();
+            let msgs: Vec<ChatMessage> = stmt.query_map(
+                params![client_msg.limit.max(100)],
+                |row| {
+                    let files_str: String = row.get(7)?;
+                    let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
+                    Ok(ChatMessage {
+                        id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
+                        text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
+                        recipient_id: row.get(6)?,
+                        files,
+                    })
+                }
+            ).unwrap().filter_map(|r| r.ok()).collect();
+            let _ = session.text(json!({ "type": "messages", "messages": msgs }).to_string()).await;
+        }
+        _ => {
+            log::warn!("⚠️ Неизвестный тип сообщения: {}", client_msg.msg_type);
+        }
+    }
+}
+
 async fn handle_ws(
     mut session: actix_ws::Session,
     mut msg_stream: MessageStream,
@@ -141,155 +298,87 @@ async fn handle_ws(
 ) {
     let mut user_id: Option<String> = None;
     let mut rx = state.tx.subscribe();
-    
+    let mut text_fragment_buffer = String::new();
+
     loop {
         tokio::select! {
             Some(msg) = msg_stream.next() => {
-                if let Ok(Message::Text(text)) = msg {
-                    if let Ok(client_msg) = serde_json::from_str::<ClientMsg>(&text) {
-                        match client_msg.msg_type.as_str() {
-                            "register" => {
-                                let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
-                                let user: User = conn.query_row(
-                                    "INSERT OR IGNORE INTO users (id, name) VALUES (?1, ?2) RETURNING id, name",
-                                    params![Uuid::new_v4().to_string(), client_msg.name],
-                                    |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
-                                ).or_else(|_| {
-                                    conn.query_row(
-                                        "SELECT id, name FROM users WHERE name = ?1",
-                                        params![client_msg.name],
-                                        |row| Ok(User { id: row.get(0)?, name: row.get(1)? })
-                                    )
-                                }).unwrap();
+                match msg {
+                    Ok(Message::Text(text)) => {
+                        log::debug!("📥 Получено WebSocket сообщение, размер: {} байт", text.len());
 
-                                user_id = Some(user.id.clone());
-                                
-                                // Добавляем в онлайн
-                                let timestamp = SystemTime::now()
-                                    .duration_since(SystemTime::UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_secs();
-                                state.online_users.lock().unwrap().insert(user.id.clone(), timestamp);
-                                
-                                // Отправляем список текущих онлайн пользователей
-                                let online_list: Vec<String> = state.online_users.lock().unwrap().keys().cloned().collect();
-                                for online_id in &online_list {
-                                    let _ = session.text(json!({
-                                        "type": "user_online",
-                                        "user_id": online_id.clone(),
-                                        "online": true
-                                    }).to_string()).await;
-                                }
-                                
-                                // Рассылаем остальным что этот пользователь подключился
-                                let _ = state.tx.send(json!({
-                                    "type": "user_online",
-                                    "user_id": user.id.clone(),
-                                    "online": true
-                                }));
-
-                                let _ = session.text(json!({
-                                    "type": "registered", "user": user
-                                }).to_string()).await;
-
-                                log::info!("✅ {}: {}", user.name, user.id);
+                        // Пробуем распарсить как完整ное сообщение
+                        match serde_json::from_str::<ClientMsg>(&text) {
+                            Ok(client_msg) => {
+                                log::info!("✅ JSON распарсен успешно, тип: {}", client_msg.msg_type);
+                                handle_client_msg(client_msg, &mut user_id, &mut session, &state).await;
                             }
-                            "message" => {
-                                let uid = user_id.clone().unwrap();
-                                
-                                log::info!("📩 Raw message: {:?}", client_msg);
-                                log::info!("📩 Files received: {} items", client_msg.files.len());
-                                for (i, f) in client_msg.files.iter().enumerate() {
-                                    log::info!("  File {}: name={}, size={}, path={}", i, f.name, f.size, f.path);
-                                }
-                                
-                                let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
-                                let uname: String = conn.query_row(
-                                    "SELECT name FROM users WHERE id = ?1", params![uid],
-                                    |row| row.get(0)
-                                ).unwrap_or_default();
-                                drop(conn);
-
-                                log::info!("📩 Получено сообщение: text={}, files={}", client_msg.text, client_msg.files.len());
-
-                                let files_json = serde_json::to_string(&client_msg.files).unwrap_or_default();
-
-                                let msg = ChatMessage {
-                                    id: Uuid::new_v4().to_string(),
-                                    sender_id: uid.clone(),
-                                    sender_name: uname,
-                                    text: client_msg.text.clone(),
-                                    timestamp: Utc::now().timestamp(),
-                                    delivery_status: 1,
-                                    recipient_id: client_msg.recipient_id.clone(),
-                                    files: client_msg.files.clone(),
-                                };
-
-                                log::info!("💾 Сохраняем сообщение с {} файлами", msg.files.len());
-
-                                state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
-                                    "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                                    params![msg.id, msg.sender_id, msg.sender_name, msg.text, msg.timestamp, msg.delivery_status, msg.recipient_id, files_json],
-                                ).unwrap();
-
-                                log::info!("📤 Рассылка сообщения: id={}, files={}", msg.id, msg.files.len());
-                                let _ = state.tx.send(json!({ "type": "message", "message": msg }));
+                            Err(e) => {
+                                log::warn!("⚠️ Ошибка парсинга JSON: {}", e);
+                                log::warn!("📝 Первые 200 символов: {}", text.chars().take(200).collect::<String>());
+                                // Сохраняем в буфер на случай если это начало фрагментированного сообщения
+                                text_fragment_buffer = text.to_string();
                             }
-                            "ack" => {
-                                let status = if client_msg.status == "read" { 2 } else { 1 };
-                                let msg_id = client_msg.message_id.clone();
-                                let ack_sender_id = user_id.clone().unwrap();
-                                log::info!("📨 ACK {} для {} от {}", client_msg.status, msg_id, ack_sender_id);
-
-                                state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
-                                    "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
-                                    params![status, client_msg.message_id],
-                                ).unwrap();
-
-                                let ack_msg = json!({
-                                    "type": "ack", "message_id": msg_id, "status": client_msg.status, "sender_id": ack_sender_id
-                                });
-                                log::info!("📤 Рассылка ACK: {}", ack_msg);
-                                let _ = state.tx.send(ack_msg);
-                            }
-                            "get_messages" => {
-                                let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
-                                let mut stmt = conn.prepare(
-                                    "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp ASC LIMIT ?1"
-                                ).unwrap();
-                                let msgs: Vec<ChatMessage> = stmt.query_map(
-                                    params![client_msg.limit.max(100)],
-                                    |row| {
-                                        let files_str: String = row.get(7)?;
-                                        let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
-                                        Ok(ChatMessage {
-                                            id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
-                                            text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
-                                            recipient_id: row.get(6)?,
-                                            files,
-                                        })
-                                    }
-                                ).unwrap().filter_map(|r| r.ok()).collect();
-                                let _ = session.text(json!({ "type": "messages", "messages": msgs }).to_string()).await;
-                            }
-                            _ => {}
                         }
                     }
-                } else if matches!(msg, Ok(Message::Close(_)) | Err(_)) {
-                    log::info!("🔌 Клиент отключился");
-                    
-                    // Удаляем из онлайн и рассылаем уведомление
-                    if let Some(uid) = &user_id {
-                        state.online_users.lock().unwrap().remove(uid);
-                        let _ = state.tx.send(json!({ 
-                            "type": "user_online", 
-                            "user_id": uid.clone(),
-                            "online": false
-                        }));
-                        log::info!("🔴 Пользователь {} офлайн", uid);
+                    Ok(Message::Continuation(item)) => {
+                        // Продолжение фрагментированного сообщения
+                        // В actix_http Item может быть FirstText, Continue, или Last
+                        let bytes = match item {
+                            actix_ws::Item::FirstText(b) | actix_ws::Item::Continue(b) | actix_ws::Item::Last(b) => b,
+                            actix_ws::Item::FirstBinary(_) => {
+                                log::warn!("⚠️ Получены бинарные данные вместо текста");
+                                continue;
+                            }
+                        };
+                        let cont_text = String::from_utf8_lossy(&bytes);
+                        log::debug!("📦 Получён continuation frame, размер: {} байт", cont_text.len());
+                        text_fragment_buffer.push_str(&cont_text);
+
+                        match serde_json::from_str::<ClientMsg>(&text_fragment_buffer) {
+                            Ok(client_msg) => {
+                                log::info!("✅ Фрагментированное сообщение собрано успешно (общий размер: {} байт)", text_fragment_buffer.len());
+                                text_fragment_buffer.clear();
+                                handle_client_msg(client_msg, &mut user_id, &mut session, &state).await;
+                            }
+                            Err(e) => {
+                                log::debug!("⏳ Ждём ещё фрагментов... (текущий размер: {} байт, ошибка: {})", text_fragment_buffer.len(), e);
+                            }
+                        }
                     }
-                    
-                    break;
+                    Ok(Message::Close(reason)) => {
+                        log::info!("🔌 Клиент отключился (Close: {:?})", reason);
+
+                        // Удаляем из онлайн и рассылаем уведомление
+                        if let Some(uid) = &user_id {
+                            state.online_users.lock().unwrap().remove(uid);
+                            let _ = state.tx.send(json!({
+                                "type": "user_online",
+                                "user_id": uid.clone(),
+                                "online": false
+                            }));
+                            log::info!("🔴 Пользователь {} офлайн", uid);
+                        }
+
+                        break;
+                    }
+                    Err(e) => {
+                        log::error!("❌ Ошибка WebSocket: {}", e);
+
+                        // Удаляем из онлайн
+                        if let Some(uid) = &user_id {
+                            state.online_users.lock().unwrap().remove(uid);
+                            let _ = state.tx.send(json!({
+                                "type": "user_online",
+                                "user_id": uid.clone(),
+                                "online": false
+                            }));
+                            log::info!("🔴 Пользователь {} офлайн (ошибка)", uid);
+                        }
+
+                        break;
+                    }
+                    _ => {}
                 }
             }
             Ok(msg) = rx.recv() => {
