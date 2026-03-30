@@ -12,6 +12,17 @@
 const TEST_SERVER_URL = process.env.TEST_SERVER_URL || 'http://localhost:8080';
 const TEST_WS_URL = process.env.TEST_WS_URL || 'ws://localhost:8080/ws';
 
+// Проверяем наличие WebSocket (в Node.js нужен пакет 'ws')
+let WebSocketClient = global.WebSocket;
+if (!WebSocketClient) {
+    try {
+        WebSocketClient = require('ws');
+    } catch (e) {
+        console.warn('⚠️  Пакет "ws" не установлен. Интеграционные тесты будут пропущены.');
+        console.warn('Установите: npm install --save-dev ws');
+    }
+}
+
 // Проверка доступности сервера перед запуском тестов
 const checkServerAvailability = async () => {
     try {
@@ -25,36 +36,35 @@ const checkServerAvailability = async () => {
     }
 };
 
-describe('Интеграционные тесты - XAM Messenger', () => {
-    let userIds = [];
-    let users = [];
+// Вспомогательная функция для регистрации пользователя
+const registerUser = async (name) => {
+    const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+    });
+    const result = await response.json();
+    if (result.success) {
+        return result.data;
+    }
+    throw new Error(result.error || 'Registration failed');
+};
 
-    // Вспомогательная функция для регистрации пользователя
-    const registerUser = async (name) => {
-        const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name }),
-        });
-        const result = await response.json();
-        if (result.success) {
-            userIds.push(result.data.id);
-            users.push(result.data);
-            return result.data;
+// Вспомогательная функция для создания WebSocket подключения
+const createWebSocket = () => {
+    return new Promise((resolve, reject) => {
+        if (!WebSocketClient) {
+            reject(new Error('WebSocket не доступен'));
+            return;
         }
-        throw new Error(result.error || 'Registration failed');
-    };
+        const ws = new WebSocketClient(TEST_WS_URL);
+        ws.onopen = () => resolve(ws);
+        ws.onerror = (error) => reject(error);
+        setTimeout(() => reject(new Error('WebSocket timeout')), 5000);
+    });
+};
 
-    // Вспомогательная функция для создания WebSocket подключения
-    const createWebSocket = () => {
-        return new Promise((resolve, reject) => {
-            const ws = new WebSocket(TEST_WS_URL);
-            ws.onopen = () => resolve(ws);
-            ws.onerror = (error) => reject(error);
-            setTimeout(() => reject(new Error('WebSocket timeout')), 5000);
-        });
-    };
-
+describe('Интеграционные тесты - XAM Messenger', () => {
     // Проверка сервера перед всеми тестами
     beforeAll(async () => {
         const isAvailable = await checkServerAvailability();
@@ -63,15 +73,6 @@ describe('Интеграционные тесты - XAM Messenger', () => {
             console.warn('Интеграционные тесты будут пропущены');
             console.warn('Запустите сервер перед запуском тестов');
         }
-    });
-
-    beforeEach(() => {
-        userIds = [];
-        users = [];
-    });
-
-    afterEach(async () => {
-        // Очистка после тестов не требуется так как сервер не хранит данные между перезапусками
     });
 
     describe('Регистрация пользователей', () => {
@@ -106,13 +107,17 @@ describe('Интеграционные тесты - XAM Messenger', () => {
         });
 
         test('должен обрабатывать имена с пробелами', async () => {
-            const user = await registerUser(`John Doe ${Date.now()}`);
-            expect(user.name).toBe(`John Doe ${Date.now()}`);
+            const timestamp = Date.now();
+            const name = `John Doe ${timestamp}`;
+            const user = await registerUser(name);
+            expect(user.name).toBe(name);
         });
 
         test('должен обрабатывать имена с цифрами', async () => {
-            const user = await registerUser(`User123_${Date.now()}`);
-            expect(user.name).toBe(`User123_${Date.now()}`);
+            const timestamp = Date.now();
+            const name = `User123_${timestamp}`;
+            const user = await registerUser(name);
+            expect(user.name).toBe(name);
         });
     });
 
@@ -125,7 +130,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
             const result = await response.json();
 
             expect(result.success).toBe(true);
-            expect(result.data).toBeInstanceOf(Array);
+            expect(Array.isArray(result.data)).toBe(true);
             expect(result.data.length).toBeGreaterThanOrEqual(2);
 
             // Проверяем что каждый пользователь имеет id и name
@@ -519,7 +524,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
             const result = await response.json();
 
             expect(result.success).toBe(true);
-            expect(result.data).toBeInstanceOf(Array);
+            expect(Array.isArray(result.data)).toBe(true);
         });
 
         test('должен уведомлять о подключении пользователя', async () => {
@@ -613,7 +618,7 @@ describe('Интеграционные тесты - Краевые случаи'
 
         test('должен обрабатывать Unicode в сообщениях', async () => {
             const ws = await new Promise((resolve, reject) => {
-                const ws = new WebSocket('ws://localhost:8080/ws');
+                const ws = new WebSocketClient('ws://localhost:8080/ws');
                 ws.onopen = () => resolve(ws);
                 ws.onerror = reject;
                 setTimeout(() => reject(new Error('Timeout')), 5000);
@@ -672,7 +677,7 @@ describe('Интеграционные тесты - Краевые случаи'
             // Создаём 10 подключений
             for (let i = 0; i < 10; i++) {
                 const ws = await new Promise((resolve, reject) => {
-                    const ws = new WebSocket('ws://localhost:8080/ws');
+                    const ws = new WebSocketClient('ws://localhost:8080/ws');
                     ws.onopen = () => resolve(ws);
                     ws.onerror = reject;
                 });
