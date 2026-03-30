@@ -1,3 +1,8 @@
+#![allow(clippy::await_holding_lock)]
+#![allow(clippy::manual_clamp)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::needless_return)]
+
 // XAM Messenger Server - WebSocket + HTTP
 
 use actix_cors::Cors;
@@ -587,17 +592,15 @@ async fn handle_ws(mut session: actix_ws::Session, mut msg_stream: MessageStream
             }
             Ok(msg) = rx.recv() => {
                 if let Some(uid) = &user_id {
-                    if msg.get("type").and_then(|v| v.as_str()) == Some("message") {
-                        if msg.get("message").and_then(|m| m.get("sender_id").and_then(|v| v.as_str())) == Some(uid) {
+                    if msg.get("type").and_then(|v| v.as_str()) == Some("message")
+                        && msg.get("message").and_then(|m| m.get("sender_id").and_then(|v| v.as_str())) == Some(uid) {
                             continue;
                         }
-                    }
                     // Пропускаем ACK от себя
-                    if msg.get("type").and_then(|v| v.as_str()) == Some("ack") {
-                        if msg.get("sender_id").and_then(|v| v.as_str()) == Some(uid) {
+                    if msg.get("type").and_then(|v| v.as_str()) == Some("ack")
+                        && msg.get("sender_id").and_then(|v| v.as_str()) == Some(uid) {
                             continue;
                         }
-                    }
                 }
                 let _ = session.text(msg.to_string()).await;
             }
@@ -798,7 +801,7 @@ async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> HttpR
                 params![file_id, &filename, filepath.to_string_lossy(), size, "", "", Utc::now().timestamp()],
             );
 
-            return HttpResponse::Ok().json(json!({
+            HttpResponse::Ok().json(json!({
                 "success": true,
                 "data": {
                     "id": file_id,
@@ -806,13 +809,13 @@ async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> HttpR
                     "size": size,
                     "path": filepath.to_string_lossy()
                 }
-            }));
+            }))
         }
         Ok(None) | Err(_) => {
-            return HttpResponse::BadRequest().json(json!({
+            HttpResponse::BadRequest().json(json!({
                 "success": false,
                 "error": "No file uploaded"
-            }));
+            }))
         }
     }
 }
