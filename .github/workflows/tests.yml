@@ -185,4 +185,4 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         projectPath: ./src-tauri
-        tauriScript: npx @tauri-apps/cli@1.5
+        tauriScript: npx @tauri-apps/cli@2

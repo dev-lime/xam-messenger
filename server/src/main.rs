@@ -811,12 +811,10 @@ async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> HttpR
                 }
             }))
         }
-        Ok(None) | Err(_) => {
-            HttpResponse::BadRequest().json(json!({
-                "success": false,
-                "error": "No file uploaded"
-            }))
-        }
+        Ok(None) | Err(_) => HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": "No file uploaded"
+        })),
     }
 }
 

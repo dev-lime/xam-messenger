@@ -10,11 +10,13 @@
     "test:integration": "jest --config jest.integration.config.js",
     "test:all": "npm test && npm run test:integration",
     "lint": "eslint src/**/*.js",
-    "lint:fix": "eslint src/**/*.js --fix"
+    "lint:fix": "eslint src/**/*.js --fix",
+    "tauri": "tauri"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
-    "@babel/preset-env": "^7.29.2",
+    "@babel/preset-env": "^7.24.0",
+    "@tauri-apps/cli": "^2.0.0",
     "@testing-library/dom": "^9.3.4",
     "@testing-library/jest-dom": "^6.4.0",
     "@testing-library/user-event": "^14.5.2",
