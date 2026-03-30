@@ -37,18 +37,22 @@ jobs:
     - name: Run server tests
       working-directory: ./server
       run: cargo test --verbose
-    
+
     - name: Run server tests with coverage
+      uses: taiki-e/cache-cargo-install-action@v2
+      with:
+        tool: cargo-tarpaulin
+
+    - name: Run coverage
       working-directory: ./server
-      run: |
-        cargo install cargo-tarpaulin
-        cargo tarpaulin --out Xml
-    
+      run: cargo tarpaulin --out Xml
+
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
         files: ./server/coverage.xml
         flags: server
+        token: ${{ secrets.CODECOV_TOKEN }}
 
   # Тесты клиента (JavaScript)
   client-tests:
