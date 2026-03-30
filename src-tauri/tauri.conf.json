@@ -1,24 +1,16 @@
 {
-  "package": {
-    "productName": "Xam Messenger",
-    "version": "1.0.0"
-  },
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Xam Messenger",
+  "version": "1.0.0",
+  "identifier": "com.xam.messenger",
   "build": {
-    "distDir": "../src",
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
-  "tauri": {
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.xam.messenger",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/icon.png"
-      ]
-    },
+  "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Xam Messenger",
@@ -34,5 +26,14 @@
     "security": {
       "csp": null
     }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.png"
+    ]
   }
 }
