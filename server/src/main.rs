@@ -1,22 +1,26 @@
 // XAM Messenger Server - WebSocket + HTTP
 
-use actix_web::{web, App, HttpServer, HttpResponse, middleware, Error as ActixError, HttpRequest};
 use actix_cors::Cors;
-use actix_ws::{Message, MessageStream};
 use actix_multipart::Multipart;
+use actix_web::{middleware, web, App, Error as ActixError, HttpRequest, HttpResponse, HttpServer};
+use actix_ws::{Message, MessageStream};
+use chrono::Utc;
 use futures_util::{StreamExt, TryStreamExt};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use rusqlite::{Connection, params};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use chrono::Utc;
-use std::collections::HashMap;
-use std::time::SystemTime;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct User { id: String, name: String, avatar: String }
+struct User {
+    id: String,
+    name: String,
+    avatar: String,
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 struct FileData {
@@ -27,8 +31,12 @@ struct FileData {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct ChatMessage {
-    id: String, sender_id: String, sender_name: String,
-    text: String, timestamp: i64, delivery_status: u8,
+    id: String,
+    sender_id: String,
+    sender_name: String,
+    text: String,
+    timestamp: i64,
+    delivery_status: u8,
     recipient_id: Option<String>,
     #[serde(default)]
     files: Vec<FileData>,
@@ -42,33 +50,44 @@ struct AppState {
 }
 
 #[derive(Deserialize)]
-struct RegisterReq { name: String }
+struct RegisterReq {
+    name: String,
+}
 
 #[derive(Deserialize, Debug)]
 struct ClientMsg {
-    #[serde(rename = "type")] msg_type: String,
-    #[serde(default)] text: String,
-    #[serde(default)] name: String,
-    #[serde(default)] message_id: String,
-    #[serde(default)] status: String,
-    #[serde(default)] limit: usize,
-    #[serde(default)] before_id: Option<String>,  // ID последнего сообщения для пагинации
-    #[serde(default)] recipient_id: Option<String>,
-    #[serde(default)] files: Vec<FileData>,
+    #[serde(rename = "type")]
+    msg_type: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    message_id: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    limit: usize,
+    #[serde(default)]
+    before_id: Option<String>, // ID последнего сообщения для пагинации
+    #[serde(default)]
+    recipient_id: Option<String>,
+    #[serde(default)]
+    files: Vec<FileData>,
 }
 
 #[actix_web::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
-    
+
     // Инициализация БД
     let db_path = dirs::config_dir()
         .unwrap_or_else(|| ".".into())
         .join("xam-messenger")
         .join("xam.db");
-    
+
     std::fs::create_dir_all(db_path.parent().unwrap())?;
-    
+
     let conn = Connection::open(&db_path)?;
 
     // Таблицы
@@ -77,11 +96,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         [],
     )?;
     // Миграция: добавляем колонку avatar если её нет (для старых баз)
-    conn.execute(
-        "ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT '👤'",
-        [],
-    ).ok(); // Игнорируем ошибку если колонка уже существует
-    
+    conn.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT '👤'", [])
+        .ok(); // Игнорируем ошибку если колонка уже существует
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
@@ -94,7 +111,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     conn.execute(
         "ALTER TABLE messages ADD COLUMN files TEXT DEFAULT '[]'",
         [],
-    ).ok(); // Игнорируем ошибку если колонка уже существует
+    )
+    .ok(); // Игнорируем ошибку если колонка уже существует
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
             id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
@@ -102,17 +120,22 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         )",
         [],
     )?;
-    
+
     // Обновляем существующих пользователей аватаром по умолчанию
     conn.execute(
         "UPDATE users SET avatar = '👤' WHERE avatar IS NULL OR avatar = ''",
         [],
-    ).ok();
-    
+    )
+    .ok();
+
     let db = Arc::new(Mutex::new(conn));
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
     let online_users = Arc::new(Mutex::new(HashMap::new()));
-    let state = AppState { db, tx, online_users };
+    let state = AppState {
+        db,
+        tx,
+        online_users,
+    };
 
     log::info!("🚀 XAM Server на 0.0.0.0:8080");
 
@@ -146,7 +169,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn ws_handler(
-    req: HttpRequest, stream: web::Payload, data: web::Data<AppState>,
+    req: HttpRequest,
+    stream: web::Payload,
+    data: web::Data<AppState>,
 ) -> Result<HttpResponse, ActixError> {
     let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
     let state = data.get_ref().clone();
@@ -164,14 +189,14 @@ async fn handle_client_msg(
     match client_msg.msg_type.as_str() {
         "register" => {
             let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
-            
+
             // Получаем аватар из запроса или используем значение по умолчанию
-            let avatar = if !client_msg.text.is_empty() { 
-                client_msg.text.clone() 
-            } else { 
+            let avatar = if !client_msg.text.is_empty() {
+                client_msg.text.clone()
+            } else {
                 "👤".to_string()
             };
-            
+
             let user: User = conn.query_row(
                 "INSERT OR IGNORE INTO users (id, name, avatar) VALUES (?1, ?2, ?3) RETURNING id, name, avatar",
                 params![Uuid::new_v4().to_string(), client_msg.name, avatar],
@@ -191,16 +216,26 @@ async fn handle_client_msg(
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            state.online_users.lock().unwrap().insert(user.id.clone(), timestamp);
+            state
+                .online_users
+                .lock()
+                .unwrap()
+                .insert(user.id.clone(), timestamp);
 
             // Отправляем список текущих онлайн пользователей
-            let online_list: Vec<String> = state.online_users.lock().unwrap().keys().cloned().collect();
+            let online_list: Vec<String> =
+                state.online_users.lock().unwrap().keys().cloned().collect();
             for online_id in &online_list {
-                let _ = session.text(json!({
-                    "type": "user_online",
-                    "user_id": online_id.clone(),
-                    "online": true
-                }).to_string()).await;
+                let _ = session
+                    .text(
+                        json!({
+                            "type": "user_online",
+                            "user_id": online_id.clone(),
+                            "online": true
+                        })
+                        .to_string(),
+                    )
+                    .await;
             }
 
             // Рассылаем остальным что этот пользователь подключился
@@ -210,9 +245,14 @@ async fn handle_client_msg(
                 "online": true
             }));
 
-            let _ = session.text(json!({
-                "type": "registered", "user": user
-            }).to_string()).await;
+            let _ = session
+                .text(
+                    json!({
+                        "type": "registered", "user": user
+                    })
+                    .to_string(),
+                )
+                .await;
 
             log::info!("✅ {}: {}", user.name, user.id);
         }
@@ -224,21 +264,22 @@ async fn handle_client_msg(
                     return;
                 }
             };
-            
+
             let new_avatar = if !client_msg.text.is_empty() {
                 client_msg.text.clone()
             } else {
                 "👤".to_string()
             };
-            
+
             log::info!("👤 Обновление профиля: user={}, avatar={}", uid, new_avatar);
-            
+
             let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
             conn.execute(
                 "UPDATE users SET avatar = ?1 WHERE id = ?2",
                 params![new_avatar, uid],
-            ).unwrap();
-            
+            )
+            .unwrap();
+
             // Обновляем онлайн пользователей и рассылаем новый аватар
             let _ = state.tx.send(json!({
                 "type": "user_updated",
@@ -258,17 +299,30 @@ async fn handle_client_msg(
             log::info!("📩 Raw message: {:?}", client_msg);
             log::info!("📩 Files received: {} items", client_msg.files.len());
             for (i, f) in client_msg.files.iter().enumerate() {
-                log::info!("  File {}: name={}, size={}, path={}", i, f.name, f.size, f.path);
+                log::info!(
+                    "  File {}: name={}, size={}, path={}",
+                    i,
+                    f.name,
+                    f.size,
+                    f.path
+                );
             }
 
             let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
-            let uname: String = conn.query_row(
-                "SELECT name FROM users WHERE id = ?1", params![uid],
-                |row| row.get(0)
-            ).unwrap_or_default();
+            let uname: String = conn
+                .query_row(
+                    "SELECT name FROM users WHERE id = ?1",
+                    params![uid],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default();
             drop(conn);
 
-            log::info!("📩 Получено сообщение: text={}, files={}", client_msg.text, client_msg.files.len());
+            log::info!(
+                "📩 Получено сообщение: text={}, files={}",
+                client_msg.text,
+                client_msg.files.len()
+            );
 
             let files_json = serde_json::to_string(&client_msg.files).unwrap_or_default();
 
@@ -290,7 +344,11 @@ async fn handle_client_msg(
                 params![msg.id, msg.sender_id, msg.sender_name, msg.text, msg.timestamp, msg.delivery_status, msg.recipient_id, files_json],
             ).unwrap();
 
-            log::info!("📤 Рассылка сообщения: id={}, files={}", msg.id, msg.files.len());
+            log::info!(
+                "📤 Рассылка сообщения: id={}, files={}",
+                msg.id,
+                msg.files.len()
+            );
             let _ = state.tx.send(json!({ "type": "message", "message": msg }));
         }
         "ack" => {
@@ -303,12 +361,22 @@ async fn handle_client_msg(
             };
             let status = if client_msg.status == "read" { 2 } else { 1 };
             let msg_id = client_msg.message_id.clone();
-            log::info!("📨 ACK {} для {} от {}", client_msg.status, msg_id, ack_sender_id);
+            log::info!(
+                "📨 ACK {} для {} от {}",
+                client_msg.status,
+                msg_id,
+                ack_sender_id
+            );
 
-            state.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
-                "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
-                params![status, client_msg.message_id],
-            ).unwrap();
+            state
+                .db
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .execute(
+                    "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+                    params![status, client_msg.message_id],
+                )
+                .unwrap();
 
             let ack_msg = json!({
                 "type": "ack", "message_id": msg_id, "status": client_msg.status, "sender_id": ack_sender_id
@@ -323,7 +391,11 @@ async fn handle_client_msg(
             let limit = client_msg.limit.max(1).min(200);
             let before_id = &client_msg.before_id;
 
-            log::info!("📚 Загрузка сообщений: limit={}, before_id={:?}", limit, before_id);
+            log::info!(
+                "📚 Загрузка сообщений: limit={}, before_id={:?}",
+                limit,
+                before_id
+            );
 
             // Загружаем на 1 сообщение больше чтобы проверить есть ли ещё
             let sql = if let Some(last_id) = before_id {
@@ -336,25 +408,35 @@ async fn handle_client_msg(
 
             let mut stmt = conn.prepare(&sql).unwrap();
 
-            let mut msgs: Vec<ChatMessage> = stmt.query_map(
-                params![],
-                |row| {
+            let mut msgs: Vec<ChatMessage> = stmt
+                .query_map(params![], |row| {
                     let files_str: String = row.get(7)?;
                     let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
                     Ok(ChatMessage {
-                        id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
-                        text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
+                        id: row.get(0)?,
+                        sender_id: row.get(1)?,
+                        sender_name: row.get(2)?,
+                        text: row.get(3)?,
+                        timestamp: row.get(4)?,
+                        delivery_status: row.get(5)?,
                         recipient_id: row.get(6)?,
                         files,
                     })
-                }
-            ).unwrap().filter_map(|r| r.ok()).collect();
+                })
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
 
             // Проверяем есть ли ещё сообщения (загрузили ли больше чем limit)
             let loaded_count = msgs.len();
             let has_more = loaded_count > limit;
 
-            log::info!("📚 Загружено {} сообщений, limit={}, has_more={}", loaded_count, limit, has_more);
+            log::info!(
+                "📚 Загружено {} сообщений, limit={}, has_more={}",
+                loaded_count,
+                limit,
+                has_more
+            );
 
             // Если загрузили лишнее сообщение - сохраняем его ID и убираем
             let next_before_id = if has_more {
@@ -376,7 +458,12 @@ async fn handle_client_msg(
             // Возвращаем сообщения в правильном порядке (старые → новые)
             let msgs: Vec<ChatMessage> = msgs.into_iter().rev().collect();
 
-            log::debug!("📚 Загружено {} сообщений, has_more={}, next_before_id={:?}", msgs.len(), has_more, next_before_id);
+            log::debug!(
+                "📚 Загружено {} сообщений, has_more={}, next_before_id={:?}",
+                msgs.len(),
+                has_more,
+                next_before_id
+            );
 
             // Формируем ответ с явным указанием next_before_id
             let response = if let Some(ref id) = next_before_id {
@@ -407,11 +494,7 @@ async fn handle_client_msg(
     }
 }
 
-async fn handle_ws(
-    mut session: actix_ws::Session,
-    mut msg_stream: MessageStream,
-    state: AppState,
-) {
+async fn handle_ws(mut session: actix_ws::Session, mut msg_stream: MessageStream, state: AppState) {
     let mut user_id: Option<String> = None;
     let mut rx = state.tx.subscribe();
     let mut text_fragment_buffer = String::new();
@@ -485,7 +568,7 @@ async fn handle_ws(
                         } else {
                             log::error!("❌ Ошибка WebSocket: {}", e);
                         }
-                        
+
                         // Удаляем из онлайн
                         if let Some(uid) = &user_id {
                             state.online_users.lock().unwrap().remove(uid);
@@ -533,17 +616,32 @@ async fn register(data: web::Data<AppState>, body: web::Json<RegisterReq>) -> Ht
     let user = match db.query_row(
         "SELECT id, name, avatar FROM users WHERE name = ?1",
         params![name],
-        |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
+        |row| {
+            Ok(User {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                avatar: row.get(2)?,
+            })
+        },
     ) {
         Ok(u) => u,
         Err(_) => {
             match db.query_row(
                 "INSERT INTO users (id, name) VALUES (?1, ?2) RETURNING id, name, avatar",
                 params![Uuid::new_v4().to_string(), name],
-                |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
+                |row| {
+                    Ok(User {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        avatar: row.get(2)?,
+                    })
+                },
             ) {
                 Ok(u) => u,
-                Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
+                Err(e) => {
+                    return HttpResponse::InternalServerError()
+                        .json(json!({"success": false, "error": e.to_string()}))
+                }
             }
         }
     };
@@ -553,11 +651,20 @@ async fn register(data: web::Data<AppState>, body: web::Json<RegisterReq>) -> Ht
 
 async fn get_users(data: web::Data<AppState>) -> HttpResponse {
     let conn = data.db.lock().unwrap_or_else(|e| e.into_inner());
-    let mut stmt = conn.prepare("SELECT id, name, avatar FROM users ORDER BY name").unwrap();
-    let users: Vec<User> = stmt.query_map(
-        params![],
-        |row| Ok(User { id: row.get(0)?, name: row.get(1)?, avatar: row.get(2)? })
-    ).unwrap().filter_map(|r| r.ok()).collect();
+    let mut stmt = conn
+        .prepare("SELECT id, name, avatar FROM users ORDER BY name")
+        .unwrap();
+    let users: Vec<User> = stmt
+        .query_map(params![], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                avatar: row.get(2)?,
+            })
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
     HttpResponse::Ok().json(json!({"success": true, "data": users}))
 }
 
@@ -568,14 +675,23 @@ async fn get_online_users(data: web::Data<AppState>) -> HttpResponse {
 }
 
 async fn get_messages(
-    data: web::Data<AppState>, query: web::Query<std::collections::HashMap<String, String>>,
+    data: web::Data<AppState>,
+    query: web::Query<std::collections::HashMap<String, String>>,
 ) -> HttpResponse {
-    let limit: usize = query.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).max(1).min(200);
+    let limit: usize = query
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50)
+        .max(1)
+        .min(200);
     let before_id = query.get("before_id");
-    
+
     let conn = match data.db.lock() {
         Ok(c) => c,
-        Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"success": false, "error": e.to_string()}))
+        }
     };
 
     // Загружаем на 1 сообщение больше чтобы проверить есть ли ещё
@@ -589,22 +705,28 @@ async fn get_messages(
 
     let mut stmt = match result {
         Ok(s) => s,
-        Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"success": false, "error": e.to_string()}))
+        }
     };
 
-    let mut msgs: Vec<ChatMessage> = stmt.query_map(
-        params![],
-        |row| {
+    let mut msgs: Vec<ChatMessage> = stmt
+        .query_map(params![], |row| {
             let files_str: String = row.get(7)?;
             let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
             Ok(ChatMessage {
-                id: row.get(0)?, sender_id: row.get(1)?, sender_name: row.get(2)?,
-                text: row.get(3)?, timestamp: row.get(4)?, delivery_status: row.get(5)?,
+                id: row.get(0)?,
+                sender_id: row.get(1)?,
+                sender_name: row.get(2)?,
+                text: row.get(3)?,
+                timestamp: row.get(4)?,
+                delivery_status: row.get(5)?,
                 recipient_id: row.get(6)?,
                 files,
             })
-        }
-    ).ok()
+        })
+        .ok()
         .map(|iter| iter.filter_map(|r| r.ok()).collect())
         .unwrap_or_default();
 
@@ -615,7 +737,7 @@ async fn get_messages(
     } else {
         None
     };
-    
+
     // Разворачиваем чтобы вернуть в правильном порядке (старые → новые)
     msgs.reverse();
 
@@ -628,10 +750,7 @@ async fn get_messages(
     }))
 }
 
-async fn upload_file(
-    data: web::Data<AppState>,
-    mut payload: Multipart,
-) -> HttpResponse {
+async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> HttpResponse {
     let upload_dir = dirs::data_local_dir()
         .unwrap_or_else(|| ".".into())
         .join("xam-messenger")
@@ -648,7 +767,8 @@ async fn upload_file(
     match payload.try_next().await {
         Ok(Some(mut field)) => {
             // Сначала получаем имя файла
-            let filename: String = field.content_disposition()
+            let filename: String = field
+                .content_disposition()
                 .as_ref()
                 .and_then(|cd| cd.get_filename())
                 .unwrap_or("unnamed")
@@ -703,10 +823,12 @@ async fn download_file(
 ) -> HttpResponse {
     let filepath = match query.get("path") {
         Some(p) => p,
-        None => return HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "Path parameter is required"
-        })),
+        None => {
+            return HttpResponse::BadRequest().json(json!({
+                "success": false,
+                "error": "Path parameter is required"
+            }))
+        }
     };
 
     // Проверяем что файл существует
@@ -725,12 +847,13 @@ async fn download_file(
 
     // Читаем файл
     match std::fs::read(filepath) {
-        Ok(contents) => {
-            HttpResponse::Ok()
-                .content_type("application/octet-stream")
-                .insert_header(("Content-Disposition", format!("attachment; filename=\"{}\"", filename)))
-                .body(contents)
-        }
+        Ok(contents) => HttpResponse::Ok()
+            .content_type("application/octet-stream")
+            .insert_header((
+                "Content-Disposition",
+                format!("attachment; filename=\"{}\"", filename),
+            ))
+            .body(contents),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "success": false,
             "error": format!("Failed to read file: {}", e)
@@ -783,7 +906,11 @@ mod tests {
         let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
         let online_users = Arc::new(Mutex::new(HashMap::new()));
 
-        AppState { db, tx, online_users }
+        AppState {
+            db,
+            tx,
+            online_users,
+        }
     }
 
     // ============================================
@@ -1026,9 +1153,7 @@ mod tests {
         )
         .await;
 
-        let req = test::TestRequest::get()
-            .uri("/api/messages")
-            .to_request();
+        let req = test::TestRequest::get().uri("/api/messages").to_request();
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
@@ -1112,25 +1237,27 @@ mod tests {
     async fn test_ack_filtering_logic() {
         // Проверяем логику фильтрации ACK на клиенте
         let user_id = "user-123";
-        
+
         // ACK от другого пользователя — должно пройти
         let ack_from_other = json!({
             "type": "ack",
             "message_id": "msg-1",
             "sender_id": "user-456"
         });
-        
-        let should_process = ack_from_other.get("sender_id").and_then(|v| v.as_str()) != Some(user_id);
+
+        let should_process =
+            ack_from_other.get("sender_id").and_then(|v| v.as_str()) != Some(user_id);
         assert!(should_process);
-        
+
         // ACK от себя — должно быть отфильтровано
         let ack_from_self = json!({
             "type": "ack",
             "message_id": "msg-2",
             "sender_id": "user-123"
         });
-        
-        let should_ignore = ack_from_self.get("sender_id").and_then(|v| v.as_str()) == Some(user_id);
+
+        let should_ignore =
+            ack_from_self.get("sender_id").and_then(|v| v.as_str()) == Some(user_id);
         assert!(should_ignore);
     }
 
@@ -1276,20 +1403,27 @@ mod tests {
 
         // Read
         let name: String = conn
-            .query_row("SELECT name FROM users WHERE id = ?1", params!["user-1"], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT name FROM users WHERE id = ?1",
+                params!["user-1"],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(name, "Alice");
 
         // Update
-        conn.execute("UPDATE users SET name = ?1 WHERE id = ?2", params!["Alice Updated", "user-1"])
-            .unwrap();
+        conn.execute(
+            "UPDATE users SET name = ?1 WHERE id = ?2",
+            params!["Alice Updated", "user-1"],
+        )
+        .unwrap();
 
         let name: String = conn
-            .query_row("SELECT name FROM users WHERE id = ?1", params!["user-1"], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT name FROM users WHERE id = ?1",
+                params!["user-1"],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(name, "Alice Updated");
 
@@ -1495,10 +1629,12 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_message_with_files() {
-        let files = vec![
-            FileData { name: "test.txt".to_string(), size: 1024, path: "/path/to/test.txt".to_string() },
-        ];
-        
+        let files = vec![FileData {
+            name: "test.txt".to_string(),
+            size: 1024,
+            path: "/path/to/test.txt".to_string(),
+        }];
+
         let msg = ChatMessage {
             id: "msg-id".to_string(),
             sender_id: "sender-id".to_string(),
@@ -1546,11 +1682,10 @@ mod tests {
             .send_wildcard()
             .max_age(3600);
 
-        let app = test::init_service(
-            App::new()
-                .wrap(cors)
-                .route("/api/test", web::get().to(|| async { HttpResponse::Ok().finish() })),
-        )
+        let app = test::init_service(App::new().wrap(cors).route(
+            "/api/test",
+            web::get().to(|| async { HttpResponse::Ok().finish() }),
+        ))
         .await;
 
         let req = test::TestRequest::get()
@@ -1678,12 +1813,7 @@ mod tests {
                 .to_request();
 
             let resp = test::call_service(&app, req).await;
-            assert!(
-                resp.status().is_success(),
-                "Failed for name: {}",
-                name
-            );
+            assert!(resp.status().is_success(), "Failed for name: {}", name);
         }
     }
 }
-
