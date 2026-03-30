@@ -1,6 +1,15 @@
 // Setup file for Jest tests
 import '@testing-library/jest-dom';
 
+// Включаем фейковые таймеры для всех тестов
+beforeAll(() => {
+    jest.useFakeTimers();
+});
+
+afterAll(() => {
+    jest.useRealTimers();
+});
+
 // Mock для localStorage
 const localStorageMock = {
     store: {},
@@ -39,48 +48,32 @@ HTMLDialogElement.prototype.close = function() {
 class MockWebSocket {
     constructor(url) {
         this.url = url;
-        this.readyState = WebSocket.OPEN;
+        this.readyState = MockWebSocket.OPEN;
         this.onopen = null;
         this.onclose = null;
         this.onerror = null;
         this.onmessage = null;
-        
+
         // Симулируем открытие соединения
         setTimeout(() => {
             if (this.onopen) this.onopen();
         }, 10);
     }
 
-    // eslint-disable-next-line no-unused-vars
     send(data) {
-        // Mock send - data intentionally unused
+        // Mock send
     }
 
     close() {
-        this.readyState = WebSocket.CLOSED;
-        if (this.onclose) this.onclose();
-    }
-
-    // Метод для симуляции получения сообщения (для тестов)
-    simulateMessage(data) {
-        if (this.onmessage) {
-            this.onmessage({ data: JSON.stringify(data) });
-        }
-    }
-
-    simulateError(error) {
-        if (this.onerror) this.onerror(error);
-    }
-
-    simulateClose() {
-        this.readyState = WebSocket.CLOSED;
+        this.readyState = MockWebSocket.CLOSED;
         if (this.onclose) this.onclose();
     }
 }
 
+MockWebSocket.OPEN = 1;
+MockWebSocket.CLOSED = 3;
+
 window.WebSocket = MockWebSocket;
-window.WebSocket.OPEN = 1;
-window.WebSocket.CLOSED = 3;
 
 // Mock для fetch
 const mockFetch = jest.fn();
@@ -90,7 +83,7 @@ window.fetch = mockFetch;
 beforeEach(() => {
     mockFetch.mockClear();
     localStorageMock.store = {};
-    
+
     // Очищаем DOM
     document.body.innerHTML = `
         <div class="app">
