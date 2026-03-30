@@ -1,0 +1,98 @@
+name: Build Linux
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-gnu
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.0-dev \
+          build-essential \
+          libssl-dev \
+          libgtk-3-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          libjavascriptcoregtk-4.0-dev \
+          libsoup2.4-dev \
+          libgdk-pixbuf2.0-dev \
+          libatk1.0-dev \
+          libatk-bridge2.0-dev \
+          libdrm-dev \
+          libxkbcommon-dev \
+          libxcomposite-dev \
+          libxdamage-dev \
+          libxfixes-dev \
+          libxrandr-dev \
+          libgbm-dev \
+          libpango1.0-dev \
+          libasound2-dev \
+          libatspi2.0-dev \
+          clang \
+          cmake \
+          pkg-config \
+          libsqlite3-dev
+
+    - name: Install dependencies
+      run: |
+        npm ci
+
+    - name: Build server
+      working-directory: ./server
+      run: cargo build --release --verbose
+
+    - name: Build Tauri app
+      uses: tauri-apps/tauri-action@v0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        projectPath: ./src-tauri
+        args: --release
+
+    - name: Upload server artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: xam-server-linux
+        path: server/target/release/xam-server
+
+    - name: Upload AppImage
+      uses: actions/upload-artifact@v4
+      with:
+        name: xam-messenger-appimage
+        path: src-tauri/target/release/bundle/appimage/*.AppImage
+
+    - name: Upload DEB package
+      uses: actions/upload-artifact@v4
+      with:
+        name: xam-messenger-deb
+        path: src-tauri/target/release/bundle/deb/*.deb
+
+    - name: Upload RPM package
+      uses: actions/upload-artifact@v4
+      with:
+        name: xam-messenger-rpm
+        path: src-tauri/target/release/bundle/rpm/*.rpm

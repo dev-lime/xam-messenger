@@ -1,0 +1,72 @@
+name: Build macOS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+    - name: Install dependencies
+      run: |
+        npm ci
+
+    - name: Build server (universal binary)
+      working-directory: ./server
+      run: |
+        # Собираем для Intel
+        cargo build --release --target x86_64-apple-darwin --verbose
+        # Собираем для Apple Silicon
+        cargo build --release --target aarch64-apple-darwin --verbose
+        # Создаём universal binary
+        mkdir -p target/release
+        lipo -create \
+          target/x86_64-apple-darwin/release/xam-server \
+          target/aarch64-apple-darwin/release/xam-server \
+          -output target/release/xam-server
+
+    - name: Build Tauri app
+      uses: tauri-apps/tauri-action@v0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        projectPath: ./src-tauri
+        args: --release
+
+    - name: Upload server artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: xam-server-macos
+        path: server/target/release/xam-server
+
+    - name: Upload DMG
+      uses: actions/upload-artifact@v4
+      with:
+        name: xam-messenger-dmg
+        path: src-tauri/target/release/bundle/dmg/*.dmg
+
+    - name: Upload App
+      uses: actions/upload-artifact@v4
+      with:
+        name: xam-messenger-app
+        path: src-tauri/target/release/bundle/macos/*.app
