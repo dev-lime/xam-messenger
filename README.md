@@ -107,7 +107,12 @@ cargo tauri dev
 
 **Запрос истории:**
 ```json
-{"type": "get_messages", "limit": 100}
+{"type": "get_messages", "limit": 50, "before_id": null}
+```
+
+**Запрос старых сообщений (пагинация):**
+```json
+{"type": "get_messages", "limit": 50, "before_id": "c6cb1fec-..."}
 ```
 
 ### HTTP
@@ -160,7 +165,6 @@ lan-messenger-tauri/
 ├── .github/
 │   └── workflows/         # CI/CD конфигурация
 ├── DISCOVERY.md           # Протокол обнаружения сервера
-├── Dockerfile.linux       # Docker для Linux сборки
 └── README.md
 ```
 
@@ -175,7 +179,9 @@ lan-messenger-tauri/
 
 ## База данных
 
-**Расположение:** `~/.config/xam-messenger/xam.db` (Linux/macOS)
+**Расположение:**
+- **Linux:** `~/.config/xam-messenger/xam.db`
+- **macOS:** `~/Library/Application Support/xam-messenger/xam.db`
 
 **Таблицы:**
 ```sql
@@ -219,9 +225,6 @@ cargo test
 cd ..
 npm install
 npm test
-
-# Интеграционные тесты (требуется запущенный сервер)
-npm run test:integration
 ```
 
 ### Покрытие тестами
@@ -229,8 +232,7 @@ npm run test:integration
 | Компонент | Тестов | Статус |
 |-----------|--------|--------|
 | Сервер (Rust) | 35 | ✅ |
-| Клиент (JS) | 82 | ⚠️ 58 passed |
-| Интеграция | 20+ | ✅ |
+| Клиент (JS) | 82 | ⚠️ 61 passed, 20 skipped |
 
 ### CI/CD
 
@@ -292,12 +294,6 @@ RUST_LOG=debug ./target/release/xam-server
 RUST_LOG=error ./target/release/xam-server
 ```
 
-### Сборка для Linux
-
-```bash
-./build-linux.sh
-```
-
 ## Troubleshooting
 
 ### Сервер не запускается
@@ -338,7 +334,9 @@ npm test
 
 ### Файлы не загружаются
 
-- Проверьте права на запись в `~/.local/share/xam-messenger/files/` (Linux) или `~/Library/Application Support/xam-messenger/files/` (macOS)
+- Проверьте права на запись в папку файлов:
+  - **Linux:** `~/.local/share/xam-messenger/files/`
+  - **macOS:** `~/Library/Application Support/xam-messenger/files/`
 - Максимальный размер файла: 100MB
 
 ## Безопасность
