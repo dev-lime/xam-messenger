@@ -1,333 +1,321 @@
 // Модуль для работы с сервером (WebSocket + HTTP)
 
 class ServerClient {
-    constructor() {
-        this.ws = null;
-        this.user = null;
-        this.messageHandlers = [];
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 10;
-        this.serverUrl = null;
-        this.httpUrl = null;
-        
-        // Список серверов для проверки
-        this.serverCandidates = [
-            'ws://localhost:8080/ws',
-            'ws://127.0.0.1:8080/ws',
-        ];
-        
-        // Добавляем локальные IP для поиска в сети
-        this.addLocalNetworkServers();
-    }
-    
-    // Добавляем серверы локальной сети
-    addLocalNetworkServers() {
-        // Сканируем типичные подсети
-        const subnets = [
-            '192.168.1.',
-            '192.168.0.',
-            '192.168.88.',
-            '10.0.0.',
-            '10.0.1.',
-        ];
-        
-        // Для каждой подсети добавляем адреса 1-10 и 100-110
-        subnets.forEach(subnet => {
-            for (let i = 1; i <= 10; i++) {
-                this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
-            }
-            for (let i = 100; i <= 110; i++) {
-                this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
-            }
-        });
-    }
-    
-    // Автоматическое обнаружение сервера
-    async discoverServer() {
-        console.log('🔍 Поиск сервера...');
+	constructor() {
+		this.ws = null;
+		this.user = null;
+		this.messageHandlers = [];
+		this.reconnectAttempts = 0;
+		this.maxReconnectAttempts = 10;
+		this.serverUrl = null;
+		this.httpUrl = null;
 
-        for (const url of this.serverCandidates) {
-            try {
-                const found = await this.tryConnect(url, 1000);
-                if (found) {
-                    console.log('✅ Сервер найден:', url);
-                    return url;
-                }
-            } catch (e) {
-                // Пробуем следующий
-            }
-        }
-        
-        throw new Error('Сервер не найден. Убедитесь, что сервер запущен.');
-    }
-    
-    // Попытка подключения к конкретному серверу
-    async tryConnect(url, timeout = 1000) {
-        return new Promise((resolve, reject) => {
-            const ws = new WebSocket(url);
-            const timer = setTimeout(() => {
-                ws.close();
-                resolve(false); // Не выбрасываем ошибку, просто false
-            }, timeout);
-            
-            ws.onopen = () => {
-                clearTimeout(timer);
-                ws.close(); // Закрываем тестовое соединение
-                resolve(true); // Сервер найден
-            };
-            
-            ws.onerror = () => {
-                clearTimeout(timer);
-                resolve(false); // Не выбрасываем ошибку
-            };
-        });
-    }
+		// Список серверов для проверки
+		this.serverCandidates = [
+			'ws://localhost:8080/ws',
+			'ws://127.0.0.1:8080/ws',
+		];
 
-    // Подключение к серверу
-    async connect(serverUrl = null) {
-        // Если URL не передан, находим сервер
-        const url = serverUrl || await this.discoverServer();
+		// Добавляем локальные IP для поиска в сети
+		this.addLocalNetworkServers();
+	}
 
-        this.serverUrl = url;
-        this.httpUrl = url.replace('ws://', 'http://').replace('/ws', '/api');
+	// Добавляем серверы локальной сети
+	addLocalNetworkServers() {
+		// Сканируем типичные подсети
+		const subnets = [
+			'192.168.1.',
+			'192.168.0.',
+			'192.168.88.',
+			'10.0.0.',
+			'10.0.1.',
+		];
 
-        console.log('🔌 Подключение к', url);
+		// Для каждой подсети добавляем адреса 1-10 и 100-110
+		subnets.forEach(subnet => {
+			for (let i = 1; i <= 10; i++) {
+				this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
+			}
+			for (let i = 100; i <= 110; i++) {
+				this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
+			}
+		});
+	}
 
-        return new Promise((resolve, reject) => {
-            try {
-                this.ws = new WebSocket(url);
+	// Автоматическое обнаружение сервера
+	async discoverServer() {
+		console.log('🔍 Поиск сервера...');
 
-                this.ws.onopen = () => {
-                    console.log('✅ Подключено к серверу');
-                    this.reconnectAttempts = 0;
-                    resolve();
-                };
+		for (const url of this.serverCandidates) {
+			try {
+				const found = await this.tryConnect(url, 1000);
+				if (found) {
+					console.log('✅ Сервер найден:', url);
+					return url;
+				}
+			} catch (e) {
+				// Пробуем следующий
+			}
+		}
 
-                this.ws.onclose = (event) => {
-                    console.log('🔌 Отключено от сервера:', event.code, event.reason);
-                    this.attemptReconnect();
-                };
+		throw new Error('Сервер не найден. Убедитесь, что сервер запущен.');
+	}
 
-                this.ws.onerror = (error) => {
-                    console.error('❌ Ошибка WebSocket:', error);
-                    reject(error);
-                };
+	// Попытка подключения к конкретному серверу
+	async tryConnect(url, timeout = 1000) {
+		return new Promise((resolve, reject) => {
+			const ws = new WebSocket(url);
+			const timer = setTimeout(() => {
+				ws.close();
+				resolve(false); // Не выбрасываем ошибку, просто false
+			}, timeout);
 
-                this.ws.onmessage = (event) => {
-                    console.log('📩 WebSocket message received:', event.data.substring(0, 200));
-                    // Логируем полный JSON для отладки пагинации
-                    try {
-                        const data = JSON.parse(event.data);
-                        if (data.type === 'messages') {
-                            console.log('📚 Messages payload:', {
-                                before_id: data.before_id,
-                                next_before_id: data.next_before_id,
-                                has_more: data.has_more,
-                                count: data.messages?.length
-                            });
-                        }
-                        this.handleMessage(JSON.parse(event.data));
-                    } catch (e) {
-                        console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
-                    }
-                };
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
+			ws.onopen = () => {
+				clearTimeout(timer);
+				ws.close(); // Закрываем тестовое соединение
+				resolve(true); // Сервер найден
+			};
 
-    // Попытка переподключения
-    attemptReconnect() {
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            console.log(`🔄 Попытка переподключения ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
-            setTimeout(() => this.connect(), 2000);
-        } else {
-            console.error('❌ Превышено количество попыток переподключения');
-        }
-    }
+			ws.onerror = () => {
+				clearTimeout(timer);
+				resolve(false); // Не выбрасываем ошибку
+			};
+		});
+	}
 
-    // Обработка входящих сообщений
-    handleMessage(data) {
-        switch (data.type) {
-            case 'registered':
-                this.user = data.user;
-                break;
+	// Подключение к серверу
+	async connect(serverUrl = null) {
+		// Если URL не передан, находим сервер
+		const url = serverUrl || await this.discoverServer();
 
-            case 'message':
-                // Новое сообщение от другого клиента
-                console.log('📨 Message:', {
-                    id: data.message?.id,
-                    text: data.message?.text,
-                    files: data.message?.files,
-                    filesCount: data.message?.files?.length
-                });
-                this.notifyHandlers('message', data.message);
-                break;
+		this.serverUrl = url;
+		this.httpUrl = url.replace('ws://', 'http://').replace('/ws', '/api');
 
-            case 'ack':
-                console.log('📨 ACK received:', data);
-                this.notifyHandlers('ack', data);
-                break;
+		console.log('🔌 Подключение к', url);
 
-            case 'messages':
-                this.notifyHandlers('messages', data);  // Передаём весь объект с before_id, next_before_id, has_more
-                break;
+		return new Promise((resolve, reject) => {
+			try {
+				this.ws = new WebSocket(url);
 
-            case 'user_online':
-                this.notifyHandlers('user_online', data);
-                break;
-        }
-    }
+				this.ws.onopen = () => {
+					console.log('✅ Подключено к серверу');
+					this.reconnectAttempts = 0;
+					resolve();
+				};
 
-    // Подписка на события
-    on(event, handler) {
-        this.messageHandlers.push({ event, handler });
-    }
+				this.ws.onclose = (event) => {
+					console.log('🔌 Отключено от сервера:', event.code, event.reason);
+					this.attemptReconnect();
+				};
 
-    // Уведомление подписчиков
-    notifyHandlers(event, data) {
-        this.messageHandlers
-            .filter(h => h.event === event)
-            .forEach(h => h.handler(data));
-    }
+				this.ws.onerror = (error) => {
+					console.error('❌ Ошибка WebSocket:', error);
+					reject(error);
+				};
 
-    // Регистрация пользователя
-    async register(name) {
-        const response = await fetch(`${this.httpUrl}/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name }),
-        });
+				this.ws.onmessage = (event) => {
+					try {
+						const data = JSON.parse(event.data);
+						this.handleMessage(JSON.parse(event.data));
+					} catch (e) {
+						console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
+					}
+				};
+			} catch (error) {
+				reject(error);
+			}
+		});
+	}
 
-        const result = await response.json();
+	// Попытка переподключения
+	attemptReconnect() {
+		if (this.reconnectAttempts < this.maxReconnectAttempts) {
+			this.reconnectAttempts++;
+			console.log(`🔄 Попытка переподключения ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
+			setTimeout(() => this.connect(), 2000);
+		} else {
+			console.error('❌ Превышено количество попыток переподключения');
+		}
+	}
 
-        if (result.success) {
-            this.user = result.data;
+	// Обработка входящих сообщений
+	handleMessage(data) {
+		switch (data.type) {
+			case 'registered':
+				this.user = data.user;
+				break;
 
-            // Отправляем регистрацию через WebSocket
-            this.send({ type: 'register', name });
-            
-            return result.data;
-        } else {
-            throw new Error(result.error);
-        }
-    }
+			case 'message':
+				// Новое сообщение от другого клиента
+				console.log('📨 Message:', {
+					id: data.message?.id,
+					text: data.message?.text,
+					files: data.message?.files,
+					filesCount: data.message?.files?.length
+				});
+				this.notifyHandlers('message', data.message);
+				break;
 
-    // Отправка сообщения
-    send(message) {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify(message));
-        } else {
-            console.error('❌ Нет подключения к серверу');
-        }
-    }
+			case 'ack':
+				console.log('📨 ACK received:', data);
+				this.notifyHandlers('ack', data);
+				break;
 
-    // Отправка текстового сообщения
-    sendMessage(text, recipientId = null) {
-        this.send({
-            type: 'message',
-            text,
-            files: [],
-            recipient_id: recipientId,
-        });
-    }
+			case 'messages':
+				this.notifyHandlers('messages', data);  // Передаём весь объект с before_id, next_before_id, has_more
+				break;
 
-    // Отправка сообщения с файлами
-    sendMessageWithFiles(text, files, recipientId = null) {
-        const message = {
-            type: 'message',
-            text,
-            files,
-            recipient_id: recipientId,
-        };
-        console.log('📤 WebSocket send:', JSON.stringify(message, null, 2));
-        console.log('🔌 WebSocket state:', this.ws?.readyState, 'OPEN=', WebSocket.OPEN);
-        
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            try {
-                this.ws.send(JSON.stringify(message));
-                console.log('✅ Файлы отправлены в WebSocket');
-            } catch (error) {
-                console.error('❌ Ошибка отправки в WebSocket:', error);
-            }
-        } else {
-            console.error('❌ WebSocket не готов! readyState=', this.ws?.readyState);
-        }
-    }
+			case 'user_online':
+				this.notifyHandlers('user_online', data);
+				break;
+		}
+	}
 
-    // Загрузка файла (возвращает информацию о файле)
-    async uploadFile(file) {
-        // Создаём FormData для multipart/form-data
-        const formData = new FormData();
-        formData.append('file', file);
+	// Подписка на события
+	on(event, handler) {
+		this.messageHandlers.push({ event, handler });
+	}
 
-        // Загружаем файл на сервер
-        const response = await fetch(`${this.httpUrl}/files`, {
-            method: 'POST',
-            body: formData,
-        });
+	// Уведомление подписчиков
+	notifyHandlers(event, data) {
+		this.messageHandlers
+			.filter(h => h.event === event)
+			.forEach(h => h.handler(data));
+	}
 
-        const result = await response.json();
+	// Регистрация пользователя
+	async register(name) {
+		const response = await fetch(`${this.httpUrl}/register`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name }),
+		});
 
-        if (result.success) {
-            return {
-                name: file.name,
-                size: file.size,
-                path: result.data.path,
-            };
-        } else {
-            throw new Error(result.error || 'Failed to upload file');
-        }
-    }
+		const result = await response.json();
 
-    // Отправка файла (устаревший метод, используется uploadFile)
-    async sendFile(file, recipientId = null) {
-        const fileData = await this.uploadFile(file);
-        
-        // Отправляем сообщение с файлом через WebSocket
-        this.send({
-            type: 'message',
-            text: `📎 Файл: ${file.name}`,
-            files: [fileData],
-            recipient_id: recipientId,
-        });
-        return true;
-    }
+		if (result.success) {
+			this.user = result.data;
 
-    // Подтверждение прочтения
-    sendAck(messageId, status = 'read') {
-        this.send({
-            type: 'ack',
-            message_id: messageId,
-            status,
-        });
-    }
+			// Отправляем регистрацию через WebSocket
+			this.send({ type: 'register', name });
 
-    // Загрузка истории сообщений с пагинацией (cursor-based)
-    getMessages(limit = 50, beforeId = null) {
-        this.send({
-            type: 'get_messages',
-            limit,
-            before_id: beforeId,
-        });
-    }
+			return result.data;
+		} else {
+			throw new Error(result.error);
+		}
+	}
 
-    // Получение списка пользователей
-    async getUsers() {
-        const response = await fetch(`${this.httpUrl}/users`);
-        const result = await response.json();
-        return result.data || [];
-    }
+	// Отправка сообщения
+	send(message) {
+		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+			this.ws.send(JSON.stringify(message));
+		} else {
+			console.error('❌ Нет подключения к серверу');
+		}
+	}
 
-    // Отключение
-    disconnect() {
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
-    }
+	// Отправка текстового сообщения
+	sendMessage(text, recipientId = null) {
+		this.send({
+			type: 'message',
+			text,
+			files: [],
+			recipient_id: recipientId,
+		});
+	}
+
+	// Отправка сообщения с файлами
+	sendMessageWithFiles(text, files, recipientId = null) {
+		const message = {
+			type: 'message',
+			text,
+			files,
+			recipient_id: recipientId,
+		};
+
+		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+			try {
+				this.ws.send(JSON.stringify(message));
+				console.log('✅ Файлы отправлены в WebSocket');
+			} catch (error) {
+				console.error('❌ Ошибка отправки в WebSocket:', error);
+			}
+		} else {
+			console.error('❌ WebSocket не готов! readyState=', this.ws?.readyState);
+		}
+	}
+
+	// Загрузка файла (возвращает информацию о файле)
+	async uploadFile(file) {
+		// Создаём FormData для multipart/form-data
+		const formData = new FormData();
+		formData.append('file', file);
+
+		// Загружаем файл на сервер
+		const response = await fetch(`${this.httpUrl}/files`, {
+			method: 'POST',
+			body: formData,
+		});
+
+		const result = await response.json();
+
+		if (result.success) {
+			return {
+				name: file.name,
+				size: file.size,
+				path: result.data.path,
+			};
+		} else {
+			throw new Error(result.error || 'Failed to upload file');
+		}
+	}
+
+	// Отправка файла (устаревший метод, используется uploadFile)
+	async sendFile(file, recipientId = null) {
+		const fileData = await this.uploadFile(file);
+
+		// Отправляем сообщение с файлом через WebSocket
+		this.send({
+			type: 'message',
+			text: `📎 Файл: ${file.name}`,
+			files: [fileData],
+			recipient_id: recipientId,
+		});
+		return true;
+	}
+
+	// Подтверждение прочтения
+	sendAck(messageId, status = 'read') {
+		this.send({
+			type: 'ack',
+			message_id: messageId,
+			status,
+		});
+	}
+
+	// Загрузка истории сообщений с пагинацией (cursor-based)
+	getMessages(limit = 50, beforeId = null) {
+		this.send({
+			type: 'get_messages',
+			limit,
+			before_id: beforeId,
+		});
+	}
+
+	// Получение списка пользователей
+	async getUsers() {
+		const response = await fetch(`${this.httpUrl}/users`);
+		const result = await response.json();
+		return result.data || [];
+	}
+
+	// Отключение
+	disconnect() {
+		if (this.ws) {
+			this.ws.close();
+			this.ws = null;
+		}
+	}
 }
 
 // Экспортируем глобально для использования в app.js
