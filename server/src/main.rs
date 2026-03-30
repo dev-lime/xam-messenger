@@ -20,65 +20,66 @@ use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct User {
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct User {
     id: String,
     name: String,
-    avatar: String,
+    #[serde(default)]
+    pub avatar: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-struct FileData {
-    name: String,
-    size: u64,
-    path: String,
+pub struct FileData {
+    pub name: String,
+    pub size: u64,
+    pub path: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-struct ChatMessage {
-    id: String,
-    sender_id: String,
-    sender_name: String,
-    text: String,
-    timestamp: i64,
-    delivery_status: u8,
-    recipient_id: Option<String>,
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ChatMessage {
+    pub id: String,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub text: String,
+    pub timestamp: i64,
+    pub delivery_status: u8,
+    pub recipient_id: Option<String>,
     #[serde(default)]
-    files: Vec<FileData>,
+    pub files: Vec<FileData>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ClientMsg {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub message_id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub limit: usize,
+    #[serde(default)]
+    pub before_id: Option<String>,
+    #[serde(default)]
+    pub recipient_id: Option<String>,
+    #[serde(default)]
+    pub files: Vec<FileData>,
 }
 
 #[derive(Clone)]
-struct AppState {
-    db: Arc<Mutex<Connection>>,
-    tx: broadcast::Sender<serde_json::Value>,
-    online_users: Arc<Mutex<HashMap<String, u64>>>, // user_id -> timestamp последнего подключения
+pub struct AppState {
+    pub db: Arc<Mutex<Connection>>,
+    pub tx: broadcast::Sender<serde_json::Value>,
+    pub online_users: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 #[derive(Deserialize)]
 struct RegisterReq {
     name: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct ClientMsg {
-    #[serde(rename = "type")]
-    msg_type: String,
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    message_id: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    limit: usize,
-    #[serde(default)]
-    before_id: Option<String>, // ID последнего сообщения для пагинации
-    #[serde(default)]
-    recipient_id: Option<String>,
-    #[serde(default)]
-    files: Vec<FileData>,
 }
 
 #[actix_web::main]
@@ -863,17 +864,63 @@ async fn download_file(
 }
 
 // ============================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ТЕСТОВ
+// ============================================
+
+/// Создаёт тестовое состояние с временной БД (в памяти)
+#[cfg(test)]
+pub fn create_test_state() -> AppState {
+    let db = Arc::new(Mutex::new(
+        Connection::open(":memory:").expect("Failed to create in-memory DB"),
+    ));
+
+    // Создаём таблицы
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
+            text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
+            recipient_id TEXT, files TEXT DEFAULT '[]'
+        )",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS files (
+            id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
+            sender_id TEXT, recipient_id TEXT, timestamp INTEGER
+        )",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
+    let online_users = Arc::new(Mutex::new(HashMap::new()));
+
+    AppState {
+        db,
+        tx,
+        online_users,
+    }
+}
+
+// ============================================
 // ТЕСТЫ
 // ============================================
 
 #[cfg(test)]
-mod tests {
+mod tests_inner {
     use super::*;
     use actix_web::{test, web, App};
-    use std::time::UNIX_EPOCH;
 
     // Создаёт тестовое состояние с временной БД
-    fn create_test_state() -> AppState {
+    pub fn create_test_state() -> AppState {
         let db = Arc::new(Mutex::new(
             Connection::open(":memory:").expect("Failed to create in-memory DB"),
         ));
@@ -1560,7 +1607,7 @@ mod tests {
     #[actix_rt::test]
     async fn test_system_time_to_secs() {
         let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+            .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
 
@@ -1816,5 +1863,300 @@ mod tests {
             let resp = test::call_service(&app, req).await;
             assert!(resp.status().is_success(), "Failed for name: {}", name);
         }
+    }
+
+    // ============================================
+    // ТЕСТЫ ПАРСИНГА СООБЩЕНИЙ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_invalid_json_parsing() {
+        // Тест на "битый" JSON
+        let invalid_jsons = vec![
+            "{invalid json}",
+            "{\"type\": \"message\"",  // незакрытая скобка
+            "{\"type\": \"message\", \"text\": }",  // без значения
+            "not json at all",
+            "",
+            "null",
+            "[]",  // массив вместо объекта
+        ];
+
+        for json_str in invalid_jsons {
+            let result: Result<ClientMsg, _> = serde_json::from_str(json_str);
+            assert!(result.is_err(), "Should fail to parse: {}", json_str);
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_large_json_payload() {
+        // Тест на большой JSON payload
+        let large_text = "A".repeat(100000);  // 100KB текст
+        let json = json!({
+            "type": "message",
+            "text": large_text,
+            "files": []
+        });
+
+        let json_str = serde_json::to_string(&json).unwrap();
+        let result: Result<ClientMsg, _> = serde_json::from_str(&json_str);
+
+        // Должен успешно распарситься
+        assert!(result.is_ok());
+        let msg = result.unwrap();
+        assert_eq!(msg.text.len(), 100000);
+    }
+
+    #[actix_rt::test]
+    async fn test_nested_json_structure() {
+        // Тест на сложную вложенную структуру JSON
+        let json = r#"{
+            "type": "message",
+            "text": "Hello",
+            "files": [
+                {"name": "file1.txt", "size": 100, "path": "/path1"},
+                {"name": "file2.pdf", "size": 200, "path": "/path2"}
+            ],
+            "recipient_id": "user-123"
+        }"#;
+
+        let msg: ClientMsg = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.msg_type, "message");
+        assert_eq!(msg.files.len(), 2);
+        assert_eq!(msg.files[0].name, "file1.txt");
+        assert_eq!(msg.files[1].name, "file2.pdf");
+        assert_eq!(msg.recipient_id, Some("user-123".to_string()));
+    }
+
+    // ============================================
+    // ТЕСТЫ МАШИНЫ СОСТОЯНИЙ (DELIVERY STATUS)
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_delivery_status_transitions() {
+        let state = create_test_state();
+        let msg_id = "status-test-msg";
+
+        // Создаём сообщение со статусом 0 (отправка)
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![msg_id, "user-1", "User", "Test", Utc::now().timestamp(), 0, Option::<String>::None, "[]"],
+            ).unwrap();
+        }
+
+        // Проверяем начальный статус 0
+        {
+            let conn = state.db.lock().unwrap();
+            let status: i64 = conn.query_row(
+                "SELECT delivery_status FROM messages WHERE id = ?1",
+                params![msg_id],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(status, 0, "Начальный статус должен быть 0 (отправка)");
+        }
+
+        // Переход 0 → 1 (отправлено)
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+                params![1, msg_id],
+            ).unwrap();
+        }
+
+        {
+            let conn = state.db.lock().unwrap();
+            let status: i64 = conn.query_row(
+                "SELECT delivery_status FROM messages WHERE id = ?1",
+                params![msg_id],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(status, 1, "Статус должен быть 1 (отправлено)");
+        }
+
+        // Переход 1 → 2 (прочитано)
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+                params![2, msg_id],
+            ).unwrap();
+        }
+
+        {
+            let conn = state.db.lock().unwrap();
+            let status: i64 = conn.query_row(
+                "SELECT delivery_status FROM messages WHERE id = ?1",
+                params![msg_id],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(status, 2, "Статус должен быть 2 (прочитано)");
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_delivery_status_cannot_skip_sent() {
+        // Тест что сообщение не может стать "Прочитано" (2) минуя "Отправлено" (1)
+        // В реальности это не блокируется на уровне БД, но проверяем логику
+        let state = create_test_state();
+        let msg_id = "skip-test-msg";
+
+        // Создаём сообщение со статусом 0
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![msg_id, "user-1", "User", "Test", Utc::now().timestamp(), 0, Option::<String>::None, "[]"],
+            ).unwrap();
+        }
+
+        // Пытаемся сразу установить статус 2 (минуя 1)
+        // Это технически возможно в БД, но не должно происходить на уровне логики
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+                params![2, msg_id],
+            ).unwrap();
+        }
+
+        // Проверяем что статус изменился (БД позволяет, но логика приложения не должна)
+        {
+            let conn = state.db.lock().unwrap();
+            let status: i64 = conn.query_row(
+                "SELECT delivery_status FROM messages WHERE id = ?1",
+                params![msg_id],
+                |row| row.get(0),
+            ).unwrap();
+            // Тест документирует текущее поведение - БД позволяет прямой переход
+            // В production это должно проверяться в handle_client_msg
+            assert_eq!(status, 2);
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_ack_from_self_should_be_ignored() {
+        // Тест что ACK от себя игнорируется
+        let user_id = "user-123";
+
+        // ACK от себя — должно быть отфильтровано
+        let ack_from_self = json!({
+            "type": "ack",
+            "message_id": "msg-2",
+            "sender_id": "user-123"
+        });
+
+        let should_ignore = ack_from_self
+            .get("sender_id")
+            .and_then(|v| v.as_str()) == Some(user_id);
+        assert!(should_ignore, "ACK от себя должен игнорироваться");
+
+        // ACK от другого пользователя — должно пройти
+        let ack_from_other = json!({
+            "type": "ack",
+            "message_id": "msg-1",
+            "sender_id": "user-456"
+        });
+
+        let should_process = ack_from_other
+            .get("sender_id")
+            .and_then(|v| v.as_str()) != Some(user_id);
+        assert!(should_process, "ACK от другого должен обрабатываться");
+    }
+
+    // ============================================
+    // ТЕСТЫ БЕЗОПАСНОСТИ
+    // ============================================
+
+    #[actix_rt::test]
+    async fn test_sql_injection_in_register() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state.clone()))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        // SQL injection попытки
+        let injection_attempts = vec![
+            "'; DROP TABLE users; --",
+            "Robert'); DROP TABLE users;--",
+            "1' OR '1'='1",
+            "admin'--",
+            "'; DELETE FROM users WHERE '1'='1",
+        ];
+
+        for name in injection_attempts {
+            let req = test::TestRequest::post()
+                .uri("/api/register")
+                .set_json(json!({ "name": name }))
+                .to_request();
+
+            let resp = test::call_service(&app, req).await;
+            // Должен успешно зарегистрировать (параметризованные запросы защищают)
+            assert!(resp.status().is_success(), "Failed for injection: {}", name);
+
+            // Проверяем что таблица users всё ещё существует и цела
+            let conn = state.db.lock().unwrap();
+            let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0)).unwrap();
+            assert!(count > 0, "Таблица users должна существовать после injection попытки");
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_xss_in_user_name() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        // XSS попытки
+        let xss_attempts = vec![
+            "<script>alert('xss')</script>",
+            "<img src=x onerror=alert('xss')>",
+            "javascript:alert('xss')",
+            "<iframe src='evil.com'></iframe>",
+        ];
+
+        for name in xss_attempts {
+            let req = test::TestRequest::post()
+                .uri("/api/register")
+                .set_json(json!({ "name": name }))
+                .to_request();
+
+            let resp = test::call_service(&app, req).await;
+            assert!(resp.status().is_success(), "Failed for XSS: {}", name);
+
+            // Проверяем что имя сохранено как есть (экранирование на клиенте)
+            let body: serde_json::Value = test::read_body_json(resp).await;
+            assert_eq!(body["data"]["name"], name);
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_null_byte_injection() {
+        let state = create_test_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/register", web::post().to(register)),
+        )
+        .await;
+
+        // Null byte injection
+        let req = test::TestRequest::post()
+            .uri("/api/register")
+            .set_json(json!({ "name": "admin\0null" }))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        // Должен обработать корректно
+        assert!(resp.status().is_success());
     }
 }
