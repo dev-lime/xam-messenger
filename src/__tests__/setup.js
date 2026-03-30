@@ -47,15 +47,14 @@ class MockWebSocket {
         this.onclose = null;
         this.onerror = null;
         this.onmessage = null;
-        
-        // Сразу вызываем onopen
-        const self = this;
+
+        // Симулируем асинхронное подключение
         setTimeout(() => {
-            if (self.onopen) self.onopen();
+            if (this.onopen) this.onopen();
         }, 0);
     }
 
-    send(data) {}
+    send() {}
 
     close() {
         this.readyState = MockWebSocket.CLOSED;
@@ -72,13 +71,21 @@ window.WebSocket = MockWebSocket;
 const mockFetch = jest.fn();
 window.fetch = mockFetch;
 
+// Глобальные функции для работы с файлами
+window.openFile = jest.fn();
+window.downloadFile = jest.fn();
+window.removeAttachedFile = jest.fn();
+
 // Очистка моков перед каждым тестом
 beforeEach(() => {
     mockFetch.mockClear();
     localStorageMock.store = {};
     window.ServerClient = undefined;
+    window.openFile = jest.fn();
+    window.downloadFile = jest.fn();
+    window.removeAttachedFile = jest.fn();
 
-    // Очищаем DOM
+    // Очищаем DOM и создаём новую разметку
     document.body.innerHTML = `
         <div class="app">
             <aside class="sidebar">
@@ -105,6 +112,9 @@ beforeEach(() => {
                     <button class="btn btn-send" id="sendBtn" disabled><span>➤</span></button>
                 </div>
                 <input type="file" id="fileInput" style="display: none;" multiple>
+                <div id="loadMoreContainer" style="display: none;">
+                    <button class="btn" id="loadMoreBtn">Загрузить старые</button>
+                </div>
             </main>
         </div>
         <dialog id="connectDialog" class="dialog">
@@ -143,4 +153,9 @@ beforeEach(() => {
             </div>
         </dialog>
     `;
+});
+
+// Очищаем таймеры после каждого теста
+afterEach(() => {
+    jest.clearAllTimers();
 });

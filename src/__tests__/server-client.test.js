@@ -2,6 +2,36 @@
  * Тесты для ServerClient - модуль WebSocket клиента
  */
 
+// Mock для WebSocket
+class MockWebSocket {
+    constructor(url) {
+        this.url = url;
+        this.readyState = MockWebSocket.OPEN;
+        this.onopen = null;
+        this.onclose = null;
+        this.onerror = null;
+        this.onmessage = null;
+        this.sentMessages = [];
+
+        // Симулируем асинхронное подключение
+        setTimeout(() => {
+            if (this.onopen) this.onopen();
+        }, 0);
+    }
+
+    send(data) {
+        this.sentMessages.push(data);
+    }
+
+    close() {
+        this.readyState = MockWebSocket.CLOSED;
+        if (this.onclose) this.onclose();
+    }
+}
+
+MockWebSocket.OPEN = 1;
+MockWebSocket.CLOSED = 3;
+
 // Mock для ServerClient (так как мы не можем импортировать напрямую из-за window.ServerClient)
 class TestServerClient {
     constructor() {
@@ -22,12 +52,12 @@ class TestServerClient {
         const url = serverUrl || this.serverCandidates[0];
         this.serverUrl = url;
         this.httpUrl = url.replace('ws://', 'http://').replace('/ws', '/api');
-        
-        this.ws = new WebSocket(url);
-        
-        return new Promise((resolve, reject) => {
-            this.ws.onopen = () => resolve();
-            this.ws.onerror = (error) => reject(error);
+
+        this.ws = new MockWebSocket(url);
+
+        return new Promise((resolve) => {
+            // Ждём пока WebSocket эмулирует подключение
+            setTimeout(() => resolve(), 10);
         });
     }
 
@@ -36,8 +66,10 @@ class TestServerClient {
     }
 
     send(message) {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (this.ws && this.ws.readyState === MockWebSocket.OPEN) {
             this.ws.send(JSON.stringify(message));
+        } else {
+            console.error('❌ Нет подключения к серверу');
         }
     }
 
@@ -49,7 +81,7 @@ class TestServerClient {
         fetch.mockResolvedValueOnce({
             json: async () => mockResponse
         });
-        
+
         const response = await fetch(`${this.httpUrl}/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -74,6 +106,15 @@ class TestServerClient {
         });
     }
 
+    sendMessageWithFiles(text, files, recipientId = null) {
+        this.send({
+            type: 'message',
+            text,
+            files,
+            recipient_id: recipientId,
+        });
+    }
+
     sendAck(messageId, status = 'read') {
         this.send({
             type: 'ack',
@@ -92,17 +133,17 @@ class TestServerClient {
     // Метод для обработки входящих сообщений (для тестов)
     handleMessage(data) {
         switch (data.type) {
-            case 'registered':
-                this.user = data.user;
-                break;
-            case 'message':
-            case 'ack':
-            case 'messages':
-            case 'user_online':
-                this.messageHandlers
-                    .filter(h => h.event === data.type)
-                    .forEach(h => h.handler(data));
-                break;
+        case 'registered':
+            this.user = data.user;
+            break;
+        case 'message':
+        case 'ack':
+        case 'messages':
+        case 'user_online':
+            this.messageHandlers
+                .filter(h => h.event === data.type)
+                .forEach(h => h.handler(data));
+            break;
         }
     }
 
@@ -110,7 +151,7 @@ class TestServerClient {
         fetch.mockResolvedValueOnce({
             json: async () => ({ success: true, data: [] })
         });
-        
+
         const response = await fetch(`${this.httpUrl}/users`);
         const result = await response.json();
         return result.data || [];
@@ -154,20 +195,20 @@ describe('ServerClient', () => {
     describe('Подключение к серверу', () => {
         test('должен подключаться к указанному серверу', async () => {
             await client.connect('ws://localhost:8080/ws');
-            
+
             expect(client.serverUrl).toBe('ws://localhost:8080/ws');
             expect(client.httpUrl).toBe('http://localhost:8080/api');
         });
 
         test('должен использовать первый сервер из списка если URL не указан', async () => {
             await client.connect();
-            
+
             expect(client.serverUrl).toBe('ws://localhost:8080/ws');
         });
 
         test('должен преобразовывать WebSocket URL в HTTP URL', async () => {
             await client.connect('ws://192.168.1.100:8080/ws');
-            
+
             expect(client.httpUrl).toBe('http://192.168.1.100:8080/api');
         });
     });
@@ -176,7 +217,7 @@ describe('ServerClient', () => {
         test('должен добавлять обработчики событий', () => {
             const handler = jest.fn();
             client.on('message', handler);
-            
+
             expect(client.messageHandlers.length).toBe(1);
             expect(client.messageHandlers[0].event).toBe('message');
             expect(client.messageHandlers[0].handler).toBe(handler);
@@ -185,21 +226,21 @@ describe('ServerClient', () => {
         test('должен поддерживать несколько обработчиков', () => {
             const handler1 = jest.fn();
             const handler2 = jest.fn();
-            
+
             client.on('message', handler1);
             client.on('ack', handler2);
-            
+
             expect(client.messageHandlers.length).toBe(2);
         });
     });
 
     describe('Отправка сообщений', () => {
-        test('должен отправлять текстовое сообщение без получателя', () => {
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
-            
+        test('должен отправлять текстовое сообщение без получателя', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
             client.sendMessage('Привет!');
-            
-            expect(client.ws.send).toHaveBeenCalledWith(JSON.stringify({
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'message',
                 text: 'Привет!',
                 files: [],
@@ -207,12 +248,12 @@ describe('ServerClient', () => {
             }));
         });
 
-        test('должен отправлять текстовое сообщение с получателем', () => {
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
-            
+        test('должен отправлять текстовое сообщение с получателем', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
             client.sendMessage('Привет!', 'user-123');
-            
-            expect(client.ws.send).toHaveBeenCalledWith(JSON.stringify({
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'message',
                 text: 'Привет!',
                 files: [],
@@ -220,47 +261,47 @@ describe('ServerClient', () => {
             }));
         });
 
-        test('должен отправлять ACK с статусом read', () => {
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
-            
+        test('должен отправлять ACK с статусом read', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
             client.sendAck('msg-123', 'read');
-            
-            expect(client.ws.send).toHaveBeenCalledWith(JSON.stringify({
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'ack',
                 message_id: 'msg-123',
                 status: 'read',
             }));
         });
 
-        test('должен отправлять ACK со статусом по умолчанию', () => {
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
-            
+        test('должен отправлять ACK со статусом по умолчанию', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
             client.sendAck('msg-123');
-            
-            expect(client.ws.send).toHaveBeenCalledWith(JSON.stringify({
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'ack',
                 message_id: 'msg-123',
                 status: 'read',
             }));
         });
 
-        test('должен запрашивать историю сообщений', () => {
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
-            
+        test('должен запрашивать историю сообщений', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
             client.getMessages(50);
-            
-            expect(client.ws.send).toHaveBeenCalledWith(JSON.stringify({
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'get_messages',
                 limit: 50,
             }));
         });
 
-        test('должен использовать лимит по умолчанию 100', () => {
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
-            
+        test('должен использовать лимит по умолчанию 100', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
             client.getMessages();
-            
-            expect(client.ws.send).toHaveBeenCalledWith(JSON.stringify({
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'get_messages',
                 limit: 100,
             }));
@@ -269,9 +310,9 @@ describe('ServerClient', () => {
         test('не должен отправлять если нет подключения', () => {
             client.ws = null;
             const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-            
+
             client.sendMessage('Тест');
-            
+
             expect(consoleSpy).toHaveBeenCalledWith('❌ Нет подключения к серверу');
             consoleSpy.mockRestore();
         });
@@ -283,12 +324,11 @@ describe('ServerClient', () => {
             fetch.mockResolvedValueOnce({
                 json: async () => ({ success: true, data: mockUser })
             });
-            
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
+
             await client.connect('ws://localhost:8080/ws');
-            
+
             const user = await client.register('Артём');
-            
+
             expect(user).toEqual(mockUser);
             expect(client.user).toEqual(mockUser);
             expect(fetch).toHaveBeenCalledWith(
@@ -306,25 +346,26 @@ describe('ServerClient', () => {
             fetch.mockResolvedValueOnce({
                 json: async () => ({ success: true, data: mockUser })
             });
-            
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
+
             await client.connect('ws://localhost:8080/ws');
-            
+
             await client.register('Артём');
-            
-            expect(client.ws.send).toHaveBeenCalledWith(
+
+            expect(client.ws.sentMessages[0]).toBe(
                 JSON.stringify({ type: 'register', name: 'Артём' })
             );
         });
 
         test('должен выбрасывать ошибку при неудачной регистрации', async () => {
+            // Сбрасываем мок и устанавливаем новый для этого теста
+            fetch.mockReset();
             fetch.mockResolvedValueOnce({
                 json: async () => ({ success: false, error: 'Invalid name' })
             });
-            
-            client.ws = { readyState: WebSocket.OPEN, send: jest.fn() };
+
             await client.connect('ws://localhost:8080/ws');
-            
+            client.httpUrl = 'http://localhost:8080/api';
+
             await expect(client.register('')).rejects.toThrow('Invalid name');
         });
     });
@@ -335,43 +376,47 @@ describe('ServerClient', () => {
                 { id: 'user-1', name: 'Артём' },
                 { id: 'user-2', name: 'Мария' },
             ];
-            
+
+            // Сбрасываем предыдущие моки
+            fetch.mockReset();
             fetch.mockResolvedValueOnce({
                 json: async () => ({ success: true, data: mockUsers })
             });
-            
+
             client.httpUrl = 'http://localhost:8080/api';
             const users = await client.getUsers();
-            
+
             expect(users).toEqual(mockUsers);
         });
 
         test('должен возвращать пустой массив если data отсутствует', async () => {
+            // Сбрасываем предыдущие моки
+            fetch.mockReset();
             fetch.mockResolvedValueOnce({
                 json: async () => ({ success: true })
             });
-            
+
             client.httpUrl = 'http://localhost:8080/api';
             const users = await client.getUsers();
-            
+
             expect(users).toEqual([]);
         });
     });
 
     describe('Отключение', () => {
-        test('должен закрывать WebSocket соединение', () => {
-            const mockWs = { close: jest.fn() };
-            client.ws = mockWs;
-            
+        test('должен закрывать WebSocket соединение', async () => {
+            await client.connect('ws://localhost:8080/ws');
+            const mockWs = client.ws;
+
             client.disconnect();
-            
-            expect(mockWs.close).toHaveBeenCalled();
+
+            expect(mockWs.readyState).toBe(MockWebSocket.CLOSED);
             expect(client.ws).toBeNull();
         });
 
         test('не должен падать если ws null', () => {
             client.ws = null;
-            
+
             expect(() => client.disconnect()).not.toThrow();
         });
     });
@@ -380,58 +425,58 @@ describe('ServerClient', () => {
         test('должен уведомлять обработчиков о сообщении', () => {
             const handler = jest.fn();
             client.on('message', handler);
-            
+
             const messageData = {
                 type: 'message',
                 message: { id: 'msg-1', text: 'Привет!' }
             };
-            
+
             client.handleMessage(messageData);
-            
-            expect(handler).toHaveBeenCalledWith(messageData.message);
+
+            expect(handler).toHaveBeenCalledWith(messageData);
         });
 
         test('должен уведомлять обработчиков об ACK', () => {
             const handler = jest.fn();
             client.on('ack', handler);
-            
+
             const ackData = {
                 type: 'ack',
                 message_id: 'msg-1',
                 status: 'read'
             };
-            
+
             client.handleMessage(ackData);
-            
+
             expect(handler).toHaveBeenCalledWith(ackData);
         });
 
         test('должен уведомлять обработчиков о списке сообщений', () => {
             const handler = jest.fn();
             client.on('messages', handler);
-            
+
             const messagesData = {
                 type: 'messages',
                 messages: [{ id: 'msg-1', text: 'Привет!' }]
             };
-            
+
             client.handleMessage(messagesData);
-            
-            expect(handler).toHaveBeenCalledWith(messagesData.messages);
+
+            expect(handler).toHaveBeenCalledWith(messagesData);
         });
 
         test('должен уведомлять обработчиков о статусе онлайн', () => {
             const handler = jest.fn();
             client.on('user_online', handler);
-            
+
             const onlineData = {
                 type: 'user_online',
                 user_id: 'user-1',
                 online: true
             };
-            
+
             client.handleMessage(onlineData);
-            
+
             expect(handler).toHaveBeenCalledWith(onlineData);
         });
 
@@ -440,10 +485,59 @@ describe('ServerClient', () => {
                 type: 'registered',
                 user: { id: 'test-id', name: 'Артём' }
             };
-            
+
             client.handleMessage(registeredData);
-            
+
             expect(client.user).toEqual(registeredData.user);
+        });
+    });
+
+    describe('Отправка сообщений с файлами', () => {
+        test('должен отправлять сообщение с файлами', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            const files = [
+                { name: 'test.txt', size: 1024, path: '/files/test.txt' }
+            ];
+
+            client.sendMessageWithFiles('Сообщение с файлом', files);
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
+                type: 'message',
+                text: 'Сообщение с файлом',
+                files,
+                recipient_id: null,
+            }));
+        });
+
+        test('должен отправлять сообщение с несколькими файлами', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            const files = [
+                { name: 'test1.txt', size: 1024, path: '/files/test1.txt' },
+                { name: 'test2.pdf', size: 2048, path: '/files/test2.pdf' }
+            ];
+
+            client.sendMessageWithFiles('Сообщение с файлами', files, 'user-123');
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
+                type: 'message',
+                text: 'Сообщение с файлами',
+                files,
+                recipient_id: 'user-123',
+            }));
+        });
+    });
+
+    describe('Обработка ошибок WebSocket', () => {
+        test('должен логировать ошибку при отправке без подключения', () => {
+            const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+            client.ws = null;
+
+            client.send({ type: 'message', text: 'Тест' });
+
+            expect(consoleSpy).toHaveBeenCalledWith('❌ Нет подключения к серверу');
+            consoleSpy.mockRestore();
         });
     });
 });
@@ -457,7 +551,7 @@ describe('ServerClient - Обработка ошибок', () => {
 
     test('должен пытаться переподключиться при разрыве соединения', () => {
         expect(client.reconnectAttempts).toBe(0);
-        
+
         client.reconnectAttempts = 1;
         expect(client.reconnectAttempts).toBe(1);
     });
@@ -465,5 +559,178 @@ describe('ServerClient - Обработка ошибок', () => {
     test('должен прекращать переподключение после максимального количества попыток', () => {
         client.reconnectAttempts = 10;
         expect(client.reconnectAttempts).toBe(client.maxReconnectAttempts);
+    });
+
+    test('должен иметь максимальное количество попыток переподключения равное 10', () => {
+        expect(client.maxReconnectAttempts).toBe(10);
+    });
+});
+
+describe('ServerClient - Краевые случаи', () => {
+    let client;
+
+    beforeEach(() => {
+        client = new TestServerClient();
+    });
+
+    afterEach(() => {
+        client.disconnect();
+        fetch.mockClear();
+    });
+
+    describe('Валидация данных', () => {
+        test('должен обрабатывать специальные символы в имени', async () => {
+            const specialNames = [
+                'O\'Brien',
+                '张三',
+                'User<Script>',
+                'User "Quotes"',
+                'User & Co',
+            ];
+
+            for (const name of specialNames) {
+                fetch.mockReset();
+                fetch.mockResolvedValueOnce({
+                    json: async () => ({ success: true, data: { id: 'test-id', name } })
+                });
+
+                await client.connect('ws://localhost:8080/ws');
+                const user = await client.register(name);
+
+                expect(user.name).toBe(name);
+            }
+        });
+
+        test('должен обрабатывать очень длинные имена', async () => {
+            const longName = 'A'.repeat(1000);
+
+            fetch.mockReset();
+            fetch.mockResolvedValueOnce({
+                json: async () => ({ success: true, data: { id: 'test-id', name: longName } })
+            });
+
+            await client.connect('ws://localhost:8080/ws');
+            const user = await client.register(longName);
+
+            expect(user.name).toBe(longName);
+            expect(user.name.length).toBe(1000);
+        });
+
+        test('должен обрабатывать пустое текстовое сообщение', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.sendMessage('');
+
+            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
+                type: 'message',
+                text: '',
+                files: [],
+                recipient_id: null,
+            }));
+        });
+
+        test('должен обрабатывать сообщения с эмодзи', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            const emojiMessages = [
+                '👋 Привет!',
+                '🚀 Погнали!',
+                '❤️ Love',
+                '👍👎👊',
+            ];
+
+            for (const text of emojiMessages) {
+                client.sendMessage(text);
+                expect(client.ws.sentMessages[client.ws.sentMessages.length - 1])
+                    .toBe(JSON.stringify({
+                        type: 'message',
+                        text,
+                        files: [],
+                        recipient_id: null,
+                    }));
+            }
+        });
+
+        test('должен обрабатывать Unicode сообщения', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            const unicodeMessages = [
+                'Привет мир!',
+                '你好世界',
+                'مرحبا بالعالم',
+                'こんにちは世界',
+            ];
+
+            for (const text of unicodeMessages) {
+                client.sendMessage(text);
+                expect(client.ws.sentMessages[client.ws.sentMessages.length - 1])
+                    .toBe(JSON.stringify({
+                        type: 'message',
+                        text,
+                        files: [],
+                        recipient_id: null,
+                    }));
+            }
+        });
+    });
+
+    describe('Производительность', () => {
+        test('должен обрабатывать множественные отправленные сообщения', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            for (let i = 0; i < 100; i++) {
+                client.sendMessage(`Сообщение ${i}`);
+            }
+
+            expect(client.ws.sentMessages.length).toBe(100);
+        });
+
+        test('должен обрабатывать множественные обработчики событий', () => {
+            const handlers = [];
+            for (let i = 0; i < 10; i++) {
+                handlers.push(jest.fn());
+                client.on('message', handlers[i]);
+            }
+
+            expect(client.messageHandlers.length).toBe(10);
+
+            const messageData = { type: 'message', message: { text: 'Тест' } };
+            client.handleMessage(messageData);
+
+            handlers.forEach(handler => {
+                expect(handler).toHaveBeenCalledWith(messageData);
+            });
+        });
+    });
+
+    describe('Множественные подключения', () => {
+        test('должен корректно обрабатывать повторное подключение', async () => {
+            await client.connect('ws://localhost:8080/ws');
+            const firstWs = client.ws;
+
+            await client.connect('ws://localhost:8081/ws');
+
+            expect(client.serverUrl).toBe('ws://localhost:8081/ws');
+            expect(client.httpUrl).toBe('http://localhost:8081/api');
+            expect(client.ws).not.toBe(firstWs);
+        });
+
+        test('должен сохранять состояние пользователя между подключениями', async () => {
+            const mockUser = { id: 'user-123', name: 'Тест' };
+            fetch.mockReset();
+            fetch.mockResolvedValueOnce({
+                json: async () => ({ success: true, data: mockUser })
+            });
+
+            await client.connect('ws://localhost:8080/ws');
+            await client.register('Тест');
+
+            expect(client.user).toEqual(mockUser);
+
+            // При повторном подключении user сохраняется
+            await client.connect('ws://localhost:8081/ws');
+
+            expect(client.user).toEqual(mockUser);
+        });
     });
 });

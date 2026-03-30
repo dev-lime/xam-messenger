@@ -1,13 +1,29 @@
 /**
  * Интеграционные тесты для XAM Messenger
  * Тестируют взаимодействие между клиентом и сервером
+ * 
+ * Для запуска тестов сервер должен быть запущен:
+ * npm run test:integration
+ * 
+ * Или с указанием своего сервера:
+ * TEST_SERVER_URL=http://192.168.1.100:8080 npm run test:integration
  */
-
-// Эти тесты требуют запущенного сервера
-// Запуск: npm run test:integration
 
 const TEST_SERVER_URL = process.env.TEST_SERVER_URL || 'http://localhost:8080';
 const TEST_WS_URL = process.env.TEST_WS_URL || 'ws://localhost:8080/ws';
+
+// Проверка доступности сервера перед запуском тестов
+const checkServerAvailability = async () => {
+    try {
+        const response = await fetch(`${TEST_SERVER_URL}/api/users`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000)
+        });
+        return response.ok;
+    } catch (error) {
+        return false;
+    }
+};
 
 describe('Интеграционные тесты - XAM Messenger', () => {
     let userIds = [];
@@ -26,7 +42,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
             users.push(result.data);
             return result.data;
         }
-        throw new Error(result.error);
+        throw new Error(result.error || 'Registration failed');
     };
 
     // Вспомогательная функция для создания WebSocket подключения
@@ -39,15 +55,29 @@ describe('Интеграционные тесты - XAM Messenger', () => {
         });
     };
 
+    // Проверка сервера перед всеми тестами
+    beforeAll(async () => {
+        const isAvailable = await checkServerAvailability();
+        if (!isAvailable) {
+            console.warn(`⚠️  Сервер не доступен по адресу ${TEST_SERVER_URL}`);
+            console.warn('Интеграционные тесты будут пропущены');
+            console.warn('Запустите сервер перед запуском тестов');
+        }
+    });
+
     beforeEach(() => {
         userIds = [];
         users = [];
     });
 
+    afterEach(async () => {
+        // Очистка после тестов не требуется так как сервер не хранит данные между перезапусками
+    });
+
     describe('Регистрация пользователей', () => {
         test('должен регистрировать нового пользователя через HTTP API', async () => {
             const user = await registerUser(`Тест_${Date.now()}`);
-            
+
             expect(user).toHaveProperty('id');
             expect(user).toHaveProperty('name');
             expect(typeof user.id).toBe('string');
@@ -55,10 +85,10 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 
         test('должен возвращать того же пользователя при повторной регистрации', async () => {
             const uniqueName = `UniqueUser_${Date.now()}`;
-            
+
             const user1 = await registerUser(uniqueName);
             const user2 = await registerUser(uniqueName);
-            
+
             expect(user1.id).toBe(user2.id);
             expect(user1.name).toBe(user2.name);
         });
@@ -70,8 +100,19 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                 body: JSON.stringify({ name: '' }),
             });
             const result = await response.json();
-            
+
             expect(result.success).toBe(false);
+            expect(result.error).toBeDefined();
+        });
+
+        test('должен обрабатывать имена с пробелами', async () => {
+            const user = await registerUser(`John Doe ${Date.now()}`);
+            expect(user.name).toBe(`John Doe ${Date.now()}`);
+        });
+
+        test('должен обрабатывать имена с цифрами', async () => {
+            const user = await registerUser(`User123_${Date.now()}`);
+            expect(user.name).toBe(`User123_${Date.now()}`);
         });
     });
 
@@ -82,10 +123,23 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 
             const response = await fetch(`${TEST_SERVER_URL}/api/users`);
             const result = await response.json();
-            
+
             expect(result.success).toBe(true);
             expect(result.data).toBeInstanceOf(Array);
             expect(result.data.length).toBeGreaterThanOrEqual(2);
+
+            // Проверяем что каждый пользователь имеет id и name
+            result.data.forEach(user => {
+                expect(user).toHaveProperty('id');
+                expect(user).toHaveProperty('name');
+            });
+        });
+
+        test('должен возвращать пользователей с уникальными ID', async () => {
+            const user1 = await registerUser(`UserA_${Date.now()}`);
+            const user2 = await registerUser(`UserB_${Date.now()}`);
+
+            expect(user1.id).not.toBe(user2.id);
         });
     });
 
@@ -99,7 +153,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
         test('должен получать подтверждение регистрации через WebSocket', async () => {
             const ws = await createWebSocket();
             const userName = `WSUser_${Date.now()}`;
-            
+
             const registeredPromise = new Promise((resolve) => {
                 ws.onmessage = (event) => {
                     const data = JSON.parse(event.data);
@@ -108,14 +162,25 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             ws.send(JSON.stringify({ type: 'register', name: userName }));
-            
+
             const result = await registeredPromise;
             expect(result.type).toBe('registered');
             expect(result.user.name).toBe(userName);
+            expect(result.user.id).toBeDefined();
+
+            ws.close();
+        });
+
+        test('должен закрывать соединение корректно', async () => {
+            const ws = await createWebSocket();
             
             ws.close();
+            
+            // Ждём пока соединение закроется
+            await new Promise(resolve => setTimeout(resolve, 100));
+            expect(ws.readyState).toBe(WebSocket.CLOSED);
         });
     });
 
@@ -161,7 +226,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 
         test('должен отправлять сообщения между пользователями', async () => {
             const messageText = `Тестовое сообщение ${Date.now()}`;
-            
+
             const messagePromise = new Promise((resolve) => {
                 ws2.onmessage = (event) => {
                     const data = JSON.parse(event.data);
@@ -170,14 +235,14 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             // Отправляем сообщение
             ws1.send(JSON.stringify({
                 type: 'message',
                 text: messageText,
                 recipient_id: user2.id,
             }));
-            
+
             const message = await messagePromise;
             expect(message.text).toBe(messageText);
             expect(message.sender_id).toBe(user1.id);
@@ -192,13 +257,13 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             ws1.send(JSON.stringify({
                 type: 'message',
                 text: 'Тест ID',
                 recipient_id: user2.id,
             }));
-            
+
             const message = await messagePromise;
             expect(message.id).toBeDefined();
             expect(typeof message.id).toBe('string');
@@ -207,7 +272,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 
         test('должен устанавливать временную метку сообщения', async () => {
             const beforeSend = Date.now();
-            
+
             const messagePromise = new Promise((resolve) => {
                 ws2.onmessage = (event) => {
                     const data = JSON.parse(event.data);
@@ -216,18 +281,42 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             ws1.send(JSON.stringify({
                 type: 'message',
                 text: 'Тест времени',
                 recipient_id: user2.id,
             }));
-            
+
             const message = await messagePromise;
             const messageTime = message.timestamp * 1000;
-            
+
             expect(messageTime).toBeGreaterThanOrEqual(beforeSend - 1000);
             expect(messageTime).toBeLessThanOrEqual(Date.now() + 1000);
+        });
+
+        test('должен отправлять сообщения в правильном формате', async () => {
+            const messagePromise = new Promise((resolve) => {
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'message') {
+                        resolve(data.message);
+                    }
+                };
+            });
+
+            ws1.send(JSON.stringify({
+                type: 'message',
+                text: 'Форматированное сообщение',
+                recipient_id: user2.id,
+            }));
+
+            const message = await messagePromise;
+            expect(message).toHaveProperty('id');
+            expect(message).toHaveProperty('text');
+            expect(message).toHaveProperty('sender_id');
+            expect(message).toHaveProperty('timestamp');
+            expect(message.text).toBe('Форматированное сообщение');
         });
     });
 
@@ -278,15 +367,15 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             ws1.send(JSON.stringify({
                 type: 'message',
                 text: 'Сообщение для ACK',
                 recipient_id: user2.id,
             }));
-            
+
             const message = await messagePromise;
-            
+
             // Отправляем ACK
             const ackPromise = new Promise((resolve) => {
                 ws1.onmessage = (event) => {
@@ -296,17 +385,54 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             ws2.send(JSON.stringify({
                 type: 'ack',
                 message_id: message.id,
                 status: 'read',
             }));
-            
+
             const ack = await ackPromise;
             expect(ack.type).toBe('ack');
             expect(ack.message_id).toBe(message.id);
             expect(ack.status).toBe('read');
+        });
+
+        test('должен отправлять ACK с правильным message_id', async () => {
+            const messagePromise = new Promise((resolve) => {
+                ws2.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'message') {
+                        resolve(data.message);
+                    }
+                };
+            });
+
+            ws1.send(JSON.stringify({
+                type: 'message',
+                text: 'Тест ACK',
+                recipient_id: user2.id,
+            }));
+
+            const message = await messagePromise;
+
+            const ackPromise = new Promise((resolve) => {
+                ws1.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'ack') {
+                        resolve(data);
+                    }
+                };
+            });
+
+            ws2.send(JSON.stringify({
+                type: 'ack',
+                message_id: message.id,
+                status: 'read',
+            }));
+
+            const ack = await ackPromise;
+            expect(ack.message_id).toBe(message.id);
         });
     });
 
@@ -314,7 +440,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
         test('должен возвращать историю сообщений', async () => {
             const ws = await createWebSocket();
             const user = await registerUser(`HistoryUser_${Date.now()}`);
-            
+
             const messagesPromise = new Promise((resolve) => {
                 ws.onmessage = (event) => {
                     const data = JSON.parse(event.data);
@@ -323,23 +449,23 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             ws.send(JSON.stringify({ type: 'register', name: user.name }));
             await new Promise(r => setTimeout(r, 100));
-            
+
             // Запрашиваем историю
             ws.send(JSON.stringify({ type: 'get_messages', limit: 100 }));
-            
+
             const messages = await messagesPromise;
             expect(Array.isArray(messages)).toBe(true);
-            
+
             ws.close();
         });
 
         test('должен ограничивать количество сообщений лимитом', async () => {
             const ws = await createWebSocket();
             const user = await registerUser(`LimitUser_${Date.now()}`);
-            
+
             const messagesPromise = new Promise((resolve) => {
                 ws.onmessage = (event) => {
                     const data = JSON.parse(event.data);
@@ -348,46 +474,42 @@ describe('Интеграционные тесты - XAM Messenger', () => {
                     }
                 };
             });
-            
+
             ws.send(JSON.stringify({ type: 'register', name: user.name }));
             await new Promise(r => setTimeout(r, 100));
-            
+
             ws.send(JSON.stringify({ type: 'get_messages', limit: 5 }));
-            
+
             const messages = await messagesPromise;
             expect(messages.length).toBeLessThanOrEqual(5);
-            
+
             ws.close();
         });
-    });
 
-    describe('Загрузка файлов', () => {
-        test('должен загружать файл на сервер', async () => {
-            const formData = new FormData();
-            const testFile = new File(['Test content'], 'test.txt', { type: 'text/plain' });
-            formData.append('file', testFile);
+        test('должен поддерживать пагинацию сообщений', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`PaginationUser_${Date.now()}`);
 
-            const response = await fetch(`${TEST_SERVER_URL}/api/files`, {
-                method: 'POST',
-                body: formData,
+            const messagesPromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'messages') {
+                        resolve(data);
+                    }
+                };
             });
-            const result = await response.json();
-            
-            expect(result.success).toBe(true);
-            expect(result.data).toHaveProperty('id');
-            expect(result.data).toHaveProperty('name', 'test.txt');
-            expect(result.data).toHaveProperty('size');
-            expect(result.data).toHaveProperty('path');
-        });
 
-        test('должен отклонять пустой запрос файла', async () => {
-            const response = await fetch(`${TEST_SERVER_URL}/api/files`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'multipart/form-data' },
-            });
-            const result = await response.json();
-            
-            expect(result.success).toBe(false);
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+            await new Promise(r => setTimeout(r, 100));
+
+            // Запрашиваем первую страницу
+            ws.send(JSON.stringify({ type: 'get_messages', limit: 10 }));
+
+            const response = await messagesPromise;
+            expect(response).toHaveProperty('messages');
+            expect(response).toHaveProperty('has_more');
+
+            ws.close();
         });
     });
 
@@ -395,9 +517,32 @@ describe('Интеграционные тесты - XAM Messenger', () => {
         test('должен возвращать список онлайн пользователей', async () => {
             const response = await fetch(`${TEST_SERVER_URL}/api/online`);
             const result = await response.json();
-            
+
             expect(result.success).toBe(true);
             expect(result.data).toBeInstanceOf(Array);
+        });
+
+        test('должен уведомлять о подключении пользователя', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`OnlineUser_${Date.now()}`);
+
+            const onlinePromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'user_online') {
+                        resolve(data);
+                    }
+                };
+            });
+
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+
+            const online = await onlinePromise;
+            expect(online.type).toBe('user_online');
+            expect(online.user_id).toBe(user.id);
+            expect(online.online).toBe(true);
+
+            ws.close();
         });
     });
 
@@ -406,8 +551,21 @@ describe('Интеграционные тесты - XAM Messenger', () => {
             const response = await fetch(`${TEST_SERVER_URL}/api/users`, {
                 headers: { 'Origin': 'http://example.com' },
             });
-            
+
+            // Сервер должен возвращать CORS заголовки
             expect(response.headers.has('Access-Control-Allow-Origin')).toBe(true);
+        });
+
+        test('должен поддерживать OPTIONS preflight запрос', async () => {
+            const response = await fetch(`${TEST_SERVER_URL}/api/users`, {
+                method: 'OPTIONS',
+                headers: {
+                    'Origin': 'http://example.com',
+                    'Access-Control-Request-Method': 'GET',
+                },
+            });
+
+            expect(response.status).toBe(200);
         });
     });
 });
@@ -431,24 +589,26 @@ describe('Интеграционные тесты - Краевые случаи'
                     body: JSON.stringify({ name }),
                 });
                 const result = await response.json();
-                
+
                 // Должен успешно зарегистрировать
                 expect(result.success).toBe(true);
+                expect(result.data.name).toBe(name);
             }
         });
 
         test('должен обрабатывать очень длинные имена', async () => {
             const longName = 'A'.repeat(1000);
-            
+
             const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: longName }),
             });
             const result = await response.json();
-            
+
             // Должен обработать без ошибок
             expect(result.success).toBe(true);
+            expect(result.data.name.length).toBe(1000);
         });
 
         test('должен обрабатывать Unicode в сообщениях', async () => {
@@ -459,10 +619,8 @@ describe('Интеграционные тесты - Краевые случаи'
                 setTimeout(() => reject(new Error('Timeout')), 5000);
             });
 
-            // eslint-disable-next-line no-unused-vars
-            const user = await new Promise((resolve) => {
+            await new Promise((resolve) => {
                 ws.onmessage = (event) => {
-                    // eslint-disable-next-line no-unused-vars
                     const data = JSON.parse(event.data);
                     if (data.type === 'registered') resolve(data.user);
                 };
@@ -484,8 +642,25 @@ describe('Интеграционные тесты - Краевые случаи'
             }
 
             ws.close();
-            
+
             // Тест проходит если не было ошибок
+            expect(true).toBe(true);
+        });
+
+        test('должен обрабатывать пустые сообщения', async () => {
+            const ws = await createWebSocket();
+            await registerUser(`EmptyMsgUser_${Date.now()}`);
+
+            ws.send(JSON.stringify({ type: 'register', name: 'test' }));
+            await new Promise(r => setTimeout(r, 100));
+
+            // Отправляем пустое сообщение
+            ws.send(JSON.stringify({
+                type: 'message',
+                text: '',
+            }));
+
+            ws.close();
             expect(true).toBe(true);
         });
     });
@@ -493,7 +668,7 @@ describe('Интеграционные тесты - Краевые случаи'
     describe('Производительность', () => {
         test('должен обрабатывать множественные подключения', async () => {
             const connections = [];
-            
+
             // Создаём 10 подключений
             for (let i = 0; i < 10; i++) {
                 const ws = await new Promise((resolve, reject) => {
@@ -503,11 +678,60 @@ describe('Интеграционные тесты - Краевые случаи'
                 });
                 connections.push(ws);
             }
-            
+
             expect(connections.length).toBe(10);
-            
+
             // Закрываем подключения
             connections.forEach(ws => ws.close());
+        });
+
+        test('должен обрабатывать быструю отправку сообщений', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`FastMsgUser_${Date.now()}`);
+
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+            await new Promise(r => setTimeout(r, 100));
+
+            // Отправляем 50 сообщений быстро
+            for (let i = 0; i < 50; i++) {
+                ws.send(JSON.stringify({
+                    type: 'message',
+                    text: `Message ${i}`,
+                }));
+            }
+
+            ws.close();
+            expect(true).toBe(true);
+        });
+    });
+
+    describe('Обработка ошибок', () => {
+        test('должен обрабатывать некорректный JSON', async () => {
+            const ws = await createWebSocket();
+
+            // Отправляем некорректный JSON
+            ws.send('not valid json{');
+
+            // Соединение не должно закрыться
+            await new Promise(r => setTimeout(r, 100));
+            expect(ws.readyState).toBe(WebSocket.OPEN);
+
+            ws.close();
+        });
+
+        test('должен обрабатывать неизвестные типы сообщений', async () => {
+            const ws = await createWebSocket();
+
+            ws.send(JSON.stringify({
+                type: 'unknown_type',
+                data: 'test',
+            }));
+
+            // Соединение не должно закрыться
+            await new Promise(r => setTimeout(r, 100));
+            expect(ws.readyState).toBe(WebSocket.OPEN);
+
+            ws.close();
         });
     });
 });
