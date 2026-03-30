@@ -115,7 +115,21 @@ class ServerClient {
 
                 this.ws.onmessage = (event) => {
                     console.log('📩 WebSocket message received:', event.data.substring(0, 200));
-                    this.handleMessage(JSON.parse(event.data));
+                    // Логируем полный JSON для отладки пагинации
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'messages') {
+                            console.log('📚 Messages payload:', {
+                                before_id: data.before_id,
+                                next_before_id: data.next_before_id,
+                                has_more: data.has_more,
+                                count: data.messages?.length
+                            });
+                        }
+                        this.handleMessage(JSON.parse(event.data));
+                    } catch (e) {
+                        console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
+                    }
                 };
             } catch (error) {
                 reject(error);
@@ -158,7 +172,7 @@ class ServerClient {
                 break;
 
             case 'messages':
-                this.notifyHandlers('messages', data.messages);
+                this.notifyHandlers('messages', data);  // Передаём весь объект с before_id, next_before_id, has_more
                 break;
 
             case 'user_online':
@@ -291,12 +305,12 @@ class ServerClient {
         });
     }
 
-    // Загрузка истории сообщений с пагинацией
-    getMessages(limit = 50, offset = 0) {
+    // Загрузка истории сообщений с пагинацией (cursor-based)
+    getMessages(limit = 50, beforeId = null) {
         this.send({
             type: 'get_messages',
             limit,
-            text: offset.toString(), // Используем text поле для offset
+            before_id: beforeId,
         });
     }
 

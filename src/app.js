@@ -25,6 +25,7 @@ const elements = {
     settingsNameInput: document.getElementById('settingsNameInput'),
     settingsAvatarInput: document.getElementById('settingsAvatarInput'),
     loadMoreBtn: document.getElementById('loadMoreBtn'),
+    loadMoreContainer: document.getElementById('loadMoreContainer'),
 };
 
 // Состояние
@@ -37,10 +38,9 @@ let state = {
     currentPeer: null,
     filteredMessages: [],
     onlineUsers: new Set(), // ID пользователей онлайн
-    messageOffset: 0,       // Текущий offset для пагинации
-    messageLimit: 50,       // Количество сообщений за один запрос
+    lastMessageId: null,    // ID последнего сообщения для пагинации
+    hasMoreMessages: true,  // Есть ли ещё сообщения
     isLoadingMessages: false,
-    hasMoreMessages: true,
 };
 
 // Прикреплённые файлы
@@ -193,25 +193,33 @@ function handleAck(data) {
 
 // Обработка истории сообщений
 function handleMessages(data) {
-    // Поддержка нового формата с пагинацией
+    // Поддержка cursor-based пагинации
     const messages = Array.isArray(data) ? data : data.messages;
-    const offset = data.offset || 0;
-    const hasMore = data.has_more !== undefined ? data.has_more : offset > 0;
-    
-    if (offset === 0) {
+    const beforeId = data.before_id || null;
+    const nextBeforeId = data.next_before_id || null;  // snake_case как приходит с сервера
+    const hasMore = data.has_more !== undefined ? data.has_more : messages.length >= 50;
+
+    console.log(`📚 handleMessages: beforeId=${beforeId}, nextBeforeId=${nextBeforeId}, messages=${messages.length}, hasMore=${hasMore}`);
+
+    if (!beforeId) {
         // Первая загрузка - заменяем все сообщения
         state.messages = messages;
-        state.messageOffset = messages.length;
+        // Устанавливаем lastMessageId как ID первого (самого старого) сообщения
+        state.lastMessageId = messages.length > 0 ? messages[0].id : null;
     } else {
         // Подгрузка старых - добавляем в начало
         state.messages = [...messages, ...state.messages];
-        state.messageOffset += messages.length;
+        state.lastMessageId = nextBeforeId;
     }
-    
-    state.hasMoreMessages = hasMore && messages.length > 0;
+
+    state.hasMoreMessages = hasMore;
     state.isLoadingMessages = false;
-    
-    log(`📚 Загружено сообщений: ${messages.length}, всего: ${state.messages.length}, offset: ${state.messageOffset}`);
+
+    // Сохраняем в localStorage
+    localStorage.setItem('xam-last-message-id', state.lastMessageId || '');
+    localStorage.setItem('xam-has-more', hasMore.toString());
+
+    console.log(`📚 Загружено: ${messages.length}, всего: ${state.messages.length}, lastMessageId=${state.lastMessageId}, hasMore=${hasMore}, isLoading=${state.isLoadingMessages}`);
 
     // Фильтруем для текущего чата
     if (state.currentPeer) {
@@ -223,8 +231,9 @@ function handleMessages(data) {
     } else {
         renderMessages();
     }
-    
-    // Обновляем видимость кнопки загрузки
+
+    // Обновляем видимость кнопки загрузки - ВАЖНО: после всех изменений состояния
+    console.log('🔘 Вызов updateLoadMoreButton из handleMessages');
     updateLoadMoreButton();
 }
 
@@ -241,7 +250,7 @@ function handleUserOnline(data) {
 
 // Обработка обновления профиля (аватара)
 function handleUserUpdated(data) {
-    log(`👤 Пользователь ${data.user_id} обновил аватар: ${data.avatar}`);
+    console.log(`👤 Пользователь ${data.user_id} обновил аватар: ${data.avatar}`);
     
     // Находим пользователя и обновляем его аватар
     const peer = state.peers.find(p => p.id === data.user_id);
@@ -283,10 +292,26 @@ async function connectToServer() {
         updateUserProfile(user.name, 'В сети');
         updateStatusDisplay(true, 'В сети');
 
-        // Сбрасываем пагинацию и загружаем историю
-        state.messageOffset = 0;
-        state.hasMoreMessages = true;
-        serverClient.getMessages(state.messageLimit, 0);
+        // Восстанавливаем пагинацию из localStorage
+        const savedLastId = localStorage.getItem('xam-last-message-id');
+        const savedHasMore = localStorage.getItem('xam-has-more');
+        
+        if (savedLastId && savedHasMore !== null && state.messages.length === 0) {
+            state.lastMessageId = savedLastId;
+            state.hasMoreMessages = savedHasMore === 'true';
+            state.isLoadingMessages = false;
+            console.log(`📚 Восстановлена пагинация: lastMessageId=${state.lastMessageId}, hasMore=${state.hasMoreMessages}`);
+            updateLoadMoreButton();
+        }
+        
+        if (!state.lastMessageId && state.messages.length === 0) {
+            state.isLoadingMessages = true;
+            updateLoadMoreButton();
+            serverClient.getMessages(50, null);
+        } else if (state.messages.length > 0) {
+            state.isLoadingMessages = false;
+            updateLoadMoreButton();
+        }
         await loadPeers();
 
         // renderPeers() будет вызван автоматически когда придут события user_online
@@ -405,25 +430,37 @@ async function loadPeers() {
 
 // Загрузка старых сообщений
 async function loadMoreMessages() {
-    if (state.isLoadingMessages || !state.hasMoreMessages) return;
+    console.log(`🔍 loadMoreMessages: isLoading=${state.isLoadingMessages}, hasMore=${state.hasMoreMessages}, lastMessageId=${state.lastMessageId}`);
     
+    if (state.isLoadingMessages || !state.hasMoreMessages) {
+        console.log('⚠️ loadMoreMessages: выход');
+        return;
+    }
+
     state.isLoadingMessages = true;
     updateLoadMoreButton();
-    
-    log(`📚 Загрузка старых сообщений (offset: ${state.messageOffset})`);
-    serverClient.getMessages(state.messageLimit, state.messageOffset);
+
+    console.log(`📚 Загрузка старых сообщений (before_id: ${state.lastMessageId})`);
+    serverClient.getMessages(50, state.lastMessageId);
 }
 
 // Обновление кнопки загрузки
 function updateLoadMoreButton() {
-    if (!elements.loadMoreBtn || !elements.loadMoreContainer) return;
+    console.log(`🔘 updateLoadMoreButton: hasMore=${state.hasMoreMessages}, messages.length=${state.messages.length}, isLoading=${state.isLoadingMessages}`);
     
-    const shouldShow = state.hasMoreMessages && state.currentPeer;
-    elements.loadMoreContainer.style.display = shouldShow ? 'block' : 'none';
-    
+    if (!elements.loadMoreBtn || !elements.loadMoreContainer) {
+        console.log('⚠️ Кнопка не найдена');
+        return;
+    }
+
+    // Показываем кнопку если есть ещё сообщения
+    const shouldShow = state.hasMoreMessages && state.messages.length > 0;
+    elements.loadMoreContainer.style.display = shouldShow ? 'flex' : 'none';
+
     if (elements.loadMoreBtn) {
         elements.loadMoreBtn.disabled = state.isLoadingMessages || !state.hasMoreMessages;
-        elements.loadMoreBtn.textContent = state.isLoadingMessages ? '⏳ Загрузка...' : '⏳ Загрузить старые сообщения';
+        elements.loadMoreBtn.textContent = state.isLoadingMessages ? 'Загрузка...' : 'Загрузить старые';
+        console.log(`🔘 Кнопка: display=${elements.loadMoreContainer.style.display}, disabled=${elements.loadMoreBtn.disabled}, text="${elements.loadMoreBtn.textContent}"`);
     }
 }
 
@@ -505,12 +542,16 @@ function selectPeer(userId, userName) {
     });
 
     updateStatusDisplay(true, `Чат с ${userName}`);
-    
+
     // Сбрасываем пагинацию при выборе нового чата
-    state.messageOffset = 0;
+    state.lastMessageId = null;
     state.hasMoreMessages = true;
+    state.isLoadingMessages = false;  // Не true, т.к. сообщения уже загружены
+    localStorage.removeItem('xam-last-message-id');
+    localStorage.removeItem('xam-has-more');
+
     loadMessagesForPeer(userId);
-    
+
     // Обновляем кнопку загрузки
     updateLoadMoreButton();
 
@@ -800,7 +841,7 @@ window.openFile = async (filepath, filename) => {
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
         
-        log(`📁 Файл скачан: ${filename}`);
+        console.log(`📁 Файл скачан: ${filename}`);
     } catch (error) {
         alert(`Не удалось открыть файл: ${error.message}`);
     }
@@ -942,7 +983,7 @@ function setupEventListeners() {
                     type: 'update_profile',
                     text: avatar
                 });
-                log(`👤 Профиль обновлён: ${name}, аватар: ${avatar}`);
+                console.log(`👤 Профиль обновлён: ${name}, аватар: ${avatar}`);
             }
         }
         // Закрываем диалог

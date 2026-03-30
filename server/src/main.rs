@@ -52,6 +52,7 @@ struct ClientMsg {
     #[serde(default)] message_id: String,
     #[serde(default)] status: String,
     #[serde(default)] limit: usize,
+    #[serde(default)] before_id: Option<String>,  // ID последнего сообщения для пагинации
     #[serde(default)] recipient_id: Option<String>,
     #[serde(default)] files: Vec<FileData>,
 }
@@ -317,19 +318,26 @@ async fn handle_client_msg(
         }
         "get_messages" => {
             let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
-            
-            // Поддержка пагинации: limit (по умолчанию 50, макс 200) и offset (по умолчанию 0)
+
+            // Поддержка пагинации: limit (по умолчанию 50, макс 200) и before_id (опционально)
             let limit = client_msg.limit.max(1).min(200);
-            let offset = client_msg.text.parse::<usize>().unwrap_or(0);
-            
-            log::debug!("📚 Загрузка сообщений: limit={}, offset={}", limit, offset);
-            
-            let mut stmt = conn.prepare(
-                "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
-            ).unwrap();
-            
-            let msgs: Vec<ChatMessage> = stmt.query_map(
-                params![limit, offset],
+            let before_id = &client_msg.before_id;
+
+            log::info!("📚 Загрузка сообщений: limit={}, before_id={:?}", limit, before_id);
+
+            // Загружаем на 1 сообщение больше чтобы проверить есть ли ещё
+            let sql = if let Some(last_id) = before_id {
+                // Загружаем сообщения ДО указанного ID
+                format!("SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages WHERE id < '{}' ORDER BY timestamp DESC LIMIT {}", last_id, limit + 1)
+            } else {
+                // Первая загрузка - самые новые сообщения
+                format!("SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp DESC LIMIT {}", limit + 1)
+            };
+
+            let mut stmt = conn.prepare(&sql).unwrap();
+
+            let mut msgs: Vec<ChatMessage> = stmt.query_map(
+                params![],
                 |row| {
                     let files_str: String = row.get(7)?;
                     let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
@@ -341,19 +349,57 @@ async fn handle_client_msg(
                     })
                 }
             ).unwrap().filter_map(|r| r.ok()).collect();
-            
+
+            // Проверяем есть ли ещё сообщения (загрузили ли больше чем limit)
+            let loaded_count = msgs.len();
+            let has_more = loaded_count > limit;
+
+            log::info!("📚 Загружено {} сообщений, limit={}, has_more={}", loaded_count, limit, has_more);
+
+            // Если загрузили лишнее сообщение - сохраняем его ID и убираем
+            let next_before_id = if has_more {
+                // Последнее сообщение в списке (самое старое из загруженных)
+                let last_id = msgs.last().map(|m| m.id.clone());
+                log::info!("📚 next_before_id={:?}", last_id);
+                last_id
+            } else {
+                log::info!("📚 next_before_id=None (не загружено больше limit)");
+                None
+            };
+
+            // Убираем лишнее сообщение
+            if has_more {
+                msgs.pop();
+                log::info!("📚 Убрано лишнее сообщение, осталось {}", msgs.len());
+            }
+
             // Возвращаем сообщения в правильном порядке (старые → новые)
             let msgs: Vec<ChatMessage> = msgs.into_iter().rev().collect();
-            
-            log::debug!("📚 Загружено {} сообщений", msgs.len());
-            
-            let _ = session.text(json!({ 
-                "type": "messages", 
-                "messages": msgs,
-                "offset": offset,
-                "limit": limit,
-                "has_more": offset > 0
-            }).to_string()).await;
+
+            log::debug!("📚 Загружено {} сообщений, has_more={}, next_before_id={:?}", msgs.len(), has_more, next_before_id);
+
+            // Формируем ответ с явным указанием next_before_id
+            let response = if let Some(ref id) = next_before_id {
+                json!({
+                    "type": "messages",
+                    "messages": msgs,
+                    "before_id": before_id,
+                    "next_before_id": id,
+                    "limit": limit,
+                    "has_more": has_more
+                })
+            } else {
+                json!({
+                    "type": "messages",
+                    "messages": msgs,
+                    "before_id": before_id,
+                    "next_before_id": null,
+                    "limit": limit,
+                    "has_more": has_more
+                })
+            };
+
+            let _ = session.text(response.to_string()).await;
         }
         _ => {
             log::warn!("⚠️ Неизвестный тип сообщения: {}", client_msg.msg_type);
@@ -525,24 +571,29 @@ async fn get_messages(
     data: web::Data<AppState>, query: web::Query<std::collections::HashMap<String, String>>,
 ) -> HttpResponse {
     let limit: usize = query.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).max(1).min(200);
-    let offset: usize = query.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let before_id = query.get("before_id");
     
     let conn = match data.db.lock() {
         Ok(c) => c,
         Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
     };
 
-    let result = conn.prepare(
-        "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2"
-    );
+    // Загружаем на 1 сообщение больше чтобы проверить есть ли ещё
+    let sql = if let Some(last_id) = before_id {
+        format!("SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages WHERE id < '{}' ORDER BY timestamp DESC LIMIT {}", last_id, limit + 1)
+    } else {
+        format!("SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files FROM messages ORDER BY timestamp DESC LIMIT {}", limit + 1)
+    };
+
+    let result = conn.prepare(&sql);
 
     let mut stmt = match result {
         Ok(s) => s,
         Err(e) => return HttpResponse::InternalServerError().json(json!({"success": false, "error": e.to_string()})),
     };
 
-    let msgs: Vec<ChatMessage> = stmt.query_map(
-        params![limit, offset],
+    let mut msgs: Vec<ChatMessage> = stmt.query_map(
+        params![],
         |row| {
             let files_str: String = row.get(7)?;
             let files: Vec<FileData> = serde_json::from_str(&files_str).unwrap_or_default();
@@ -554,20 +605,26 @@ async fn get_messages(
             })
         }
     ).ok()
-        .map(|iter| {
-            // Разворачиваем чтобы вернуть в правильном порядке (старые → новые)
-            let mut msgs: Vec<ChatMessage> = iter.filter_map(|r| r.ok()).collect();
-            msgs.reverse();
-            msgs
-        })
+        .map(|iter| iter.filter_map(|r| r.ok()).collect())
         .unwrap_or_default();
+
+    // Проверяем есть ли ещё
+    let has_more = msgs.len() > limit;
+    let next_before_id = if has_more {
+        msgs.pop().map(|m| m.id)
+    } else {
+        None
+    };
+    
+    // Разворачиваем чтобы вернуть в правильном порядке (старые → новые)
+    msgs.reverse();
 
     HttpResponse::Ok().json(json!({
         "success": true,
         "data": msgs,
-        "offset": offset,
-        "limit": limit,
-        "has_more": offset > 0
+        "before_id": before_id,
+        "next_before_id": next_before_id,
+        "has_more": has_more
     }))
 }
 
