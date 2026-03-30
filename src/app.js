@@ -1018,6 +1018,13 @@ function saveUserSettings() {
 	localStorage.setItem('xam-user-settings', JSON.stringify(userSettings));
 }
 
-// Запуск
-loadUserSettings();
-init();
+// Запуск только если не в тестовом режиме
+if (typeof window !== 'undefined' && !window.__TEST_MODE__) {
+	loadUserSettings();
+	init();
+}
+
+// Экспорт для тестов
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = { init, loadUserSettings };
+}
