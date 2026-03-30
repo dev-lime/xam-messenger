@@ -1874,12 +1874,12 @@ mod tests_inner {
         // Тест на "битый" JSON
         let invalid_jsons = vec![
             "{invalid json}",
-            "{\"type\": \"message\"",  // незакрытая скобка
-            "{\"type\": \"message\", \"text\": }",  // без значения
+            "{\"type\": \"message\"",              // незакрытая скобка
+            "{\"type\": \"message\", \"text\": }", // без значения
             "not json at all",
             "",
             "null",
-            "[]",  // массив вместо объекта
+            "[]", // массив вместо объекта
         ];
 
         for json_str in invalid_jsons {
@@ -1891,7 +1891,7 @@ mod tests_inner {
     #[actix_rt::test]
     async fn test_large_json_payload() {
         // Тест на большой JSON payload
-        let large_text = "A".repeat(100000);  // 100KB текст
+        let large_text = "A".repeat(100000); // 100KB текст
         let json = json!({
             "type": "message",
             "text": large_text,
@@ -1949,11 +1949,13 @@ mod tests_inner {
         // Проверяем начальный статус 0
         {
             let conn = state.db.lock().unwrap();
-            let status: i64 = conn.query_row(
-                "SELECT delivery_status FROM messages WHERE id = ?1",
-                params![msg_id],
-                |row| row.get(0),
-            ).unwrap();
+            let status: i64 = conn
+                .query_row(
+                    "SELECT delivery_status FROM messages WHERE id = ?1",
+                    params![msg_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
             assert_eq!(status, 0, "Начальный статус должен быть 0 (отправка)");
         }
 
@@ -1963,16 +1965,19 @@ mod tests_inner {
             conn.execute(
                 "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
                 params![1, msg_id],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         {
             let conn = state.db.lock().unwrap();
-            let status: i64 = conn.query_row(
-                "SELECT delivery_status FROM messages WHERE id = ?1",
-                params![msg_id],
-                |row| row.get(0),
-            ).unwrap();
+            let status: i64 = conn
+                .query_row(
+                    "SELECT delivery_status FROM messages WHERE id = ?1",
+                    params![msg_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
             assert_eq!(status, 1, "Статус должен быть 1 (отправлено)");
         }
 
@@ -1982,16 +1987,19 @@ mod tests_inner {
             conn.execute(
                 "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
                 params![2, msg_id],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         {
             let conn = state.db.lock().unwrap();
-            let status: i64 = conn.query_row(
-                "SELECT delivery_status FROM messages WHERE id = ?1",
-                params![msg_id],
-                |row| row.get(0),
-            ).unwrap();
+            let status: i64 = conn
+                .query_row(
+                    "SELECT delivery_status FROM messages WHERE id = ?1",
+                    params![msg_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
             assert_eq!(status, 2, "Статус должен быть 2 (прочитано)");
         }
     }
@@ -2019,17 +2027,20 @@ mod tests_inner {
             conn.execute(
                 "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
                 params![2, msg_id],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // Проверяем что статус изменился (БД позволяет, но логика приложения не должна)
         {
             let conn = state.db.lock().unwrap();
-            let status: i64 = conn.query_row(
-                "SELECT delivery_status FROM messages WHERE id = ?1",
-                params![msg_id],
-                |row| row.get(0),
-            ).unwrap();
+            let status: i64 = conn
+                .query_row(
+                    "SELECT delivery_status FROM messages WHERE id = ?1",
+                    params![msg_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
             // Тест документирует текущее поведение - БД позволяет прямой переход
             // В production это должно проверяться в handle_client_msg
             assert_eq!(status, 2);
@@ -2048,9 +2059,8 @@ mod tests_inner {
             "sender_id": "user-123"
         });
 
-        let should_ignore = ack_from_self
-            .get("sender_id")
-            .and_then(|v| v.as_str()) == Some(user_id);
+        let should_ignore =
+            ack_from_self.get("sender_id").and_then(|v| v.as_str()) == Some(user_id);
         assert!(should_ignore, "ACK от себя должен игнорироваться");
 
         // ACK от другого пользователя — должно пройти
@@ -2060,9 +2070,8 @@ mod tests_inner {
             "sender_id": "user-456"
         });
 
-        let should_process = ack_from_other
-            .get("sender_id")
-            .and_then(|v| v.as_str()) != Some(user_id);
+        let should_process =
+            ack_from_other.get("sender_id").and_then(|v| v.as_str()) != Some(user_id);
         assert!(should_process, "ACK от другого должен обрабатываться");
     }
 
@@ -2101,8 +2110,13 @@ mod tests_inner {
 
             // Проверяем что таблица users всё ещё существует и цела
             let conn = state.db.lock().unwrap();
-            let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0)).unwrap();
-            assert!(count > 0, "Таблица users должна существовать после injection попытки");
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+                .unwrap();
+            assert!(
+                count > 0,
+                "Таблица users должна существовать после injection попытки"
+            );
         }
     }
 
