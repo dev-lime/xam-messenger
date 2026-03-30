@@ -89,6 +89,23 @@ class TestServerClient {
         });
     }
 
+    // Метод для обработки входящих сообщений (для тестов)
+    handleMessage(data) {
+        switch (data.type) {
+            case 'registered':
+                this.user = data.user;
+                break;
+            case 'message':
+            case 'ack':
+            case 'messages':
+            case 'user_online':
+                this.messageHandlers
+                    .filter(h => h.event === data.type)
+                    .forEach(h => h.handler(data));
+                break;
+        }
+    }
+
     async getUsers() {
         fetch.mockResolvedValueOnce({
             json: async () => ({ success: true, data: [] })

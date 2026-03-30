@@ -10,6 +10,9 @@ afterAll(() => {
     jest.useRealTimers();
 });
 
+// Флаг для app.js чтобы не инициализировался автоматически
+window.__TEST_MODE__ = true;
+
 // Mock для localStorage
 const localStorageMock = {
     store: {},
@@ -53,16 +56,15 @@ class MockWebSocket {
         this.onclose = null;
         this.onerror = null;
         this.onmessage = null;
-
-        // Симулируем открытие соединения
+        
+        // Сразу вызываем onopen
+        const self = this;
         setTimeout(() => {
-            if (this.onopen) this.onopen();
-        }, 10);
+            if (self.onopen) self.onopen();
+        }, 0);
     }
 
-    send(data) {
-        // Mock send
-    }
+    send(data) {}
 
     close() {
         this.readyState = MockWebSocket.CLOSED;
@@ -83,6 +85,7 @@ window.fetch = mockFetch;
 beforeEach(() => {
     mockFetch.mockClear();
     localStorageMock.store = {};
+    window.ServerClient = undefined;
 
     // Очищаем DOM
     document.body.innerHTML = `
