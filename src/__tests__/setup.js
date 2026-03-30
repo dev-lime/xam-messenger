@@ -1,15 +1,6 @@
 // Setup file for Jest tests
 import '@testing-library/jest-dom';
 
-// Включаем фейковые таймеры для всех тестов
-beforeAll(() => {
-    jest.useFakeTimers();
-});
-
-afterAll(() => {
-    jest.useRealTimers();
-});
-
 // Флаг для app.js чтобы не инициализировался автоматически
 window.__TEST_MODE__ = true;
 
