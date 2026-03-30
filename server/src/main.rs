@@ -5,6 +5,9 @@
 
 // XAM Messenger Server - WebSocket + HTTP
 
+// Модули
+mod models;
+
 use actix_cors::Cors;
 use actix_multipart::Multipart;
 use actix_web::{middleware, web, App, Error as ActixError, HttpRequest, HttpResponse, HttpServer};
@@ -12,7 +15,7 @@ use actix_ws::{Message, MessageStream};
 use chrono::Utc;
 use futures_util::{StreamExt, TryStreamExt};
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -20,62 +23,8 @@ use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct User {
-    id: String,
-    name: String,
-    #[serde(default)]
-    pub avatar: String,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct FileData {
-    pub name: String,
-    pub size: u64,
-    pub path: String,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ChatMessage {
-    pub id: String,
-    pub sender_id: String,
-    pub sender_name: String,
-    pub text: String,
-    pub timestamp: i64,
-    pub delivery_status: u8,
-    pub recipient_id: Option<String>,
-    #[serde(default)]
-    pub files: Vec<FileData>,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ClientMsg {
-    #[serde(rename = "type")]
-    pub msg_type: String,
-    #[serde(default)]
-    pub text: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub message_id: String,
-    #[serde(default)]
-    pub status: String,
-    #[serde(default)]
-    pub limit: usize,
-    #[serde(default)]
-    pub before_id: Option<String>,
-    #[serde(default)]
-    pub recipient_id: Option<String>,
-    #[serde(default)]
-    pub files: Vec<FileData>,
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    pub db: Arc<Mutex<Connection>>,
-    pub tx: broadcast::Sender<serde_json::Value>,
-    pub online_users: Arc<Mutex<HashMap<String, u64>>>,
-}
+// Экспорт моделей для использования в main.rs
+use models::{AppState, ChatMessage, ClientMsg, FileData, User};
 
 #[derive(Deserialize)]
 struct RegisterReq {
@@ -95,6 +44,22 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(db_path.parent().unwrap())?;
 
     let conn = Connection::open(&db_path)?;
+
+    // Включаем WAL mode для лучшей производительности и конкурентности
+    // WAL (Write-Ahead Logging) позволяет читателям не блокировать писателей
+    conn.execute("PRAGMA journal_mode = WAL", [])
+        .expect("Failed to enable WAL mode");
+    
+    // Увеличиваем размер кэша страниц (по умолчанию 2000, ставим 5000)
+    conn.execute("PRAGMA cache_size = -5000", [])
+        .expect("Failed to set cache size");
+    
+    // Включаем foreign keys (на будущее)
+    conn.execute("PRAGMA foreign_keys = ON", [])
+        .expect("Failed to enable foreign keys");
+
+    log::info!("✅ База данных: {}", db_path.display());
+    log::info!("✅ WAL mode включён");
 
     // Таблицы
     conn.execute(
@@ -927,6 +892,7 @@ mod tests_inner {
 
         // Создаём таблицы
         let conn = db.lock().unwrap();
+        conn.execute("PRAGMA journal_mode = WAL", []).ok();
         conn.execute(
             "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
             [],
