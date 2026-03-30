@@ -151,7 +151,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
     describe('WebSocket подключение', () => {
         test('должен подключаться к WebSocket серверу', async () => {
             const ws = await createWebSocket();
-            expect(ws.readyState).toBe(WebSocket.OPEN);
+            expect(ws.readyState).toBe(WebSocketClient.OPEN);
             ws.close();
         });
 
@@ -185,7 +185,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
             
             // Ждём пока соединение закроется
             await new Promise(resolve => setTimeout(resolve, 100));
-            expect(ws.readyState).toBe(WebSocket.CLOSED);
+            expect(ws.readyState).toBe(WebSocketClient.CLOSED);
         });
     });
 
@@ -712,31 +712,37 @@ describe('Интеграционные тесты - Краевые случаи'
 
     describe('Обработка ошибок', () => {
         test('должен обрабатывать некорректный JSON', async () => {
-            const ws = await createWebSocket();
+            let ws;
+            try {
+                ws = await createWebSocket();
 
-            // Отправляем некорректный JSON
-            ws.send('not valid json{');
+                // Отправляем некорректный JSON
+                ws.send('not valid json{');
 
-            // Соединение не должно закрыться
-            await new Promise(r => setTimeout(r, 100));
-            expect(ws.readyState).toBe(WebSocket.OPEN);
-
-            ws.close();
+                // Соединение не должно закрыться
+                await new Promise(r => setTimeout(r, 100));
+                expect(ws.readyState).toBe(WebSocketClient.OPEN);
+            } finally {
+                if (ws) ws.close();
+            }
         });
 
         test('должен обрабатывать неизвестные типы сообщений', async () => {
-            const ws = await createWebSocket();
+            let ws;
+            try {
+                ws = await createWebSocket();
 
-            ws.send(JSON.stringify({
-                type: 'unknown_type',
-                data: 'test',
-            }));
+                ws.send(JSON.stringify({
+                    type: 'unknown_type',
+                    data: 'test',
+                }));
 
-            // Соединение не должно закрыться
-            await new Promise(r => setTimeout(r, 100));
-            expect(ws.readyState).toBe(WebSocket.OPEN);
-
-            ws.close();
+                // Соединение не должно закрыться
+                await new Promise(r => setTimeout(r, 100));
+                expect(ws.readyState).toBe(WebSocketClient.OPEN);
+            } finally {
+                if (ws) ws.close();
+            }
         });
     });
 });
