@@ -1,14 +1,24 @@
 {
-  "productName": "Xam Messenger",
-  "version": "1.0.0",
-  "identifier": "com.xam.messenger",
+  "package": {
+    "productName": "Xam Messenger",
+    "version": "1.0.0"
+  },
   "build": {
     "distDir": "../src",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
-  "app": {
-    "withGlobalTauri": true,
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.xam.messenger",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/icon.png"
+      ]
+    },
     "windows": [
       {
         "title": "Xam Messenger",
@@ -24,14 +34,5 @@
     "security": {
       "csp": null
     }
-  },
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/icon.png"
-    ]
   }
 }
