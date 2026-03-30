@@ -201,6 +201,10 @@ function handleMessages(data) {
 
     console.log(`📚 handleMessages: beforeId=${beforeId}, nextBeforeId=${nextBeforeId}, messages=${messages.length}, hasMore=${hasMore}`);
 
+    // Сохраняем текущую высоту контента для сохранения позиции прокрутки
+    const oldScrollHeight = elements.messagesContainer.scrollHeight;
+    const oldScrollTop = elements.messagesContainer.scrollTop;
+
     if (!beforeId) {
         // Первая загрузка - заменяем все сообщения
         state.messages = messages;
@@ -228,6 +232,12 @@ function handleMessages(data) {
                    (m.sender_id === state.currentPeer && (m.recipient_id === state.user?.id || !m.recipient_id));
         });
         renderMessages(true);
+        
+        // Сохраняем позицию прокрутки при загрузке старых сообщений
+        if (beforeId) {
+            const newScrollHeight = elements.messagesContainer.scrollHeight;
+            elements.messagesContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+        }
     } else {
         renderMessages();
     }
