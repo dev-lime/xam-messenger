@@ -49,11 +49,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // WAL (Write-Ahead Logging) позволяет читателям не блокировать писателей
     conn.execute("PRAGMA journal_mode = WAL", [])
         .expect("Failed to enable WAL mode");
-    
+
     // Увеличиваем размер кэша страниц (по умолчанию 2000, ставим 5000)
     conn.execute("PRAGMA cache_size = -5000", [])
         .expect("Failed to set cache size");
-    
+
     // Включаем foreign keys (на будущее)
     conn.execute("PRAGMA foreign_keys = ON", [])
         .expect("Failed to enable foreign keys");

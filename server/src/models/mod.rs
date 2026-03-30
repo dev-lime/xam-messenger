@@ -1,9 +1,9 @@
 // Модели данных для XAM Messenger Server
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use rusqlite::Connection;
 use tokio::sync::broadcast;
 
 /// Пользователь
