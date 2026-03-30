@@ -440,10 +440,21 @@ async function loadPeers() {
 
 // Загрузка старых сообщений
 async function loadMoreMessages() {
-    console.log(`🔍 loadMoreMessages: isLoading=${state.isLoadingMessages}, hasMore=${state.hasMoreMessages}, lastMessageId=${state.lastMessageId}`);
+    console.log(`🔍 loadMoreMessages START: isLoading=${state.isLoadingMessages}, hasMore=${state.hasMoreMessages}, lastMessageId=${state.lastMessageId}, messages.length=${state.messages.length}`);
     
     if (state.isLoadingMessages || !state.hasMoreMessages) {
-        console.log('⚠️ loadMoreMessages: выход');
+        console.log('⚠️ loadMoreMessages: выход (isLoading или !hasMore)');
+        return;
+    }
+    
+    // Если lastMessageId не установлен но сообщения есть - берём ID первого сообщения
+    if (!state.lastMessageId && state.messages.length > 0) {
+        state.lastMessageId = state.messages[0].id;
+        console.log(`📚 lastMessageId установлен из первого сообщения: ${state.lastMessageId}`);
+    }
+    
+    if (!state.lastMessageId) {
+        console.log('⚠️ loadMoreMessages: выход (нет lastMessageId)');
         return;
     }
 
