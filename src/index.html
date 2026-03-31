@@ -74,8 +74,13 @@
                 <label>Ваше имя</label>
                 <input type="text" id="userNameInput" placeholder="Введите имя" maxlength="20">
             </div>
+            <div class="form-group">
+                <label>Адрес сервера (опционально)</label>
+                <input type="text" id="serverAddressInput" placeholder="192.168.1.100" maxlength="255">
+            </div>
             <p class="hint">💡 Введите имя для подключения к серверу<br>
-               Сервер будет найден автоматически в локальной сети</p>
+               Сервер будет найден автоматически в локальной сети<br>
+               🔧 Если сервер не найден, укажите его IP адрес вручную</p>
             <div id="serverStatus" style="margin-top: 12px; font-size: 13px;">
                 <span style="color: var(--text-secondary);">🔍 Поиск сервера...</span>
             </div>

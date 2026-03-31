@@ -54,6 +54,7 @@ const elements = {
 	connectDialog: document.getElementById('connectDialog'),
 	settingsDialog: document.getElementById('settingsDialog'),
 	userNameInput: document.getElementById('userNameInput'),
+	serverAddressInput: document.getElementById('serverAddressInput'),
 	serverStatus: document.getElementById('serverStatus'),
 	confirmConnect: document.getElementById('confirmConnect'),
 	cancelSettings: document.getElementById('cancelSettings'),
@@ -212,10 +213,10 @@ function restorePaginationState() {
  * Очистка состояния пагинации
  */
 function clearPaginationState() {
-	state.lastMessageId = null;
+	// Не сбрасываем lastMessageId - он нужен для пагинации
+	// Сбрасываем только hasMoreMessages для новой загрузки
 	state.hasMoreMessages = true;
-	localStorage.removeItem(CONFIG.STORAGE_KEYS.LAST_MESSAGE_ID);
-	localStorage.removeItem(CONFIG.STORAGE_KEYS.HAS_MORE);
+	// localStorage не трогаем - он общий для всех чатов
 }
 
 // ============================================================================
@@ -397,18 +398,22 @@ function updateFilteredMessage(msg) {
  */
 function handleMessages(data) {
 	const messages = Array.isArray(data) ? data : data.messages;
-	const beforeId = data.before_id || null;
-	const nextBeforeId = data.next_before_id || null;
+	const beforeId = data.before_id || data.beforeId || null;
+	const nextBeforeId = data.next_before_id || data.nextBeforeId || null;
 	const hasMore = data.has_more !== undefined ? data.has_more : messages.length >= 50;
 
 	const oldScrollHeight = elements.messagesContainer.scrollHeight;
 	const oldScrollTop = elements.messagesContainer.scrollTop;
 
 	if (!beforeId) {
+		// Первая загрузка - заменяем все сообщения
 		state.messages = messages;
+		// Сохраняем ID самого старого сообщения для пагинации
 		state.lastMessageId = messages.length > 0 ? messages[0].id : null;
 	} else {
+		// Подгрузка старых - добавляем в начало
 		state.messages = [...messages, ...state.messages];
+		// Обновляем ID для следующей пагинации
 		state.lastMessageId = nextBeforeId;
 	}
 
@@ -481,6 +486,7 @@ function handleUserUpdated(data) {
 async function connectToServer() {
 	const name = elements.userNameInput.value.trim();
 	const avatar = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
+	const serverAddress = elements.serverAddressInput.value.trim();
 
 	if (!name) {
 		alert('Введите ваше имя');
@@ -492,7 +498,17 @@ async function connectToServer() {
 			'<span style="color: var(--warning);">🔌 Подключение...</span>';
 		elements.confirmConnect.disabled = true;
 
-		await serverClient.connect();
+		// Если указан адрес сервера, подключаемся напрямую
+		if (serverAddress) {
+			const wsUrl = serverAddress.startsWith('ws://') 
+				? `${serverAddress}/ws` 
+				: `ws://${serverAddress}:8080/ws`;
+			console.log('🔌 Подключение к указанному серверу:', wsUrl);
+			await serverClient.connect(wsUrl);
+		} else {
+			// Автоматическое обнаружение
+			await serverClient.connect();
+		}
 
 		const user = await serverClient.register(name, avatar);
 		state.user = user;
@@ -748,8 +764,14 @@ function selectPeer(userId, userName) {
 	});
 
 	updateStatusDisplay(true, `Чат с ${userName}`);
-	clearPaginationState();
-	loadMessagesForPeer(userId);
+	
+	// Сбрасываем hasMoreMessages для возможности загрузки
+	state.hasMoreMessages = true;
+	
+	// Фильтруем уже загруженные сообщения для этого чата
+	filterMessagesForCurrentPeer();
+	renderMessages(true);
+	
 	updateLoadMoreButton();
 
 	// Отправляем READ ACK для всех непрочитанных сообщений
@@ -797,14 +819,17 @@ function loadMessagesForPeer(userId) {
  * Загрузка старых сообщений
  */
 async function loadMoreMessages() {
-	if (state.isLoadingMessages || !state.hasMoreMessages) return;
-
-	// Если lastMessageId не установлен но сообщения есть - берём ID первого сообщения
-	if (!state.lastMessageId && state.messages.length > 0) {
-		state.lastMessageId = state.messages[0].id;
+	if (state.isLoadingMessages || !state.hasMoreMessages) {
+		return;
 	}
 
-	if (!state.lastMessageId) return;
+	if (!state.currentPeer) {
+		return;
+	}
+
+	if (!state.lastMessageId) {
+		return;
+	}
 
 	state.isLoadingMessages = true;
 	updateLoadMoreButton();
@@ -1196,6 +1221,18 @@ function setupEventListeners() {
 
 	elements.userNameInput.addEventListener('input', () => {
 		elements.confirmConnect.disabled = elements.userNameInput.value.trim().length === 0;
+	});
+
+	elements.serverAddressInput.addEventListener('input', () => {
+		// При вводе адреса сервера показываем что будет использован ручной режим
+		const addr = elements.serverAddressInput.value.trim();
+		if (addr) {
+			elements.serverStatus.innerHTML =
+				`<span style="color: var(--text-secondary);">🔧 Будет использован сервер: ${addr}</span>`;
+		} else {
+			elements.serverStatus.innerHTML =
+				'<span style="color: var(--text-secondary);">🔍 Поиск сервера...</span>';
+		}
 	});
 
 	elements.sendBtn.addEventListener('click', sendMessage);

@@ -26,6 +26,25 @@ use tokio::sync::broadcast;
 use models::AppState;
 use websocket::ws_handler;
 
+/// Получение всех локальных IP адресов
+fn get_local_ips() -> Vec<String> {
+    let mut ips = Vec::new();
+
+    // Получаем список всех сетевых интерфейсов
+    if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
+        for iface in interfaces {
+            // Пропускаем loopback и не IPv4 адреса
+            if !iface.is_loopback() {
+                if let get_if_addrs::IfAddr::V4(ipv4) = iface.addr {
+                    ips.push(ipv4.ip.to_string());
+                }
+            }
+        }
+    }
+
+    ips
+}
+
 #[actix_web::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
@@ -44,6 +63,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     db::init_database(&conn)?;
 
     info!("✅ База данных: {}", db_path.display());
+
+    // Получаем и выводим локальные IP адреса
+    let local_ips = get_local_ips();
+    if !local_ips.is_empty() {
+        info!("📡 Локальные IP адреса:");
+        for ip in &local_ips {
+            info!("   └─ http://{}:8080", ip);
+        }
+        info!("💡 Используйте эти адреса для подключения клиентов");
+    }
 
     let db = Arc::new(Mutex::new(conn));
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
