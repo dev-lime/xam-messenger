@@ -80,10 +80,10 @@ pub fn get_messages_with_pagination(
          LIMIT ?1"
     };
 
-    let mut stmt = conn.prepare(&sql)?;
-    let mut messages: Vec<ChatMessage> = if before_id.is_some() {
+    let mut stmt = conn.prepare(sql)?;
+    let mut messages: Vec<ChatMessage> = if let Some(before_id_val) = before_id {
         stmt.query_map(
-            params![before_id.unwrap(), query_limit as i64],
+            params![before_id_val, query_limit as i64],
             parse_message_row,
         )?
     } else {
@@ -98,8 +98,7 @@ pub fn get_messages_with_pagination(
 
     // Если есть ещё, убираем лишнее сообщение (оно нужно только для проверки has_more)
     let next_before_id = if has_more {
-        let last_msg_id = messages.pop().map(|m| m.id);
-        last_msg_id
+        messages.pop().map(|m| m.id);
     } else {
         None
     };
