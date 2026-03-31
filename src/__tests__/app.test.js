@@ -501,13 +501,14 @@ describe('app.js - isMessageInCurrentChat', () => {
         user: { id: 'user-1' },
         currentPeer: 'user-2',
     };
-    
+
     const isMessageInCurrentChat = (msg) => {
-        // Сообщения без recipient_id считаются общими — показываем во всех чатах
+        // Сообщения без recipient_id — это сообщения для всех (общие)
+        // Показываем их только в чате с отправителем
         if (!msg.recipient_id) {
-            return true;
+            return msg.sender_id === mockState.currentPeer;
         }
-        
+
         // Сообщения с получателем показываем только в соответствующем чате
         return (
             (msg.sender_id === mockState.user.id && msg.recipient_id === mockState.currentPeer) ||
@@ -521,14 +522,14 @@ describe('app.js - isMessageInCurrentChat', () => {
             expect(isMessageInCurrentChat(msg)).toBe(true);
         });
 
-        test('должен показывать наши сообщения без recipient_id', () => {
+        test('не должен показывать наши сообщения без recipient_id в чате с другим пользователем', () => {
             const msg = { sender_id: 'user-1', recipient_id: null, text: 'Hi' };
-            expect(isMessageInCurrentChat(msg)).toBe(true);
+            expect(isMessageInCurrentChat(msg)).toBe(false);
         });
 
-        test('должен показывать сообщения от других пользователей без recipient_id', () => {
+        test('не должен показывать сообщения от других пользователей без recipient_id', () => {
             const msg = { sender_id: 'user-3', recipient_id: null, text: 'Other' };
-            expect(isMessageInCurrentChat(msg)).toBe(true);
+            expect(isMessageInCurrentChat(msg)).toBe(false);
         });
     });
 
