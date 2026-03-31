@@ -132,7 +132,8 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 .unwrap_or("unnamed")
                 .to_string();
 
-            let filepath = upload_dir.join(format!("{}_{}", Uuid::new_v4(), filename));
+            let file_id = Uuid::new_v4().to_string();
+            let filepath = upload_dir.join(format!("{}_{}", file_id, filename));
 
             let mut size = 0u64;
             let mut file_bytes = Vec::new();
@@ -149,7 +150,6 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 }));
             }
 
-            let file_id = Uuid::new_v4().to_string();
             let db = data.db.lock().unwrap_or_else(|e| e.into_inner());
 
             if let Err(e) = db::save_file_metadata(
@@ -165,13 +165,14 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 }));
             }
 
+            // Возвращаем только ID файла, а не полный путь
             HttpResponse::Ok().json(json!({
                 "success": true,
                 "data": {
                     "id": file_id,
                     "name": filename,
                     "size": size,
-                    "path": filepath.to_string_lossy()
+                    "path": file_id
                 }
             }))
         }
@@ -182,12 +183,12 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
     }
 }
 
-/// Скачивание файла
+/// Скачивание файла по ID
 pub async fn download_file(
-    _data: web::Data<AppState>,
+    data: web::Data<AppState>,
     query: web::Query<std::collections::HashMap<String, String>>,
 ) -> HttpResponse {
-    let filepath = match query.get("path") {
+    let file_id = match query.get("path") {
         Some(p) => p,
         None => {
             return HttpResponse::BadRequest().json(json!({
@@ -197,19 +198,42 @@ pub async fn download_file(
         }
     };
 
-    if !std::path::Path::new(filepath).exists() {
+    // Ищем файл в базе данных по ID
+    let db = match data.db.lock() {
+        Ok(conn) => conn,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"success": false, "error": format!("Database error: {}", e)}))
+        }
+    };
+
+    let filepath = match db::get_file_path(&db, file_id) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            return HttpResponse::NotFound().json(json!({
+                "success": false,
+                "error": "File not found"
+            }))
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"success": false, "error": format!("Database error: {}", e)}))
+        }
+    };
+
+    if !std::path::Path::new(&filepath).exists() {
         return HttpResponse::NotFound().json(json!({
             "success": false,
-            "error": "File not found"
+            "error": "File not found on disk"
         }));
     }
 
-    let filename = std::path::Path::new(filepath)
+    let filename = std::path::Path::new(&filepath)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
 
-    match std::fs::read(filepath) {
+    match std::fs::read(&filepath) {
         Ok(contents) => HttpResponse::Ok()
             .content_type("application/octet-stream")
             .insert_header((
