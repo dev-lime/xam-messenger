@@ -48,6 +48,7 @@ const elements = {
 	fileInput: document.getElementById('fileInput'),
 	attachedFiles: document.getElementById('attachedFiles'),
 	messageInput: document.getElementById('messageInput'),
+	inputArea: document.getElementById('inputArea'),
 	messages: document.getElementById('messages'),
 	messagesContainer: document.getElementById('messagesContainer'),
 	peersList: document.getElementById('peersList'),
@@ -1343,6 +1344,9 @@ function setupEventListeners() {
 
 	elements.fileInput.addEventListener('change', handleFileSelect);
 
+	// Drag'n'drop для файлов
+	initDragAndDrop();
+
 	if (elements.loadMoreBtn) {
 		elements.loadMoreBtn.addEventListener('click', loadMoreMessages);
 	}
@@ -1367,6 +1371,79 @@ function handleFileSelect(e) {
 		attachedFiles.push(file);
 	});
 	elements.fileInput.value = '';
+	renderAttachedFiles();
+	updateSendButton();
+}
+
+/**
+ * Инициализация drag'n'drop для файлов
+ */
+function initDragAndDrop() {
+	const dropZone = elements.inputArea;
+	let dragCounter = 0;
+
+	// Предотвращаем стандартное поведение для всех drag событий
+	['dragenter', 'dragover', 'dragleave', 'drop'].forEach((eventName) => {
+		document.addEventListener(eventName, (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+		}, false);
+	});
+
+	// Обработка входа драга в зону
+	dropZone.addEventListener('dragenter', (e) => {
+		dragCounter++;
+		if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+			dropZone.classList.add('drag-over');
+		}
+	}, false);
+
+	// Обработка перемещения над зоной
+	dropZone.addEventListener('dragover', (e) => {
+		if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+			dropZone.classList.add('drag-over');
+		}
+	}, false);
+
+	// Обработка выхода драга из зоны
+	dropZone.addEventListener('dragleave', (e) => {
+		dragCounter--;
+		if (dragCounter === 0) {
+			dropZone.classList.remove('drag-over');
+		}
+	}, false);
+
+	// Обработка сброса файлов
+	dropZone.addEventListener('drop', (e) => {
+		dragCounter = 0;
+		dropZone.classList.remove('drag-over');
+
+		const files = Array.from(e.dataTransfer.files);
+		if (files.length > 0) {
+			handleDroppedFiles(files);
+		}
+	}, false);
+
+	// Глобальная обработка для сброса состояния при уходе за пределы окна
+	document.addEventListener('dragleave', (e) => {
+		if (e.relatedTarget === null) {
+			dragCounter = 0;
+			dropZone.classList.remove('drag-over');
+		}
+	}, false);
+}
+
+/**
+ * Обработка сброшенных файлов
+ */
+function handleDroppedFiles(files) {
+	files.forEach((file) => {
+		if (file.size > CONFIG.MAX_FILE_SIZE) {
+			alert(`Файл "${file.name}" слишком большой (макс. 100MB)`);
+			return;
+		}
+		attachedFiles.push(file);
+	});
 	renderAttachedFiles();
 	updateSendButton();
 }

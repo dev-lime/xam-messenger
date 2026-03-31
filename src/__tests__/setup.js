@@ -106,7 +106,7 @@ beforeEach(() => {
                     <div class="messages" id="messages"></div>
                 </div>
                 <div class="attached-files" id="attachedFiles" style="display: none;"></div>
-                <div class="input-area">
+                <div class="input-area" id="inputArea">
                     <button class="btn btn-attach" id="attachBtn">📎</button>
                     <textarea id="messageInput" placeholder="Введите сообщение..." rows="1"></textarea>
                     <button class="btn btn-send" id="sendBtn" disabled><span>➤</span></button>
