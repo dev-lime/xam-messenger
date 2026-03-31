@@ -424,12 +424,14 @@ class ServerClient {
 	 * Запрос истории сообщений с пагинацией
 	 * @param {number} limit - Количество сообщений (макс. 200)
 	 * @param {string|null} beforeId - ID сообщения для пагинации
+	 * @param {string|null} chatPeerId - ID пользователя для фильтрации по чату
 	 */
-	getMessages(limit = 50, beforeId = null) {
+	getMessages(limit = 50, beforeId = null, chatPeerId = null) {
 		this.send({
 			type: MESSAGE_TYPES.GET_MESSAGES,
 			limit: Math.max(1, Math.min(200, limit)),
 			before_id: beforeId,
+			chat_peer_id: chatPeerId,
 		});
 	}
 

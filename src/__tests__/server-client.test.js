@@ -123,11 +123,12 @@ class TestServerClient {
         });
     }
 
-    getMessages(limit = 100, beforeId = null) {
+    getMessages(limit = 100, beforeId = null, chatPeerId = null) {
         this.send({
             type: 'get_messages',
             limit: Math.max(1, Math.min(200, limit)),
             before_id: beforeId,
+            chat_peer_id: chatPeerId,
         });
     }
 
@@ -295,6 +296,7 @@ describe('ServerClient', () => {
                 type: 'get_messages',
                 limit: 50,
                 before_id: null,
+                chat_peer_id: null,
             }));
         });
 
@@ -307,6 +309,7 @@ describe('ServerClient', () => {
                 type: 'get_messages',
                 limit: 100,
                 before_id: null,
+                chat_peer_id: null,
             }));
         });
 
@@ -542,6 +545,7 @@ describe('ServerClient', () => {
             expect(sentData.type).toBe('get_messages');
             expect(sentData.limit).toBe(50);
             expect(sentData.before_id).toBeNull();
+            expect(sentData.chat_peer_id).toBeNull();
         });
 
         test('должен запрашивать сообщения с before_id для пагинации', async () => {
@@ -553,6 +557,31 @@ describe('ServerClient', () => {
             expect(sentData.type).toBe('get_messages');
             expect(sentData.limit).toBe(50);
             expect(sentData.before_id).toBe('msg-123');
+            expect(sentData.chat_peer_id).toBeNull();
+        });
+
+        test('должен запрашивать сообщения с chat_peer_id для фильтрации чата', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages(50, null, 'user-456');
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.type).toBe('get_messages');
+            expect(sentData.limit).toBe(50);
+            expect(sentData.before_id).toBeNull();
+            expect(sentData.chat_peer_id).toBe('user-456');
+        });
+
+        test('должен запрашивать сообщения с before_id и chat_peer_id', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages(50, 'msg-123', 'user-456');
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.type).toBe('get_messages');
+            expect(sentData.limit).toBe(50);
+            expect(sentData.before_id).toBe('msg-123');
+            expect(sentData.chat_peer_id).toBe('user-456');
         });
 
         test('должен использовать лимит по умолчанию 100', async () => {
@@ -563,6 +592,7 @@ describe('ServerClient', () => {
             const sentData = JSON.parse(client.ws.sentMessages[0]);
             expect(sentData.limit).toBe(100);
             expect(sentData.before_id).toBeNull();
+            expect(sentData.chat_peer_id).toBeNull();
         });
 
         test('должен ограничивать минимальный лимит значением 1', async () => {
@@ -592,6 +622,7 @@ describe('ServerClient', () => {
             expect(sentData.type).toBe('get_messages');
             expect(sentData.limit).toBe(50);
             expect(sentData.before_id).toBeNull();
+            expect(sentData.chat_peer_id).toBeNull();
         });
     });
 

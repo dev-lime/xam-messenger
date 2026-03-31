@@ -399,6 +399,66 @@ mod tests {
         assert_eq!(messages.len(), 5);
     }
 
+    #[actix_rt::test]
+    async fn test_get_messages_for_chat() {
+        let state = create_test_state();
+
+        // Добавляем тестовые сообщения для разных чатов
+        {
+            let conn = state.db.lock().unwrap();
+            // Личные сообщения между user1 и user2
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["msg1", "user1", "User 1", "Hello", 1000, "user2"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["msg2", "user2", "User 2", "Hi", 1001, "user1"],
+            )
+            .unwrap();
+
+            // Сообщение от user3 к user4 (другой чат)
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["msg3", "user3", "User 3", "Other chat", 1002, "user4"],
+            )
+            .unwrap();
+
+            // Общее сообщение (без получателя)
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["msg4", "user5", "User 5", "General message", 1003],
+            )
+            .unwrap();
+        }
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/messages", web::get().to(handlers::get_messages)),
+        )
+        .await;
+
+        // Запрашиваем сообщения для чата user1-user2
+        let req = test::TestRequest::get()
+            .uri("/api/messages?chat_peer_id=user2")
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        let messages = body["data"].as_array().unwrap();
+        // Должны вернуться: msg1, msg2 (личные) и msg4 (общее), но не msg3
+        assert_eq!(messages.len(), 3);
+    }
+
     // ============================================
     // ТЕСТЫ ФАЙЛОВ
     // ============================================
