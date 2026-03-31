@@ -55,6 +55,12 @@ const elements = {
 	menuLogout: document.getElementById('menuLogout'),
 	menuChangeServer: document.getElementById('menuChangeServer'),
 	userProfileHeader: document.getElementById('userProfileHeader'),
+	chatTitle: document.getElementById('chatTitle'),
+	chatTitleText: document.getElementById('chatTitleText'),
+	chatMenuContainer: document.getElementById('chatMenuContainer'),
+	chatMenuBtn: document.getElementById('chatMenuBtn'),
+	chatContextMenu: document.getElementById('chatContextMenu'),
+	menuDeleteChat: document.getElementById('menuDeleteChat'),
 	sendBtn: document.getElementById('sendBtn'),
 	attachBtn: document.getElementById('attachBtn'),
 	fileInput: document.getElementById('fileInput'),
@@ -596,6 +602,33 @@ function updateConnectionStatus(connected, statusText) {
 	}
 	if (elements.statusText) {
 		elements.statusText.textContent = statusText || (connected ? 'В сети' : 'Не в сети');
+	}
+}
+
+/**
+ * Открытие контекстного меню чата
+ */
+function openChatMenu() {
+	if (elements.chatContextMenu) {
+		elements.chatContextMenu.classList.add('open');
+	}
+}
+
+/**
+ * Закрытие контекстного меню чата
+ */
+function closeChatMenu() {
+	if (elements.chatContextMenu) {
+		elements.chatContextMenu.classList.remove('open');
+	}
+}
+
+/**
+ * Обновление заголовка чата
+ */
+function updateChatTitle(peerName) {
+	if (elements.chatTitleText) {
+		elements.chatTitleText.textContent = peerName || 'Выберите чат';
 	}
 }
 
@@ -1193,6 +1226,7 @@ function selectPeer(userId, userName) {
 		item.classList.toggle('active', item.dataset.userId === userId);
 	});
 
+	updateChatTitle(userName);
 	updateStatusDisplay(true, `Чат с ${userName}`);
 
 	// Фильтруем уже загруженные сообщения для этого чата
@@ -1338,6 +1372,8 @@ function renderMessages(useFiltered = false) {
  * Рендеринг пустого состояния чата
  */
 function renderEmptyChatState() {
+	updateChatTitle('Выберите чат');
+	
 	elements.messages.innerHTML = `
 		<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-tertiary); text-align: center; padding: 40px;">
 			<div style="font-size: 18px; margin-bottom: 10px;">Выберите чат</div>
@@ -1795,20 +1831,46 @@ function setupEventListeners() {
 	if (elements.refreshServersBtn) {
 		elements.refreshServersBtn.addEventListener('click', refreshServerList);
 	}
-	
+
 	if (elements.confirmManualServer) {
 		elements.confirmManualServer.addEventListener('click', connectToManualServer);
 	}
-	
+
 	if (elements.cancelServerSelector) {
 		elements.cancelServerSelector.addEventListener('click', () => {
 			elements.serverSelectorDialog.close();
 		});
 	}
-	
+
 	if (elements.manualServerInput) {
 		elements.manualServerInput.addEventListener('keydown', (e) => {
 			if (e.key === 'Enter') connectToManualServer();
+		});
+	}
+
+	// Обработчики для меню чата
+	if (elements.chatMenuBtn) {
+		elements.chatMenuBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			openChatMenu();
+		});
+	}
+
+	// Закрытие меню чата при клике вне
+	document.addEventListener('click', (e) => {
+		if (elements.chatContextMenu && elements.chatMenuContainer) {
+			if (!elements.chatMenuContainer.contains(e.target)) {
+				closeChatMenu();
+			}
+		}
+	});
+
+	// Удаление чата (пока заглушка)
+	if (elements.menuDeleteChat) {
+		elements.menuDeleteChat.addEventListener('click', () => {
+			// TODO: Реализовать удаление чата
+			console.log('Удалить чат...');
+			closeChatMenu();
 		});
 	}
 }

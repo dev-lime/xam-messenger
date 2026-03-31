@@ -12,6 +12,64 @@
     <div class="app">
         <!-- Левая панель - список контактов -->
         <aside class="sidebar">
+            <!-- Шапка сайдбара: Профиль и статус -->
+            <div class="sidebar-header">
+                <div class="profile-menu-container" id="profileMenuContainer">
+                    <button class="profile-avatar-btn" id="profileAvatarBtn" title="Профиль">
+                        <span class="profile-avatar" id="userAvatar">👤</span>
+                    </button>
+                    
+                    <!-- Контекстное меню -->
+                    <div class="profile-context-menu" id="profileContextMenu">
+                        <div class="profile-menu-header">
+                            <span class="profile-menu-avatar" id="profileMenuAvatar">👤</span>
+                            <div class="profile-menu-info">
+                                <span class="profile-menu-name" id="profileMenuName">Не подключен</span>
+                            </div>
+                        </div>
+                        <div class="profile-menu-divider"></div>
+                        <button class="profile-menu-item" id="menuProfile">
+                            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                                <circle cx="12" cy="7" r="4"/>
+                            </svg>
+                            <span>Профиль</span>
+                        </button>
+                        <button class="profile-menu-item" id="menuSettings">
+                            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="3"/>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                            </svg>
+                            <span>Настройки</span>
+                        </button>
+                        <button class="profile-menu-item" id="menuLogout">
+                            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                                <polyline points="16 17 21 12 16 7"/>
+                                <line x1="21" y1="12" x2="9" y2="12"/>
+                            </svg>
+                            <span>Выйти</span>
+                        </button>
+                        <div class="profile-menu-divider"></div>
+                        <button class="profile-menu-item" id="menuChangeServer">
+                            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"/>
+                                <polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            <span>Сменить сервер</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Статус подключения -->
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-indicator" id="statusIndicator"></span>
+                    <span class="status-text" id="statusText">Не в сети</span>
+                </div>
+            </div>
+            
+            <!-- Список контактов -->
             <div class="peers-list" id="peersList">
                 <!-- Контакты будут загружены сюда -->
             </div>
@@ -21,71 +79,35 @@
         <main class="chat">
             <!-- Верхняя панель -->
             <header class="chat-header">
-                <!-- Левая часть: Профиль и статус -->
+                <!-- Левая часть: Название чата -->
                 <div class="header-left">
-                    <!-- Профиль с контекстным меню -->
-                    <div class="profile-menu-container" id="profileMenuContainer">
-                        <button class="profile-avatar-btn" id="profileAvatarBtn" title="Профиль">
-                            <span class="profile-avatar" id="userAvatar">👤</span>
+                    <div class="chat-title" id="chatTitle">
+                        <span class="chat-title-text">Выберите чат</span>
+                    </div>
+                </div>
+                
+                <!-- Правая часть: Кнопка меню чата -->
+                <div class="header-right">
+                    <div class="chat-menu-container" id="chatMenuContainer">
+                        <button class="chat-menu-btn" id="chatMenuBtn" title="Меню чата">
+                            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="1"/>
+                                <circle cx="12" cy="5" r="1"/>
+                                <circle cx="12" cy="19" r="1"/>
+                            </svg>
                         </button>
-
-                        <!-- Контекстное меню -->
-                        <div class="profile-context-menu" id="profileContextMenu">
-                            <div class="profile-menu-header">
-                                <span class="profile-menu-avatar" id="profileMenuAvatar">👤</span>
-                                <div class="profile-menu-info">
-                                    <span class="profile-menu-name" id="profileMenuName">Не подключен</span>
-                                </div>
-                            </div>
-                            <div class="profile-menu-divider"></div>
-                            <button class="profile-menu-item" id="menuProfile">
-                                <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2">
-                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                                    <circle cx="12" cy="7" r="4" />
+                        
+                        <!-- Контекстное меню чата -->
+                        <div class="chat-context-menu" id="chatContextMenu">
+                            <button class="profile-menu-item" id="menuDeleteChat">
+                                <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                                 </svg>
-                                <span>Профиль</span>
-                            </button>
-                            <button class="profile-menu-item" id="menuSettings">
-                                <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2">
-                                    <circle cx="12" cy="12" r="3" />
-                                    <path
-                                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                                </svg>
-                                <span>Настройки</span>
-                            </button>
-                            <button class="profile-menu-item" id="menuChangeServer">
-                                <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2">
-                                    <polyline points="23 4 23 10 17 10" />
-                                    <polyline points="1 20 1 14 7 14" />
-                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                                </svg>
-                                <span>Сменить сервер</span>
-                            </button>
-                            <div class="profile-menu-divider"></div>
-                            <button class="profile-menu-item" id="menuLogout">
-                                <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="2">
-                                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                                    <polyline points="16 17 21 12 16 7" />
-                                    <line x1="21" y1="12" x2="9" y2="12" />
-                                </svg>
-                                <span>Выйти</span>
+                                <span>Удалить чат</span>
                             </button>
                         </div>
                     </div>
-
-                    <!-- Статус подключения -->
-                    <div class="connection-status" id="connectionStatus">
-                        <span class="status-indicator" id="statusIndicator"></span>
-                        <span class="status-text" id="statusText">Не в сети</span>
-                    </div>
-                </div>
-
-                <!-- Правая часть шапки (пустая для гибкости) -->
-                <div class="header-right">
                 </div>
             </header>
 
@@ -109,7 +131,11 @@
             <!-- Панель ввода -->
             <div class="input-area" id="inputArea">
                 <button class="btn btn-attach" id="attachBtn" title="Прикрепить файл">📎</button>
-                <textarea id="messageInput" placeholder="Введите сообщение..." rows="1"></textarea>
+                <textarea
+                    id="messageInput"
+                    placeholder="Введите сообщение..."
+                    rows="1"
+                ></textarea>
                 <button class="btn btn-send" id="sendBtn" disabled>
                     <span>➤</span>
                 </button>
@@ -135,8 +161,8 @@
                 <input type="text" id="serverAddressInput" placeholder="192.168.1.100" maxlength="255">
             </div>
             <p class="hint">💡 Введите имя для подключения к серверу<br>
-                Сервер будет найден автоматически в локальной сети<br>
-                🔧 Если сервер не найден, укажите его IP адрес вручную</p>
+               Сервер будет найден автоматически в локальной сети<br>
+               🔧 Если сервер не найден, укажите его IP адрес вручную</p>
             <div id="serverStatus" style="margin-top: 12px; font-size: 13px;">
                 <span style="color: var(--text-secondary);">🔍 Поиск сервера...</span>
             </div>
@@ -177,11 +203,11 @@
             <div class="server-selector-tabs">
                 <div class="tab active">📡 Найденные серверы</div>
             </div>
-
+            
             <div class="server-list" id="serverList">
                 <!-- Список серверов будет здесь -->
             </div>
-
+            
             <div class="manual-server-input">
                 <label>Или введите адрес вручную:</label>
                 <div class="manual-input-row">
@@ -189,7 +215,7 @@
                     <button class="btn btn-primary" id="confirmManualServer">Подключиться</button>
                 </div>
             </div>
-
+            
             <p class="hint">
                 📢 mDNS — автоматически обнаруженные серверы<br>
                 📦 Кэш — ранее подключённые серверы<br>
@@ -197,26 +223,13 @@
             </p>
         </div>
         <div class="dialog-actions">
-            <button class="btn" id="refreshServersBtn">Обновить</button>
+            <button class="btn" id="refreshServersBtn">🔄 Обновить</button>
             <button class="btn" id="cancelServerSelector">Закрыть</button>
         </div>
     </dialog>
-
-    <!-- Tauri API -->
-    <script>
-        // Проверка доступности Tauri API
-        window.addEventListener('DOMContentLoaded', () => {
-            console.log('🔍 Tauri API check:', {
-                hasTauri: !!window.__TAURI__,
-                hasInvoke: !!window.__TAURI__?.invoke,
-                hasCore: !!window.__TAURI__?.core
-            });
-        });
-    </script>
 
     <!-- Клиент -->
     <script src="server-client.js"></script>
     <script src="app.js"></script>
 </body>
-
 </html>
