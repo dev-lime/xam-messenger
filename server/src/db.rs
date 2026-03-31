@@ -2,7 +2,6 @@
 
 use chrono::Utc;
 use rusqlite::{params, Connection};
-use serde_json;
 
 use crate::models::{ChatMessage, FileData, User};
 
@@ -191,9 +190,15 @@ pub fn update_user_avatar(
 
 /// Инициализация схемы базы данных
 pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
-    // Включаем WAL mode
-    conn.execute("PRAGMA journal_mode = WAL", [])?;
+    // Включаем WAL mode (может вернуть ошибку если уже включён)
+    let _wal_result: Result<String, rusqlite::Error> = conn.query_row("PRAGMA journal_mode = WAL", [], |row| {
+        row.get::<_, String>(0)
+    });
+    
+    // Увеличиваем размер кэша
     conn.execute("PRAGMA cache_size = -5000", [])?;
+    
+    // Включаем foreign keys
     conn.execute("PRAGMA foreign_keys = ON", [])?;
 
     // Таблица пользователей

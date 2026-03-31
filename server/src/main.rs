@@ -44,7 +44,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     db::init_database(&conn)?;
 
     info!("✅ База данных: {}", db_path.display());
-    info!("✅ WAL mode включён");
 
     let db = Arc::new(Mutex::new(conn));
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);

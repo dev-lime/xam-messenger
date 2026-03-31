@@ -5,8 +5,8 @@
 	"identifier": "com.xam.messenger",
 	"build": {
 		"frontendDist": "../src",
-		"devUrl": "http://localhost:1420",
-		"beforeDevCommand": "",
+		"devUrl": "http://localhost:1420/",
+		"beforeDevCommand": "npm run dev:server",
 		"beforeBuildCommand": ""
 	},
 	"app": {
