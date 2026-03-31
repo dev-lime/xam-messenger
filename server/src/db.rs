@@ -98,7 +98,7 @@ pub fn get_messages_with_pagination(
 
     // Если есть ещё, убираем лишнее сообщение (оно нужно только для проверки has_more)
     let next_before_id = if has_more {
-        messages.pop().map(|m| m.id);
+        messages.pop().map(|m| m.id)
     } else {
         None
     };
