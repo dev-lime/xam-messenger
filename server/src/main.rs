@@ -17,7 +17,8 @@ mod websocket;
 
 use actix_cors::Cors;
 use actix_web::{middleware, web, App, HttpServer};
-use log::info;
+use log::{info, warn};
+use mdns_sd::{ServiceDaemon, ServiceInfo};
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -74,6 +75,45 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         info!("💡 Используйте эти адреса для подключения клиентов");
     }
 
+    // Регистрация mDNS сервиса
+    let mdns_daemon = ServiceDaemon::new();
+    let mut mdns_daemon_opt: Option<ServiceDaemon> = None;
+
+    if let Ok(daemon) = mdns_daemon {
+        // Используем первый доступный IP или localhost как fallback
+        let service_ip = local_ips.first().map(|s| s.as_str()).unwrap_or("127.0.0.1");
+        let instance_name = format!("XAM Messenger._xam-messenger._tcp.local.");
+
+        // Создаём TXT записи в правильном формате
+        let mut txt_props = HashMap::new();
+        txt_props.insert("version".to_string(), "1.0.0".to_string());
+        txt_props.insert("protocol".to_string(), "ws".to_string());
+
+        match ServiceInfo::new(
+            "_xam-messenger._tcp.local.",
+            "XAM Messenger",
+            instance_name.as_str(),
+            service_ip,
+            8080,
+            Some(txt_props),
+        ) {
+            Ok(info) => match daemon.register(info) {
+                Ok(_) => {
+                    info!("📢 Зарегистрирован в mDNS как _xam-messenger._tcp.local");
+                    mdns_daemon_opt = Some(daemon);
+                }
+                Err(e) => {
+                    warn!("⚠️ Не удалось зарегистрировать mDNS сервис: {}", e);
+                }
+            },
+            Err(e) => {
+                warn!("⚠️ Не удалось создать ServiceInfo: {}", e);
+            }
+        }
+    } else {
+        warn!("⚠️ mDNS не доступен, будет использоваться только IP-сканирование");
+    }
+
     let db = Arc::new(Mutex::new(conn));
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
     let online_users = Arc::new(Mutex::new(HashMap::new()));
@@ -85,7 +125,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     info!("🚀 XAM Server на 0.0.0.0:8080");
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
             .allow_any_method()
@@ -111,7 +151,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     })
     .bind("0.0.0.0:8080")?
     .run()
-    .await?;
+    .await;
+
+    // Graceful shutdown: отмена регистрации mDNS
+    if let Some(daemon) = mdns_daemon_opt {
+        let _ = daemon.shutdown();
+        info!("📢 mDNS сервис остановлен");
+    }
+
+    server?;
 
     Ok(())
 }

@@ -64,6 +64,13 @@ const elements = {
 	settingsAvatarInput: document.getElementById('settingsAvatarInput'),
 	loadMoreBtn: document.getElementById('loadMoreBtn'),
 	loadMoreContainer: document.getElementById('loadMoreContainer'),
+	changeServerBtn: document.getElementById('changeServerBtn'),
+	serverSelectorDialog: document.getElementById('serverSelectorDialog'),
+	serverList: document.getElementById('serverList'),
+	manualServerInput: document.getElementById('manualServerInput'),
+	confirmManualServer: document.getElementById('confirmManualServer'),
+	cancelServerSelector: document.getElementById('cancelServerSelector'),
+	refreshServersBtn: document.getElementById('refreshServersBtn'),
 };
 
 // ============================================================================
@@ -84,6 +91,8 @@ const state = {
 	isLoadingMessages: false,
 	lastRequestedBeforeId: null, // Для защиты от бесконечного цикла
 	currentPeerBeforeId: null, // ID для пагинации текущего чата
+	discoveredServers: [], // Найденные серверы
+	isDiscovering: false, // Процесс обнаружения
 };
 
 let attachedFiles = [];
@@ -250,6 +259,283 @@ async function init() {
 		elements.connectDialog.showModal();
 		elements.userNameInput.focus();
 	}, 300);
+}
+
+// ============================================================================
+// Обнаружение и выбор сервера
+// ============================================================================
+
+/**
+ * Обнаружение серверов и авто-подключение
+ * @returns {Promise<boolean>} true если успешно подключено
+ */
+async function discoverAndConnect() {
+	if (state.isDiscovering) return false;
+
+	state.isDiscovering = true;
+	updateServerStatus('🔍 Поиск серверов...', 'warning');
+
+	try {
+		// Запускаем обнаружение
+		const servers = await serverClient.discoverAllServers();
+		state.discoveredServers = servers;
+
+		if (servers.length === 0) {
+			updateServerStatus('❌ Серверы не найдены', 'error');
+			state.isDiscovering = false;
+			return false;
+		}
+
+		// Показываем кнопку смены сервера после подключения
+		if (elements.changeServerBtn) {
+			elements.changeServerBtn.style.display = 'block';
+		}
+
+		// Подключаемся к первому (приоритетному) серверу
+		const selectedServer = servers[0];
+		await serverClient.connectToServer(selectedServer.wsUrl);
+
+		updateServerStatus(`✅ Подключено к ${selectedServer.ip}`, 'success');
+		state.isDiscovering = false;
+		
+		// Проверяем что подключение успешно
+		if (!serverClient.httpUrl) {
+			console.error('❌ httpUrl не установлен после подключения');
+			return false;
+		}
+		
+		return true;
+
+	} catch (error) {
+		console.error('❌ Ошибка обнаружения серверов:', error);
+		updateServerStatus('❌ Ошибка подключения', 'error');
+		state.isDiscovering = false;
+		return false;
+	}
+}
+
+/**
+ * Обновление статуса подключения к серверу
+ */
+function updateServerStatus(message, type = 'info') {
+	if (!elements.serverStatus) return;
+	
+	const colors = {
+		info: 'var(--text-secondary)',
+		success: 'var(--success)',
+		warning: 'var(--warning)',
+		error: 'var(--error)',
+	};
+	
+	elements.serverStatus.innerHTML = `<span style="color: ${colors[type]};">${message}</span>`;
+}
+
+/**
+ * Открытие диалога выбора сервера
+ */
+async function openServerSelector() {
+	if (!elements.serverSelectorDialog) return;
+	
+	// Очищаем список
+	if (elements.serverList) {
+		elements.serverList.innerHTML = '<div style="padding: 20px; text-align: center;">🔍 Поиск серверов...</div>';
+	}
+	
+	elements.serverSelectorDialog.showModal();
+	
+	// Запускаем обнаружение
+	await refreshServerList();
+}
+
+/**
+ * Обновление списка серверов в диалоге
+ */
+async function refreshServerList() {
+	if (!elements.serverList) return;
+	
+	state.isDiscovering = true;
+	renderServerList([]);
+	
+	try {
+		const servers = await serverClient.discoverAllServers();
+		state.discoveredServers = servers;
+		
+		if (servers.length === 0) {
+			renderServerList([]);
+			return;
+		}
+		
+		// Проверяем доступность каждого сервера
+		const serversWithStatus = await Promise.all(
+			servers.map(async (s) => {
+				const isOnline = await serverClient.checkServerAvailability(s.httpUrl);
+				return { ...s, online: isOnline };
+			})
+		);
+		
+		renderServerList(serversWithStatus);
+	} catch (error) {
+		console.error('❌ Ошибка обновления списка серверов:', error);
+		elements.serverList.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--error);">❌ Ошибка поиска серверов</div>';
+	}
+	
+	state.isDiscovering = false;
+}
+
+/**
+ * Рендеринг списка серверов
+ */
+function renderServerList(servers) {
+	if (!elements.serverList) return;
+	
+	if (servers.length === 0) {
+		elements.serverList.innerHTML = `
+			<div style="padding: 20px; text-align: center; color: var(--text-tertiary);">
+				<div style="font-size: 18px; margin-bottom: 10px;">📡</div>
+				<div>Серверы не найдены</div>
+				<div style="font-size: 12px; margin-top: 10px;">
+					Убедитесь, что сервер запущен и доступен в локальной сети
+				</div>
+			</div>
+		`;
+		return;
+	}
+	
+	const sourceIcons = {
+		mdns: '📢',
+		cache: '📦',
+		scan: '🔍',
+		manual: '✏️',
+	};
+	
+	elements.serverList.innerHTML = servers.map((s) => {
+		const statusClass = s.online ? 'online' : 'offline';
+		const statusText = s.online ? 'в сети' : 'офлайн';
+		const sourceIcon = sourceIcons[s.source] || '📡';
+		const hostname = s.hostname ? `<br><small style="color: var(--text-tertiary);">${s.hostname}</small>` : '';
+		
+		return `
+			<div class="server-item ${statusClass}" data-ws-url="${s.wsUrl}">
+				<div class="server-status-indicator ${statusClass}"></div>
+				<div class="server-info">
+					<div class="server-address">${s.ip}:${s.port}</div>
+					<div class="server-source">${sourceIcon} ${getSourceName(s.source)} ${hostname}</div>
+				</div>
+				<div class="server-status-text ${statusClass}">${statusText}</div>
+				<button class="server-connect-btn" onclick="connectToSelectedServer('${s.wsUrl}')">
+					Подключиться
+				</button>
+			</div>
+		`;
+	}).join('');
+}
+
+/**
+ * Получение названия источника сервера
+ */
+function getSourceName(source) {
+	const names = {
+		mdns: 'mDNS',
+		cache: 'кэш',
+		scan: 'сканирование',
+		manual: 'вручную',
+	};
+	return names[source] || source;
+}
+
+/**
+ * Подключение к выбранному серверу
+ */
+window.connectToSelectedServer = async (wsUrl) => {
+	if (!wsUrl) return;
+	
+	try {
+		// Закрываем диалог
+		if (elements.serverSelectorDialog) {
+			elements.serverSelectorDialog.close();
+		}
+		
+		// Если уже подключены, отключаемся
+		if (serverClient.isConnected()) {
+			serverClient.disconnect();
+		}
+		
+		// Подключаемся
+		await serverClient.connectToServer(wsUrl);
+		
+		// Регистрируем пользователя если имя введено
+		const name = elements.userNameInput?.value.trim() || userSettings?.name;
+		const avatar = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
+		
+		if (name) {
+			const user = await serverClient.register(name, avatar);
+			state.user = user;
+			state.connected = true;
+			
+			updateUserProfile(user.name, 'В сети');
+			updateStatusDisplay(true, 'В сети');
+			
+			await loadPeers();
+			setTimeout(renderPeers, 500);
+			
+			// Закрываем диалог подключения
+			if (elements.connectDialog) {
+				elements.connectDialog.close();
+			}
+		}
+		
+		// Показываем кнопку смены сервера
+		if (elements.changeServerBtn) {
+			elements.changeServerBtn.style.display = 'block';
+		}
+		
+	} catch (error) {
+		console.error('❌ Ошибка подключения к серверу:', error);
+		alert(`Не удалось подключиться: ${error.message}`);
+	}
+};
+
+/**
+ * Подключение к серверу по ручному адресу
+ */
+async function connectToManualServer() {
+	const address = elements.manualServerInput?.value.trim();
+	
+	if (!address) {
+		alert('Введите адрес сервера');
+		return;
+	}
+	
+	try {
+		// Формируем WebSocket URL
+		let wsUrl = address;
+		if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('http://')) {
+			wsUrl = `ws://${address}`;
+		}
+		if (!wsUrl.includes('/ws')) {
+			// Упрощаем: просто добавляем порт и путь
+			const parts = address.split(':');
+			if (parts.length === 1) {
+				wsUrl = `ws://${parts[0]}:8080/ws`;
+			} else {
+				wsUrl = `ws://${parts[0]}:${parts[1]}/ws`;
+			}
+		}
+		
+		await connectToSelectedServer(wsUrl);
+		
+		// Кэшируем как ручной сервер
+		const parts = address.split(':');
+		const ip = parts[0];
+		const port = parseInt(parts[1]) || 8080;
+		if (window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke) {
+			invokeTauri('cache_server', { ip, port, source: 'manual' }).catch(console.warn);
+		}
+		
+	} catch (error) {
+		console.error('❌ Ошибка подключения:', error);
+		alert(`Не удалось подключиться: ${error.message}`);
+	}
 }
 
 // ============================================================================
@@ -576,14 +862,17 @@ async function connectToServer() {
 
 		// Если указан адрес сервера, подключаемся напрямую
 		if (serverAddress) {
-			const wsUrl = serverAddress.startsWith('ws://') 
-				? `${serverAddress}/ws` 
+			const wsUrl = serverAddress.startsWith('ws://')
+				? `${serverAddress}/ws`
 				: `ws://${serverAddress}:8080/ws`;
 			console.log('🔌 Подключение к указанному серверу:', wsUrl);
 			await serverClient.connect(wsUrl);
 		} else {
-			// Автоматическое обнаружение
-			await serverClient.connect();
+			// Автоматическое обнаружение (mDNS → кэш → сканирование)
+			const connected = await discoverAndConnect();
+			if (!connected) {
+				throw new Error('Не удалось подключиться к серверу');
+			}
 		}
 
 		const user = await serverClient.register(name, avatar);
@@ -1356,6 +1645,31 @@ function setupEventListeners() {
 		elements.settingsDialog.close();
 	});
 	elements.saveSettings.addEventListener('click', saveSettings);
+	
+	// Обработчики для выбора сервера
+	if (elements.changeServerBtn) {
+		elements.changeServerBtn.addEventListener('click', openServerSelector);
+	}
+	
+	if (elements.refreshServersBtn) {
+		elements.refreshServersBtn.addEventListener('click', refreshServerList);
+	}
+	
+	if (elements.confirmManualServer) {
+		elements.confirmManualServer.addEventListener('click', connectToManualServer);
+	}
+	
+	if (elements.cancelServerSelector) {
+		elements.cancelServerSelector.addEventListener('click', () => {
+			elements.serverSelectorDialog.close();
+		});
+	}
+	
+	if (elements.manualServerInput) {
+		elements.manualServerInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') connectToManualServer();
+		});
+	}
 }
 
 /**

@@ -1008,3 +1008,174 @@ body {
 		break-inside: avoid;
 	}
 }
+
+/* ============================================================================
+   Server Selector Dialog (Диалог выбора сервера)
+   ============================================================================ */
+
+.dialog-server-selector {
+	max-width: 550px;
+}
+
+.server-selector-tabs {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 16px;
+}
+
+.server-selector-tabs .tab {
+	padding: 8px 16px;
+	background: var(--bg-secondary);
+	border-radius: var(--border-radius-sm);
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--text-secondary);
+}
+
+.server-selector-tabs .tab.active {
+	background: var(--accent-light);
+	color: var(--accent);
+}
+
+.server-list {
+	max-height: 300px;
+	overflow-y: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-sm);
+	margin-bottom: 16px;
+}
+
+.server-item {
+	display: flex;
+	align-items: center;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--border);
+	gap: 12px;
+	transition: background var(--transition-fast);
+}
+
+.server-item:last-child {
+	border-bottom: none;
+}
+
+.server-item:hover {
+	background: var(--bg-secondary);
+}
+
+.server-item.online .server-status-indicator {
+	background: var(--success);
+}
+
+.server-item.offline .server-status-indicator {
+	background: var(--text-tertiary);
+}
+
+.server-status-indicator {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.server-info {
+	flex: 1;
+	min-width: 0;
+}
+
+.server-address {
+	font-weight: 600;
+	font-size: 14px;
+	color: var(--text-primary);
+}
+
+.server-source {
+	font-size: 12px;
+	color: var(--text-tertiary);
+	margin-top: 2px;
+}
+
+.server-status-text {
+	font-size: 12px;
+	font-weight: 500;
+	flex-shrink: 0;
+}
+
+.server-status-text.online {
+	color: var(--success);
+}
+
+.server-status-text.offline {
+	color: var(--text-tertiary);
+}
+
+.server-connect-btn {
+	padding: 6px 12px;
+	background: var(--accent);
+	color: var(--text-inverse);
+	border: none;
+	border-radius: var(--border-radius-sm);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: background var(--transition-fast);
+	flex-shrink: 0;
+}
+
+.server-connect-btn:hover {
+	background: var(--accent-hover);
+}
+
+.manual-server-input {
+	margin-top: 16px;
+	padding-top: 16px;
+	border-top: 1px solid var(--border);
+}
+
+.manual-server-input label {
+	display: block;
+	margin-bottom: 8px;
+	font-weight: 500;
+	font-size: 14px;
+	color: var(--text-primary);
+}
+
+.manual-input-row {
+	display: flex;
+	gap: 10px;
+}
+
+.manual-input-row input {
+	flex: 1;
+	padding: 10px 14px;
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-sm);
+	font-size: 14px;
+	font-family: inherit;
+	transition: border-color var(--transition-normal);
+}
+
+.manual-input-row input:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+
+/* Кнопка смены сервера в шапке */
+.btn-change-server {
+	padding: 6px 12px;
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-sm);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all var(--transition-normal);
+}
+
+.btn-change-server:hover {
+	background: var(--bg-tertiary);
+}
+
+.btn-change-server:active {
+	transform: scale(0.98);
+}
