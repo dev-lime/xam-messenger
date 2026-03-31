@@ -534,6 +534,18 @@ Content-Disposition: attachment; filename="file.pdf"
 
 2. **Проверьте firewall** (порт 8080 должен быть открыт)
 
+   **Windows:** Откройте порт 8080 в брандмауэре (от имени администратора):
+   ```powershell
+   New-NetFirewallRule -DisplayName "XAM Messenger Server" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
+   ```
+
+   **macOS:** Системные настройки → Защита и безопасность → Фаервол → Добавьте `xam-server`
+
+   **Linux:**
+   ```bash
+   sudo ufw allow 8080/tcp
+   ```
+
 3. **Узнайте IP сервера:**
    ```bash
    # macOS
@@ -541,6 +553,9 @@ Content-Disposition: attachment; filename="file.pdf"
 
    # Linux
    hostname -I | awk '{print $1}'
+
+   # Windows
+   ipconfig | findstr IPv4
    ```
 
 ### mDNS (будущая реализация)
