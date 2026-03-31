@@ -641,11 +641,11 @@ CREATE TABLE files (
 ### Запуск всех тестов
 
 ```bash
-# Тесты сервера (Rust)
+# Тесты сервера (Rust) — используют in-memory БД
 cd server
 cargo test
 
-# Тесты клиента (JavaScript)
+# Тесты клиента (JavaScript) — изолированы от реальной БД
 cd ..
 npm install
 npm test
@@ -679,11 +679,49 @@ npm run test:all
 npm install --save-dev ws
 ```
 
+### Очистка тестовых данных
+
+После интеграционных тестов могут остаться данные в базе данных сервера.
+
+**Автоматическая очистка:**
+```bash
+npm run cleanup:test-db
+```
+
+**Ручная очистка:**
+
+macOS:
+```bash
+rm -rf ~/Library/Application\ Support/xam-messenger/xam.db
+rm -rf ~/Library/Application\ Support/xam-messenger/files
+```
+
+Windows (PowerShell):
+```powershell
+Remove-Item "$env:APPDATA\xam-messenger\xam.db" -Force
+Remove-Item "$env:APPDATA\xam-messenger\files" -Recurse -Force
+```
+
+Linux:
+```bash
+rm -rf ~/.config/xam-messenger/xam.db
+rm -rf ~/.config/xam-messenger/files
+```
+
 ### Покрытие тестами
 
-- **Сервер (Rust):** 44 теста
-- **Клиент (JavaScript):** 69 тестов
+- **Сервер (Rust):** 10 тестов (все используют in-memory БД)
+- **Клиент (JavaScript):** 102 теста (юнит-тесты)
+- **Интеграционные:** 40+ тестов (требуют запущенного сервера)
 - **Покрытие:** ~80% бизнес-логики
+
+### Изоляция тестов
+
+| Тип тестов | База данных | Изоляция |
+|------------|-------------|----------|
+| `cargo test` | in-memory (`:memory:`) | ✅ Полная |
+| `npm test` | Не используется | ✅ Полная |
+| `npm run test:integration` | Реальная БД сервера | ⚠️ Требуется очистка |
 
 ---
 
