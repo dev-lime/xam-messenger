@@ -82,7 +82,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if let Ok(daemon) = mdns_daemon {
         // Используем первый доступный IP или localhost как fallback
         let service_ip = local_ips.first().map(|s| s.as_str()).unwrap_or("127.0.0.1");
-        let instance_name = format!("XAM Messenger._xam-messenger._tcp.local.");
+        let instance_name = "XAM Messenger._xam-messenger._tcp.local.".to_string();
 
         // Создаём TXT записи в правильном формате
         let mut txt_props = HashMap::new();

@@ -39,9 +39,21 @@ const STATUS_ICONS = {
 
 const elements = {
 	status: document.getElementById('status'),
+	statusIndicator: document.getElementById('statusIndicator'),
+	statusText: document.getElementById('statusText'),
+	connectionStatus: document.getElementById('connectionStatus'),
 	userName: document.getElementById('userName'),
 	userAddress: document.getElementById('userAddress'),
 	userAvatar: document.getElementById('userAvatar'),
+	profileMenuContainer: document.getElementById('profileMenuContainer'),
+	profileAvatarBtn: document.getElementById('profileAvatarBtn'),
+	profileContextMenu: document.getElementById('profileContextMenu'),
+	profileMenuAvatar: document.getElementById('profileMenuAvatar'),
+	profileMenuName: document.getElementById('profileMenuName'),
+	menuProfile: document.getElementById('menuProfile'),
+	menuSettings: document.getElementById('menuSettings'),
+	menuLogout: document.getElementById('menuLogout'),
+	menuChangeServer: document.getElementById('menuChangeServer'),
 	userProfileHeader: document.getElementById('userProfileHeader'),
 	sendBtn: document.getElementById('sendBtn'),
 	attachBtn: document.getElementById('attachBtn'),
@@ -64,7 +76,6 @@ const elements = {
 	settingsAvatarInput: document.getElementById('settingsAvatarInput'),
 	loadMoreBtn: document.getElementById('loadMoreBtn'),
 	loadMoreContainer: document.getElementById('loadMoreContainer'),
-	changeServerBtn: document.getElementById('changeServerBtn'),
 	serverSelectorDialog: document.getElementById('serverSelectorDialog'),
 	serverList: document.getElementById('serverList'),
 	manualServerInput: document.getElementById('manualServerInput'),
@@ -253,6 +264,14 @@ async function init() {
 
 	loadUserSettings();
 	setupEventListeners();
+	
+	// Инициализация аватарки
+	if (elements.userAvatar) {
+		elements.userAvatar.textContent = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
+	}
+	if (elements.profileMenuAvatar) {
+		elements.profileMenuAvatar.textContent = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
+	}
 
 	// Показываем диалог подключения
 	setTimeout(() => {
@@ -284,11 +303,6 @@ async function discoverAndConnect() {
 			updateServerStatus('❌ Серверы не найдены', 'error');
 			state.isDiscovering = false;
 			return false;
-		}
-
-		// Показываем кнопку смены сервера после подключения
-		if (elements.changeServerBtn) {
-			elements.changeServerBtn.style.display = 'block';
 		}
 
 		// Подключаемся к первому (приоритетному) серверу
@@ -483,12 +497,7 @@ window.connectToSelectedServer = async (wsUrl) => {
 				elements.connectDialog.close();
 			}
 		}
-		
-		// Показываем кнопку смены сервера
-		if (elements.changeServerBtn) {
-			elements.changeServerBtn.style.display = 'block';
-		}
-		
+
 	} catch (error) {
 		console.error('❌ Ошибка подключения к серверу:', error);
 		alert(`Не удалось подключиться: ${error.message}`);
@@ -535,6 +544,58 @@ async function connectToManualServer() {
 	} catch (error) {
 		console.error('❌ Ошибка подключения:', error);
 		alert(`Не удалось подключиться: ${error.message}`);
+	}
+}
+
+// ============================================================================
+// Управление профилем и меню
+// ============================================================================
+
+/**
+ * Открытие контекстного меню профиля
+ */
+function openProfileMenu() {
+	if (elements.profileContextMenu) {
+		elements.profileContextMenu.classList.add('open');
+	}
+	if (elements.profileMenuContainer) {
+		elements.profileMenuContainer.classList.add('open');
+	}
+}
+
+/**
+ * Закрытие контекстного меню профиля
+ */
+function closeProfileMenu() {
+	if (elements.profileContextMenu) {
+		elements.profileContextMenu.classList.remove('open');
+	}
+	if (elements.profileMenuContainer) {
+		elements.profileMenuContainer.classList.remove('open');
+	}
+}
+
+/**
+ * Обновление имени в меню профиля
+ */
+function updateProfileMenuName(name, avatar) {
+	if (elements.profileMenuName) {
+		elements.profileMenuName.textContent = name || 'Не подключен';
+	}
+	if (elements.profileMenuAvatar) {
+		elements.profileMenuAvatar.textContent = avatar || '👤';
+	}
+}
+
+/**
+ * Обновление статуса подключения (новый UI)
+ */
+function updateConnectionStatus(connected, statusText) {
+	if (elements.statusIndicator) {
+		elements.statusIndicator.className = `status-indicator ${connected ? 'online' : 'offline'}`;
+	}
+	if (elements.statusText) {
+		elements.statusText.textContent = statusText || (connected ? 'В сети' : 'Не в сети');
 	}
 }
 
@@ -1443,13 +1504,20 @@ function createFilesHtml(files) {
  * Обновление статуса подключения
  */
 function updateStatusDisplay(connected, statusText) {
-	if (connected) {
-		elements.status.textContent = `🟢 ${statusText}`;
-		elements.status.style.color = 'var(--success)';
-	} else {
-		elements.status.textContent = '⚫ Не в сети';
-		elements.status.style.color = 'var(--text-tertiary)';
+	// Новый UI
+	updateConnectionStatus(connected, statusText);
+	
+	// Старый UI (для обратной совместимости)
+	if (elements.status) {
+		if (connected) {
+			elements.status.textContent = `🟢 ${statusText}`;
+			elements.status.style.color = 'var(--success)';
+		} else {
+			elements.status.textContent = '⚫ Не в сети';
+			elements.status.style.color = 'var(--text-tertiary)';
+		}
 	}
+	
 	updateSendButton();
 }
 
@@ -1458,9 +1526,23 @@ function updateStatusDisplay(connected, statusText) {
  */
 function updateUserProfile(name, status) {
 	const avatar = state.user?.avatar || userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
-	elements.userName.textContent = name || 'Не подключен';
-	elements.userAddress.textContent = status || '--';
-	elements.userAvatar.textContent = avatar;
+	
+	// Новый UI
+	updateProfileMenuName(name, avatar);
+	if (elements.userAvatar) {
+		elements.userAvatar.textContent = avatar;
+	}
+	if (elements.profileMenuAvatar) {
+		elements.profileMenuAvatar.textContent = avatar;
+	}
+	
+	// Старый UI (для обратной совместимости)
+	if (elements.userName) {
+		elements.userName.textContent = name || 'Не подключен';
+	}
+	if (elements.userAddress) {
+		elements.userAddress.textContent = status || '--';
+	}
 }
 
 /**
@@ -1590,10 +1672,21 @@ function updateSendButton() {
  * Настройка событий
  */
 function setupEventListeners() {
-	elements.status.addEventListener('click', () => {
-		elements.connectDialog.showModal();
-		elements.userNameInput.focus();
-	});
+	// Новый UI: клик по статусу открывает диалог подключения
+	if (elements.connectionStatus) {
+		elements.connectionStatus.addEventListener('click', () => {
+			elements.connectDialog.showModal();
+			elements.userNameInput.focus();
+		});
+	}
+	
+	// Старый UI (для обратной совместимости)
+	if (elements.status) {
+		elements.status.addEventListener('click', () => {
+			elements.connectDialog.showModal();
+			elements.userNameInput.focus();
+		});
+	}
 
 	elements.confirmConnect.addEventListener('click', connectToServer);
 
@@ -1640,17 +1733,65 @@ function setupEventListeners() {
 		elements.loadMoreBtn.addEventListener('click', loadMoreMessages);
 	}
 
-	elements.userProfileHeader.addEventListener('click', openSettingsDialog);
+	// Новый UI: профиль и меню
+	if (elements.profileAvatarBtn) {
+		elements.profileAvatarBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			openProfileMenu();
+		});
+	}
+	
+	// Закрытие меню при клике вне
+	document.addEventListener('click', (e) => {
+		if (elements.profileContextMenu && elements.profileMenuContainer) {
+			if (!elements.profileMenuContainer.contains(e.target)) {
+				closeProfileMenu();
+			}
+		}
+	});
+	
+	// Пункты меню профиля
+	if (elements.menuProfile) {
+		elements.menuProfile.addEventListener('click', () => {
+			openSettingsDialog();
+			closeProfileMenu();
+		});
+	}
+	
+	if (elements.menuSettings) {
+		elements.menuSettings.addEventListener('click', () => {
+			// TODO: Открыть настройки приложения (пока не реализовано)
+			console.log('Настройки приложения...');
+			closeProfileMenu();
+		});
+	}
+	
+	if (elements.menuLogout) {
+		elements.menuLogout.addEventListener('click', () => {
+			// TODO: Реализовать выход
+			console.log('Выход...');
+			closeProfileMenu();
+		});
+	}
+	
+	if (elements.menuChangeServer) {
+		elements.menuChangeServer.addEventListener('click', () => {
+			openServerSelector();
+			closeProfileMenu();
+		});
+	}
+
+	// Старый UI (для обратной совместимости)
+	if (elements.userProfileHeader) {
+		elements.userProfileHeader.addEventListener('click', openSettingsDialog);
+	}
+	
 	elements.cancelSettings.addEventListener('click', () => {
 		elements.settingsDialog.close();
 	});
 	elements.saveSettings.addEventListener('click', saveSettings);
-	
+
 	// Обработчики для выбора сервера
-	if (elements.changeServerBtn) {
-		elements.changeServerBtn.addEventListener('click', openServerSelector);
-	}
-	
 	if (elements.refreshServersBtn) {
 		elements.refreshServersBtn.addEventListener('click', refreshServerList);
 	}
