@@ -1,7 +1,7 @@
 //! Функции для работы с базой данных
 
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{ChatMessage, FileData, User};
 
@@ -174,6 +174,16 @@ pub fn save_file_metadata(
         params![id, name, path, size, "", "", Utc::now().timestamp()],
     )?;
     Ok(())
+}
+
+/// Получение пути к файлу по ID
+pub fn get_file_path(conn: &Connection, file_id: &str) -> Result<Option<String>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT path FROM files WHERE id = ?1",
+        params![file_id],
+        |row| row.get(0),
+    )
+    .optional()
 }
 
 /// Получение имени пользователя по ID

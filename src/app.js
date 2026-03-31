@@ -259,15 +259,42 @@ function handleNewMessage(msg) {
 
 	const isMine = msg.sender_id === state.user?.id;
 
-	// Проверяем дубликаты
+	// Проверяем дубликаты по реальному ID
 	const exists = state.messages.some((m) => m.id === msg.id);
-	if (exists) return;
+	if (exists) {
+		console.log('⚠️ Сообщение уже существует:', msg.id);
+		return;
+	}
 
 	// Если это наше сообщение, ищем локальное и заменяем
 	if (isMine) {
 		const localIndex = findLocalMessageIndex(msg);
 		if (localIndex !== -1) {
 			updateMessageWithReal(msg, localIndex);
+			return;
+		}
+		// Если локальное сообщение не найдено, но это наше — возможно оно уже добавлено
+		// Проверяем есть ли сообщение с таким же sender_id и timestamp (±1 сек)
+		const duplicateIndex = state.messages.findIndex(
+			(m) => m.sender_id === msg.sender_id && 
+				   m.files?.length === msg.files?.length &&
+				   Math.abs(m.timestamp - msg.timestamp) < 2
+		);
+		if (duplicateIndex !== -1) {
+			console.log('⚠️ Найден дубликат по timestamp, заменяем:', msg.id);
+			msg.delivery_status = state.messages[duplicateIndex].delivery_status;
+			state.messages[duplicateIndex] = msg;
+			
+			const filteredIndex = state.filteredMessages.findIndex(
+				(m) => m.sender_id === msg.sender_id && 
+					   m.files?.length === msg.files?.length &&
+					   Math.abs(m.timestamp - msg.timestamp) < 2
+			);
+			if (filteredIndex !== -1) {
+				state.filteredMessages[filteredIndex] = msg;
+			}
+			
+			renderMessages(!!state.currentPeer);
 			return;
 		}
 	}
@@ -1212,11 +1239,15 @@ window.openFile = async (filepath, filename) => {
 	}
 
 	try {
+		// Используем реальный URL сервера вместо localhost
 		const fileUrl = filepath.startsWith('http')
 			? filepath
-			: `http://localhost:8080/api/files/download?path=${encodeURIComponent(filepath)}`;
+			: `${serverClient.httpUrl}/files/download?path=${encodeURIComponent(filepath)}`;
 
 		const response = await fetch(fileUrl);
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+		}
 		const blob = await response.blob();
 		const url = window.URL.createObjectURL(blob);
 
@@ -1245,11 +1276,15 @@ window.downloadFile = async (filepath, filename) => {
 	}
 
 	try {
+		// Используем реальный URL сервера вместо localhost
 		const fileUrl = filepath.startsWith('http')
 			? filepath
-			: `http://localhost:8080/api/files/download?path=${encodeURIComponent(filepath)}`;
+			: `${serverClient.httpUrl}/files/download?path=${encodeURIComponent(filepath)}`;
 
 		const response = await fetch(fileUrl);
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+		}
 		const blob = await response.blob();
 		const url = window.URL.createObjectURL(blob);
 		const a = document.createElement('a');
