@@ -10,7 +10,9 @@
 const WS_CONFIG = {
 	RECONNECT_DELAY: 2000,
 	MAX_RECONNECT_ATTEMPTS: 10,
-	CONNECTION_TIMEOUT: 3000, // Увеличили до 3 секунд
+	CONNECTION_TIMEOUT: 3000,
+	MDNS_TIMEOUT: 3000,
+	SCAN_TIMEOUT: 2000,
 };
 
 const SERVER_CANDIDATES = [
@@ -44,9 +46,34 @@ const MESSAGE_TYPES = {
 	UPDATE_PROFILE: 'update_profile',
 };
 
+const CACHE_CONFIG = {
+	KEY: 'xam_server_cache',
+	TTL: 24 * 60 * 60 * 1000, // 24 часа в миллисекундах
+};
+
 // ============================================================================
 // Вспомогательные функции
 // ============================================================================
+
+/**
+ * Вызов Tauri команды (совместимость с v1 и v2)
+ * @param {string} cmd - Имя команды
+ * @param {Object} [args] - Аргументы
+ * @returns {Promise<any>}
+ */
+async function invokeTauri(cmd, args = {}) {
+	if (window.__TAURI__?.core?.invoke) {
+		// Tauri v2
+		return window.__TAURI__.core.invoke(cmd, args);
+	} else if (window.__TAURI__?.invoke) {
+		// Tauri v1
+		return window.__TAURI__.invoke(cmd, args);
+	}
+	throw new Error('Tauri API недоступен');
+}
+
+// Делаем функцию доступной глобально для app.js
+window.invokeTauri = invokeTauri;
 
 /**
  * Генерирует список серверов для сканирования локальной сети
@@ -72,6 +99,84 @@ function generateLocalNetworkServers() {
  */
 function wsToHttpUrl(wsUrl) {
 	return wsUrl.replace('ws://', 'http://').replace('/ws', '/api');
+}
+
+/**
+ * Извлекает IP из WebSocket URL
+ * @param {string} wsUrl - WebSocket URL
+ * @returns {string} IP адрес
+ */
+function extractIpFromWsUrl(wsUrl) {
+	const match = wsUrl.match(/ws:\/\/([^:]+):(\d+)/);
+	return match ? match[1] : '';
+}
+
+/**
+ * Сохраняет сервер в кэш localStorage
+ * @param {string} ip - IP адрес
+ * @param {number} port - Порт
+ * @param {string} source - Источник (mdns, scan, manual)
+ */
+function cacheServer(ip, port, source) {
+	try {
+		const cache = JSON.parse(localStorage.getItem(CACHE_CONFIG.KEY) || '[]');
+		const timestamp = Date.now();
+		
+		// Удаляем старую запись для этого IP
+		const filtered = cache.filter(s => s.ip !== ip);
+		
+		// Добавляем новую
+		filtered.push({ ip, port, lastSeen: timestamp, source });
+		
+		localStorage.setItem(CACHE_CONFIG.KEY, JSON.stringify(filtered));
+		
+		// Если в Tauri, вызываем нативную команду для кэширования
+		if (this.isTauri) {
+			invokeTauri('cache_server', { ip, port, source }).catch(console.warn);
+		}
+	} catch (e) {
+		console.warn('⚠️ Не удалось сохранить сервер в кэш:', e);
+	}
+}
+
+/**
+ * Получает кэшированные серверы из localStorage
+ * @returns {Array<{ip: string, port: number, lastSeen: number, source: string}>}
+ */
+function getCachedServers() {
+	try {
+		const cache = JSON.parse(localStorage.getItem(CACHE_CONFIG.KEY) || '[]');
+		const now = Date.now();
+		
+		// Фильтруем по TTL
+		return cache.filter(server => (now - server.lastSeen) < CACHE_CONFIG.TTL);
+	} catch (e) {
+		console.warn('⚠️ Не удалось прочитать кэш серверов:', e);
+		return [];
+	}
+}
+
+/**
+ * Проверяет доступность сервера через HTTP ping
+ * @param {string} httpUrl - HTTP API URL
+ * @param {number} timeout - Таймаут в мс
+ * @returns {Promise<boolean>}
+ */
+async function pingServer(httpUrl, timeout = 3000) {
+	try {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), timeout);
+		
+		const response = await fetch(`${httpUrl}/users`, {
+			method: 'GET',
+			signal: controller.signal,
+		});
+		
+		clearTimeout(timer);
+		return response.ok;
+	} catch (e) {
+		return false;
+	}
 }
 
 // ============================================================================
@@ -102,8 +207,156 @@ class ServerClient {
 		/** @type {string|null} */
 		this.httpUrl = null;
 
-		/** @type {string[]} */
-		this.serverCandidates = [...SERVER_CANDIDATES, ...generateLocalNetworkServers()];
+		/** @type {Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string, hostname?: string}>} */
+		this.discoveredServers = [];
+
+		/** @type {boolean} */
+		this.isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
+		
+		// Отладка
+		console.log('🔧 ServerClient init:', {
+			isTauri: this.isTauri,
+			hasTauri: !!window.__TAURI__,
+			hasCoreInvoke: !!window.__TAURI__?.core?.invoke,
+			hasDirectInvoke: !!window.__TAURI__?.invoke,
+			tauriKeys: window.__TAURI__ ? Object.keys(window.__TAURI__) : []
+		});
+	}
+
+	// ========================================================================
+	// Обнаружение серверов
+	// ========================================================================
+
+	/**
+	 * Поиск серверов через mDNS (только Tauri)
+	 * @returns {Promise<Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string, hostname?: string}>}
+	 */
+	async discoverViaMdns() {
+		if (!this.isTauri) {
+			console.log('ℹ️ mDNS недоступен в веб-версии');
+			return [];
+		}
+
+		try {
+			console.log('🔍 Поиск серверов через mDNS...');
+			const servers = await invokeTauri('search_mdns_servers');
+
+			console.log(`✅ Найдено ${servers.length} серверов через mDNS:`, servers);
+
+			// Кэшируем найденные серверы и преобразуем поля из snake_case в camelCase
+			const normalizedServers = servers.map(s => ({
+				ip: s.ip,
+				port: s.port,
+				hostname: s.hostname,
+				wsUrl: s.ws_url,
+				httpUrl: s.http_url,
+				source: s.source,
+				txtRecords: s.txt_records,
+			}));
+
+			normalizedServers.forEach(s => cacheServer(s.ip, s.port, 'mdns'));
+
+			return normalizedServers;
+		} catch (e) {
+			console.warn('⚠️ Ошибка mDNS поиска:', e);
+			return [];
+		}
+	}
+
+	/**
+	 * Поиск серверов в кэше
+	 * @returns {Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string}>}
+	 */
+	discoverViaCache() {
+		const cached = getCachedServers();
+		const servers = cached.map(s => ({
+			ip: s.ip,
+			port: s.port,
+			wsUrl: `ws://${s.ip}:${s.port}/ws`,
+			httpUrl: `http://${s.ip}:${s.port}/api`,
+			source: s.source,
+		}));
+		
+		console.log(`📦 Найдено ${servers.length} серверов в кэше`);
+		return servers;
+	}
+
+	/**
+	 * Поиск серверов через сканирование подсетей
+	 * @returns {Promise<Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string}>>}
+	 */
+	async discoverViaScan() {
+		console.log('🔍 Сканирование локальной сети...');
+		const candidates = generateLocalNetworkServers();
+		const found = [];
+
+		// Сканируем с ограничением по времени
+		const startTime = Date.now();
+		
+		for (const url of candidates) {
+			if (Date.now() - startTime > 15000) { // Максимум 15 секунд на сканирование
+				console.log('⏱️ Превышено время сканирования');
+				break;
+			}
+			
+			const httpUrl = wsToHttpUrl(url);
+			const isAlive = await pingServer(httpUrl, WS_CONFIG.SCAN_TIMEOUT);
+			
+			if (isAlive) {
+				const ip = extractIpFromWsUrl(url);
+				found.push({
+					ip,
+					port: 8080,
+					wsUrl: url,
+					httpUrl,
+					source: 'scan',
+				});
+				console.log('✅ Найден сервер:', url);
+			}
+		}
+
+		console.log(`✅ Сканирование завершено, найдено ${found.length} серверов`);
+		return found;
+	}
+
+	/**
+	 * Полное обнаружение серверов (mDNS → кэш → сканирование)
+	 * @returns {Promise<Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string, hostname?: string}>}
+	 */
+	async discoverAllServers() {
+		console.log('🔍 Запуск обнаружения серверов...');
+		this.discoveredServers = [];
+
+		// 1. mDNS (приоритет)
+		const mdnsServers = await this.discoverViaMdns();
+		this.discoveredServers.push(...mdnsServers);
+
+		// 2. Кэш (если mDNS ничего не нашёл)
+		if (mdnsServers.length === 0) {
+			const cachedServers = this.discoverViaCache();
+			this.discoveredServers.push(...cachedServers);
+		}
+
+		// 3. Сканирование (если ничего не найдено)
+		if (this.discoveredServers.length === 0) {
+			const scannedServers = await this.discoverViaScan();
+			this.discoveredServers.push(...scannedServers);
+		}
+
+		// Сортировка: mDNS > кэш > сканирование
+		const priority = { mdns: 0, cache: 1, scan: 2, manual: 3 };
+		this.discoveredServers.sort((a, b) => priority[a.source] - priority[b.source]);
+
+		console.log(`📊 Всего найдено серверов: ${this.discoveredServers.length}`);
+		return this.discoveredServers;
+	}
+
+	/**
+	 * Получение списка всех найденных серверов
+	 * @returns {Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string, hostname?: string}>}
+	 */
+	getAllDiscoveredServers() {
+		return this.discoveredServers;
 	}
 
 	// ========================================================================
@@ -111,22 +364,27 @@ class ServerClient {
 	// ========================================================================
 
 	/**
-	 * Автоматическое обнаружение сервера в локальной сети
+	 * Автоматическое обнаружение и подключение к серверу
 	 * @returns {Promise<string>} URL найденного сервера
 	 * @throws {Error} Если сервер не найден
 	 */
 	async discoverServer() {
-		console.log('🔍 Поиск сервера...');
+		const servers = await this.discoverAllServers();
+		
+		if (servers.length === 0) {
+			throw new Error('Сервер не найден. Убедитесь, что сервер запущен.');
+		}
 
-		for (const url of this.serverCandidates) {
-			const found = await this.tryConnect(url, WS_CONFIG.CONNECTION_TIMEOUT);
-			if (found) {
-				console.log('✅ Сервер найден:', url);
-				return url;
+		// Проверяем доступность первого сервера (приоритетного)
+		for (const server of servers) {
+			const isAlive = await pingServer(server.httpUrl, WS_CONFIG.CONNECTION_TIMEOUT);
+			if (isAlive) {
+				console.log('✅ Сервер найден:', server.wsUrl);
+				return server.wsUrl;
 			}
 		}
 
-		throw new Error('Сервер не найден. Убедитесь, что сервер запущен.');
+		throw new Error('Найденные серверы недоступны');
 	}
 
 	/**
@@ -167,6 +425,93 @@ class ServerClient {
 		this.serverUrl = url;
 		this.httpUrl = wsToHttpUrl(url);
 
+		console.log('🔧 connect():', {
+			serverUrl,
+			url,
+			httpUrl: this.httpUrl,
+			serverUrlSet: !!this.serverUrl
+		});
+
+		// Кэшируем подключенный сервер
+		const ip = extractIpFromWsUrl(url);
+		if (ip) {
+			cacheServer(ip, 8080, this.isTauri ? 'mdns' : 'manual');
+		}
+
+		console.log('🔌 Подключение к', url);
+
+		return new Promise((resolve, reject) => {
+			try {
+				this.ws = new WebSocket(url);
+
+				this.ws.onopen = () => {
+					console.log('✅ Подключено к серверу');
+					this.reconnectAttempts = 0;
+					resolve();
+				};
+
+				this.ws.onclose = (event) => {
+					console.log('🔌 Отключено от сервера:', event.code, event.reason);
+					this.attemptReconnect();
+				};
+
+				this.ws.onerror = (error) => {
+					console.error('❌ Ошибка WebSocket:', error);
+					reject(error);
+				};
+
+				this.ws.onmessage = (event) => {
+					try {
+						const data = JSON.parse(event.data);
+						this.handleMessage(data);
+					} catch (e) {
+						console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
+					}
+				};
+			} catch (error) {
+				reject(error);
+			}
+		});
+	}
+
+	/**
+	 * Подключение к конкретному серверу из списка
+	 * @param {string} wsUrl - WebSocket URL
+	 * @returns {Promise<void>}
+	 */
+	async connectToServer(wsUrl) {
+		// Отключаемся от текущего
+		this.disconnect();
+
+		// Сбрасываем счётчик попыток
+		this.reconnectAttempts = 0;
+
+		// Устанавливаем URL напрямую, без discoverServer()
+		this.serverUrl = wsUrl;
+		this.httpUrl = wsToHttpUrl(wsUrl);
+
+		console.log('🔧 connectToServer():', {
+			wsUrl,
+			httpUrl: this.httpUrl
+		});
+
+		// Кэшируем подключенный сервер
+		const ip = extractIpFromWsUrl(wsUrl);
+		if (ip) {
+			cacheServer(ip, 8080, this.isTauri ? 'mdns' : 'manual');
+		}
+
+		// Подключаемся
+		return this._connectWebSocket(wsUrl);
+	}
+
+	/**
+	 * Подключение к WebSocket (внутренняя функция)
+	 * @private
+	 * @param {string} url - WebSocket URL
+	 * @returns {Promise<void>}
+	 */
+	_connectWebSocket(url) {
 		console.log('🔌 Подключение к', url);
 
 		return new Promise((resolve, reject) => {
@@ -466,6 +811,15 @@ class ServerClient {
 	 */
 	isConnected() {
 		return this.ws?.readyState === WebSocket.OPEN;
+	}
+
+	/**
+	 * Проверка доступности сервера
+	 * @param {string} httpUrl - HTTP API URL
+	 * @returns {Promise<boolean>}
+	 */
+	async checkServerAvailability(httpUrl) {
+		return await pingServer(httpUrl, 3000);
 	}
 }
 

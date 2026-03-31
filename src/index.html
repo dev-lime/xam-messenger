@@ -27,6 +27,9 @@
                     </div>
                 </div>
                 <div class="status" id="status">⚫ Не в сети</div>
+                <button class="btn btn-change-server" id="changeServerBtn" style="display: none;" title="Сменить сервер">
+                    🔄 Сменить сервер
+                </button>
             </header>
 
             <!-- Список сообщений -->
@@ -111,6 +114,52 @@
             <button class="btn btn-primary" id="saveSettings">Сохранить</button>
         </div>
     </dialog>
+
+    <!-- Диалог выбора сервера -->
+    <dialog id="serverSelectorDialog" class="dialog dialog-server-selector">
+        <div class="dialog-header">
+            <h3>Выбор сервера</h3>
+        </div>
+        <div class="dialog-content">
+            <div class="server-selector-tabs">
+                <div class="tab active">📡 Найденные серверы</div>
+            </div>
+            
+            <div class="server-list" id="serverList">
+                <!-- Список серверов будет здесь -->
+            </div>
+            
+            <div class="manual-server-input">
+                <label>Или введите адрес вручную:</label>
+                <div class="manual-input-row">
+                    <input type="text" id="manualServerInput" placeholder="192.168.1.100:8080">
+                    <button class="btn btn-primary" id="confirmManualServer">Подключиться</button>
+                </div>
+            </div>
+            
+            <p class="hint">
+                📢 mDNS — автоматически обнаруженные серверы<br>
+                📦 Кэш — ранее подключённые серверы<br>
+                🔍 Сканирование — найдены перебором локальной сети
+            </p>
+        </div>
+        <div class="dialog-actions">
+            <button class="btn" id="refreshServersBtn">🔄 Обновить</button>
+            <button class="btn" id="cancelServerSelector">Закрыть</button>
+        </div>
+    </dialog>
+
+    <!-- Tauri API -->
+    <script>
+        // Проверка доступности Tauri API
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('🔍 Tauri API check:', {
+                hasTauri: !!window.__TAURI__,
+                hasInvoke: !!window.__TAURI__?.invoke,
+                hasCore: !!window.__TAURI__?.core
+            });
+        });
+    </script>
 
     <!-- Клиент -->
     <script src="server-client.js"></script>
