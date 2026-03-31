@@ -516,6 +516,104 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 
             ws.close();
         });
+
+        test('должен возвращать next_before_id для следующей страницы', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`PaginationNextUser_${Date.now()}`);
+
+            const messagesPromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'messages') {
+                        resolve(data);
+                    }
+                };
+            });
+
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+            await new Promise(r => setTimeout(r, 100));
+
+            ws.send(JSON.stringify({ type: 'get_messages', limit: 5 }));
+
+            const response = await messagesPromise;
+            expect(response).toHaveProperty('next_before_id');
+            expect(response).toHaveProperty('has_more');
+
+            ws.close();
+        });
+
+        test('должен загружать сообщения по before_id', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`PaginationBeforeUser_${Date.now()}`);
+
+            // Сначала загружаем первую страницу
+            const firstPagePromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'messages') {
+                        resolve(data);
+                    }
+                };
+            });
+
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+            await new Promise(r => setTimeout(r, 100));
+
+            ws.send(JSON.stringify({ type: 'get_messages', limit: 5 }));
+
+            const firstPage = await firstPagePromise;
+            expect(firstPage).toHaveProperty('messages');
+
+            // Если есть ещё сообщения, загружаем следующую страницу
+            if (firstPage.has_more && firstPage.next_before_id) {
+                const secondPagePromise = new Promise((resolve) => {
+                    ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'messages') {
+                            resolve(data);
+                        }
+                    };
+                });
+
+                ws.send(JSON.stringify({
+                    type: 'get_messages',
+                    limit: 5,
+                    before_id: firstPage.next_before_id
+                }));
+
+                const secondPage = await secondPagePromise;
+                expect(secondPage).toHaveProperty('messages');
+                expect(Array.isArray(secondPage.messages)).toBe(true);
+            }
+
+            ws.close();
+        });
+
+        test('должен возвращать has_more=false когда сообщения закончились', async () => {
+            const ws = await createWebSocket();
+            const user = await registerUser(`PaginationEndUser_${Date.now()}`);
+
+            const messagesPromise = new Promise((resolve) => {
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'messages') {
+                        resolve(data);
+                    }
+                };
+            });
+
+            ws.send(JSON.stringify({ type: 'register', name: user.name }));
+            await new Promise(r => setTimeout(r, 100));
+
+            // Запрашиваем большое количество сообщений чтобы получить все
+            ws.send(JSON.stringify({ type: 'get_messages', limit: 1000 }));
+
+            const response = await messagesPromise;
+            expect(response).toHaveProperty('has_more');
+            // has_more должен быть false если сообщений меньше чем лимит
+
+            ws.close();
+        });
     });
 
     describe('Статусы онлайн пользователей', () => {

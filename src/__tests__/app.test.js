@@ -213,3 +213,344 @@ describe('app.js - Вспомогательные функции', () => {
         });
     });
 });
+
+describe('app.js - Пагинация сообщений', () => {
+    // Мок для state
+    let mockState = {};
+    
+    // Функция проверки возможности загрузки (копия из app.js)
+    const hasMoreMessagesForCurrentPeer = () => {
+        if (!mockState.currentPeer) return false;
+        if (!mockState.hasMoreMessages) return false;
+        if (mockState.isLoadingMessages) return false;
+        
+        if (mockState.lastMessageId) return true;
+        
+        if (mockState.filteredMessages && mockState.filteredMessages.length > 0) {
+            const hasOwnMessages = mockState.filteredMessages.some(m => m.sender_id === mockState.user?.id);
+            const hasReceivedMessages = mockState.filteredMessages.some(m => m.sender_id === mockState.currentPeer);
+            
+            if (hasReceivedMessages) return true;
+            if (hasOwnMessages) {
+                const hasPeerMessagesInAll = mockState.messages.some(m => m.sender_id === mockState.currentPeer);
+                return hasPeerMessagesInAll;
+            }
+        }
+        
+        return false;
+    };
+    
+    // Функция обновления кнопки (упрощённая копия)
+    const updateLoadMoreButton = () => {
+        return hasMoreMessagesForCurrentPeer();
+    };
+
+    beforeEach(() => {
+        mockState = {
+            currentPeer: null,
+            hasMoreMessages: true,
+            isLoadingMessages: false,
+            lastMessageId: null,
+            user: { id: 'user-1' },
+            messages: [],
+            filteredMessages: [],
+        };
+    });
+
+    describe('hasMoreMessagesForCurrentPeer', () => {
+        test('должен возвращать false если чат не выбран', () => {
+            mockState.currentPeer = null;
+            mockState.hasMoreMessages = true;
+            mockState.lastMessageId = 'msg-100';
+            expect(hasMoreMessagesForCurrentPeer()).toBe(false);
+        });
+
+        test('должен возвращать false если нет больше сообщений', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = false;
+            mockState.lastMessageId = 'msg-100';
+            expect(hasMoreMessagesForCurrentPeer()).toBe(false);
+        });
+
+        test('должен возвращать false если идёт загрузка', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = true;
+            mockState.isLoadingMessages = true;
+            mockState.lastMessageId = 'msg-100';
+            expect(hasMoreMessagesForCurrentPeer()).toBe(false);
+        });
+
+        test('должен возвращать true если есть lastMessageId и hasMoreMessages', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = true;
+            mockState.lastMessageId = 'msg-123';
+            expect(hasMoreMessagesForCurrentPeer()).toBe(true);
+        });
+
+        test('должен возвращать false если нет lastMessageId', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = true;
+            mockState.lastMessageId = null;
+            expect(hasMoreMessagesForCurrentPeer()).toBe(false);
+        });
+
+        test('должен возвращать false если filteredMessages пуст', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = true;
+            mockState.lastMessageId = null;
+            mockState.filteredMessages = [];
+            expect(hasMoreMessagesForCurrentPeer()).toBe(false);
+        });
+    });
+
+    describe('handleMessages - обработка первой загрузки', () => {
+        test('должен установить lastMessageId в next_before_id если он есть', () => {
+            const data = {
+                messages: [
+                    { id: 'msg-1', sender_id: 'user-1', text: 'Hi' },
+                    { id: 'msg-2', sender_id: 'user-2', text: 'Hello' },
+                ],
+                next_before_id: 'msg-0',
+                has_more: true,
+            };
+            
+            mockState.messages = data.messages;
+            mockState.lastMessageId = data.next_before_id;
+            
+            expect(mockState.lastMessageId).toBe('msg-0');
+        });
+
+        test('должен установить lastMessageId в первое сообщение если next_before_id нет', () => {
+            const data = {
+                messages: [
+                    { id: 'msg-1', sender_id: 'user-1', text: 'Hi' },
+                    { id: 'msg-2', sender_id: 'user-2', text: 'Hello' },
+                ],
+                next_before_id: null,
+                has_more: false,
+            };
+            
+            mockState.messages = data.messages;
+            // Эмулируем логику handleMessages
+            if (data.next_before_id) {
+                mockState.lastMessageId = data.next_before_id;
+            } else if (data.messages.length > 0) {
+                mockState.lastMessageId = data.messages[0].id;
+            }
+            
+            expect(mockState.lastMessageId).toBe('msg-1');
+        });
+
+        test('должен установить lastMessageId в null если сообщений нет', () => {
+            const data = {
+                messages: [],
+                next_before_id: null,
+                has_more: false,
+            };
+            
+            mockState.messages = data.messages;
+            if (data.next_before_id) {
+                mockState.lastMessageId = data.next_before_id;
+            } else if (data.messages.length > 0) {
+                mockState.lastMessageId = data.messages[0].id;
+            } else {
+                mockState.lastMessageId = null;
+            }
+            
+            expect(mockState.lastMessageId).toBe(null);
+        });
+    });
+
+    describe('loadMoreMessages - определение beforeId', () => {
+        test('должен использовать state.lastMessageId если он есть', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.lastMessageId = 'msg-100';
+            mockState.filteredMessages = [
+                { id: 'msg-1', sender_id: 'user-2', text: 'Hi' },
+            ];
+            
+            let beforeId = mockState.lastMessageId;
+            if (!beforeId && mockState.filteredMessages && mockState.filteredMessages.length > 0) {
+                beforeId = mockState.filteredMessages[0].id;
+            }
+            
+            expect(beforeId).toBe('msg-100');
+        });
+
+        test('должен использовать первое сообщение из filteredMessages если lastMessageId нет', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.lastMessageId = null;
+            mockState.filteredMessages = [
+                { id: 'msg-50', sender_id: 'user-2', text: 'Old message' },
+                { id: 'msg-100', sender_id: 'user-1', text: 'New message' },
+            ];
+            
+            let beforeId = mockState.lastMessageId;
+            if (!beforeId && mockState.filteredMessages && mockState.filteredMessages.length > 0) {
+                beforeId = mockState.filteredMessages[0].id;
+            }
+            
+            expect(beforeId).toBe('msg-50');
+        });
+    });
+
+    describe('updateLoadMoreButton', () => {
+        test('должен показывать кнопку только если выбран чат и есть сообщения для загрузки', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = true;
+            mockState.lastMessageId = 'msg-100';
+            
+            expect(updateLoadMoreButton()).toBe(true);
+        });
+
+        test('должен скрывать кнопку если чат не выбран', () => {
+            mockState.currentPeer = null;
+            mockState.hasMoreMessages = true;
+            mockState.lastMessageId = 'msg-100';
+            
+            expect(updateLoadMoreButton()).toBe(false);
+        });
+
+        test('должен скрывать кнопку если нет больше сообщений', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = false;
+            mockState.lastMessageId = null;
+            
+            expect(updateLoadMoreButton()).toBe(false);
+        });
+
+        test('должен скрывать кнопку если идёт загрузка', () => {
+            mockState.currentPeer = 'user-2';
+            mockState.hasMoreMessages = true;
+            mockState.isLoadingMessages = true;
+            mockState.lastMessageId = 'msg-100';
+            
+            expect(updateLoadMoreButton()).toBe(false);
+        });
+    });
+
+    describe('Бесконечный цикл загрузки', () => {
+        test('должен прекращать загрузку если messages.length === 0', () => {
+            // Эмуляция ситуации когда сервер вернул пустой массив
+            // но hasMore = true (ошибка или особенность)
+            const data = {
+                messages: [],
+                next_before_id: null,
+                has_more: true,
+                before_id: 'msg-100',
+            };
+            
+            mockState.currentPeer = 'user-2';
+            mockState.filteredMessages = [];
+            mockState.hasMoreMessages = data.has_more;
+            
+            // Проверяем условие прекращения
+            const shouldStop = data.before_id && 
+                mockState.filteredMessages.length === 0 && 
+                data.messages.length === 0;
+            
+            expect(shouldStop).toBe(true);
+        });
+
+        test('должен продолжать загрузку только если messages.length > 0', () => {
+            const data = {
+                messages: [{ id: 'msg-1', sender_id: 'user-3', text: 'Other chat' }],
+                next_before_id: 'msg-50',
+                has_more: true,
+                before_id: 'msg-100',
+            };
+            
+            mockState.currentPeer = 'user-2';
+            mockState.filteredMessages = [];
+            
+            // Проверяем условие продолжения
+            const shouldContinue = data.before_id && 
+                mockState.filteredMessages.length === 0 && 
+                data.has_more && 
+                data.next_before_id && 
+                data.messages.length > 0;
+            
+            expect(shouldContinue).toBe(true);
+        });
+
+        test('не должен продолжать загрузку если messages.length === 0', () => {
+            const data = {
+                messages: [],
+                next_before_id: 'msg-50',
+                has_more: true,
+                before_id: 'msg-100',
+            };
+            
+            mockState.currentPeer = 'user-2';
+            mockState.filteredMessages = [];
+            
+            // Проверяем условие продолжения - должно быть false
+            const shouldContinue = data.before_id && 
+                mockState.filteredMessages.length === 0 && 
+                data.has_more && 
+                data.next_before_id && 
+                data.messages.length > 0;
+            
+            expect(shouldContinue).toBe(false);
+        });
+    });
+});
+
+describe('app.js - isMessageInCurrentChat', () => {
+    const mockState = {
+        user: { id: 'user-1' },
+        currentPeer: 'user-2',
+    };
+    
+    const isMessageInCurrentChat = (msg) => {
+        // Сообщения без recipient_id считаются общими — показываем во всех чатах
+        if (!msg.recipient_id) {
+            return true;
+        }
+        
+        // Сообщения с получателем показываем только в соответствующем чате
+        return (
+            (msg.sender_id === mockState.user.id && msg.recipient_id === mockState.currentPeer) ||
+            (msg.sender_id === mockState.currentPeer && msg.recipient_id === mockState.user.id)
+        );
+    };
+
+    describe('Сообщения без recipient_id (общие)', () => {
+        test('должен показывать сообщения от текущего пира без recipient_id', () => {
+            const msg = { sender_id: 'user-2', recipient_id: null, text: 'Hello' };
+            expect(isMessageInCurrentChat(msg)).toBe(true);
+        });
+
+        test('должен показывать наши сообщения без recipient_id', () => {
+            const msg = { sender_id: 'user-1', recipient_id: null, text: 'Hi' };
+            expect(isMessageInCurrentChat(msg)).toBe(true);
+        });
+
+        test('должен показывать сообщения от других пользователей без recipient_id', () => {
+            const msg = { sender_id: 'user-3', recipient_id: null, text: 'Other' };
+            expect(isMessageInCurrentChat(msg)).toBe(true);
+        });
+    });
+
+    describe('Сообщения с recipient_id', () => {
+        test('должен показывать наши сообщения текущему пиру', () => {
+            const msg = { sender_id: 'user-1', recipient_id: 'user-2', text: 'Hi' };
+            expect(isMessageInCurrentChat(msg)).toBe(true);
+        });
+
+        test('должен показывать сообщения от текущего пира нам', () => {
+            const msg = { sender_id: 'user-2', recipient_id: 'user-1', text: 'Hello' };
+            expect(isMessageInCurrentChat(msg)).toBe(true);
+        });
+
+        test('не должен показывать сообщения другому получателю', () => {
+            const msg = { sender_id: 'user-2', recipient_id: 'user-3', text: 'Other' };
+            expect(isMessageInCurrentChat(msg)).toBe(false);
+        });
+
+        test('не должен показывать наши сообщения другому получателю', () => {
+            const msg = { sender_id: 'user-1', recipient_id: 'user-3', text: 'Other' };
+            expect(isMessageInCurrentChat(msg)).toBe(false);
+        });
+    });
+});

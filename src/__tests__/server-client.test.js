@@ -123,10 +123,11 @@ class TestServerClient {
         });
     }
 
-    getMessages(limit = 100) {
+    getMessages(limit = 100, beforeId = null) {
         this.send({
             type: 'get_messages',
-            limit,
+            limit: Math.max(1, Math.min(200, limit)),
+            before_id: beforeId,
         });
     }
 
@@ -293,6 +294,7 @@ describe('ServerClient', () => {
             expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'get_messages',
                 limit: 50,
+                before_id: null,
             }));
         });
 
@@ -304,6 +306,7 @@ describe('ServerClient', () => {
             expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'get_messages',
                 limit: 100,
+                before_id: null,
             }));
         });
 
@@ -526,6 +529,69 @@ describe('ServerClient', () => {
                 files,
                 recipient_id: 'user-123',
             }));
+        });
+    });
+
+    describe('Пагинация сообщений', () => {
+        test('должен запрашивать сообщения с указанным лимитом', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages(50);
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.type).toBe('get_messages');
+            expect(sentData.limit).toBe(50);
+            expect(sentData.before_id).toBeNull();
+        });
+
+        test('должен запрашивать сообщения с before_id для пагинации', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages(50, 'msg-123');
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.type).toBe('get_messages');
+            expect(sentData.limit).toBe(50);
+            expect(sentData.before_id).toBe('msg-123');
+        });
+
+        test('должен использовать лимит по умолчанию 100', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages();
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.limit).toBe(100);
+            expect(sentData.before_id).toBeNull();
+        });
+
+        test('должен ограничивать минимальный лимит значением 1', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages(0);
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.limit).toBe(1);
+        });
+
+        test('должен ограничивать максимальный лимит значением 200', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages(500);
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.limit).toBe(200);
+        });
+
+        test('должен запрашивать сообщения с null before_id для первой загрузки', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.getMessages(50, null);
+
+            const sentData = JSON.parse(client.ws.sentMessages[0]);
+            expect(sentData.type).toBe('get_messages');
+            expect(sentData.limit).toBe(50);
+            expect(sentData.before_id).toBeNull();
         });
     });
 

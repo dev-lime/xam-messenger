@@ -81,6 +81,7 @@ const state = {
 	lastMessageId: null,
 	hasMoreMessages: true,
 	isLoadingMessages: false,
+	lastRequestedBeforeId: null, // Для защиты от бесконечного цикла
 };
 
 let attachedFiles = [];
@@ -191,7 +192,6 @@ function loadUserSettings() {
  * Сохранение состояния пагинации
  */
 function savePaginationState() {
-	localStorage.setItem(CONFIG.STORAGE_KEYS.LAST_MESSAGE_ID, state.lastMessageId || '');
 	localStorage.setItem(CONFIG.STORAGE_KEYS.HAS_MORE, state.hasMoreMessages.toString());
 }
 
@@ -202,10 +202,11 @@ function restorePaginationState() {
 	const savedLastId = localStorage.getItem(CONFIG.STORAGE_KEYS.LAST_MESSAGE_ID);
 	const savedHasMore = localStorage.getItem(CONFIG.STORAGE_KEYS.HAS_MORE);
 
-	if (savedLastId && savedHasMore !== null && state.messages.length === 0) {
-		state.lastMessageId = savedLastId;
+	if (savedHasMore !== null && state.messages.length === 0) {
 		state.hasMoreMessages = savedHasMore === 'true';
-		console.log(`📚 Восстановлена пагинация: lastMessageId=${state.lastMessageId}, hasMore=${state.hasMoreMessages}`);
+		// lastMessageId не восстанавливаем принудительно - он будет установлен из handleMessages
+		// при первой загрузке сообщений
+		console.log(`📚 Восстановлена пагинация: hasMore=${state.hasMoreMessages}`);
 	}
 }
 
@@ -326,9 +327,15 @@ function updateMessageWithReal(msg, localIndex) {
  * Проверка: сообщение в текущем чате
  */
 function isMessageInCurrentChat(msg) {
+	// Сообщения без recipient_id считаются общими — показываем во всех чатах
+	if (!msg.recipient_id) {
+		return true;
+	}
+	
+	// Сообщения с получателем показываем только в соответствующем чате
 	return (
 		(msg.sender_id === state.user?.id && msg.recipient_id === state.currentPeer) ||
-		(msg.sender_id === state.currentPeer && (msg.recipient_id === state.user?.id || !msg.recipient_id))
+		(msg.sender_id === state.currentPeer && msg.recipient_id === state.user?.id)
 	);
 }
 
@@ -405,15 +412,32 @@ function handleMessages(data) {
 	const oldScrollHeight = elements.messagesContainer.scrollHeight;
 	const oldScrollTop = elements.messagesContainer.scrollTop;
 
+	// ПРОВЕРКА на зацикливание: если получили ответ на запрос который уже делали
+	if (beforeId && beforeId === state.lastRequestedBeforeId) {
+		console.log(`📚 Зацикливание: ответ на уже запрошенный beforeId=${beforeId}, прекращаем`);
+		state.hasMoreMessages = false;
+		state.lastRequestedBeforeId = null;
+		state.isLoadingMessages = false;
+		updateLoadMoreButton();
+		return;
+	}
+
 	if (!beforeId) {
 		// Первая загрузка - заменяем все сообщения
 		state.messages = messages;
-		// Сохраняем ID самого старого сообщения для пагинации
-		state.lastMessageId = messages.length > 0 ? messages[0].id : null;
+		state.lastRequestedBeforeId = null;
+		
+		// Сохраняем ID для следующей пагинации
+		if (nextBeforeId) {
+			state.lastMessageId = nextBeforeId;
+		} else if (messages.length > 0) {
+			state.lastMessageId = messages[0].id;
+		} else {
+			state.lastMessageId = null;
+		}
 	} else {
 		// Подгрузка старых - добавляем в начало
 		state.messages = [...messages, ...state.messages];
-		// Обновляем ID для следующей пагинации
 		state.lastMessageId = nextBeforeId;
 	}
 
@@ -426,6 +450,16 @@ function handleMessages(data) {
 	if (state.currentPeer) {
 		filterMessagesForCurrentPeer();
 		renderMessages(true);
+
+		// Если в текущем чате нет сообщений, продолжаем загрузку
+		if (beforeId && state.filteredMessages.length === 0 && state.hasMoreMessages && nextBeforeId) {
+			console.log('📚 В текущем чате нет сообщений, загружаем дальше...');
+			state.lastRequestedBeforeId = nextBeforeId;
+			state.isLoadingMessages = true;
+			updateLoadMoreButton();
+			serverClient.getMessages(50, nextBeforeId);
+			return;
+		}
 
 		// Сохраняем позицию прокрутки при загрузке старых сообщений
 		if (beforeId) {
@@ -444,6 +478,22 @@ function handleMessages(data) {
  */
 function filterMessagesForCurrentPeer() {
 	state.filteredMessages = state.messages.filter((m) => isMessageInCurrentChat(m));
+}
+
+/**
+ * Проверка: есть ли ещё сообщения для текущего чата
+ * Возвращает true если есть возможность загрузки старых сообщений
+ */
+function hasMoreMessagesForCurrentPeer() {
+	if (!state.currentPeer) return false;
+	if (!state.hasMoreMessages) return false;
+	if (state.isLoadingMessages) return false;
+
+	// Кнопка показывается только если сервер сказал что есть ещё сообщения (hasMore)
+	// И есть ID для пагинации
+	if (state.lastMessageId) return true;
+
+	return false;
 }
 
 /**
@@ -758,20 +808,22 @@ function formatUserLastSeen(lastMsg, isOnline) {
  */
 function selectPeer(userId, userName) {
 	state.currentPeer = userId;
+	// Сбрасываем lastRequestedBeforeId и hasMoreMessages при смене чата
+	state.lastRequestedBeforeId = null;
+	state.hasMoreMessages = true;
 
 	document.querySelectorAll('.peer-item').forEach((item) => {
 		item.classList.toggle('active', item.dataset.userId === userId);
 	});
 
 	updateStatusDisplay(true, `Чат с ${userName}`);
-	
-	// Сбрасываем hasMoreMessages для возможности загрузки
-	state.hasMoreMessages = true;
-	
+
 	// Фильтруем уже загруженные сообщения для этого чата
 	filterMessagesForCurrentPeer();
 	renderMessages(true);
-	
+
+	// Проверяем есть ли ещё сообщения для загрузки
+	// hasMoreMessages остаётся тем же, но кнопка показывается только если есть сообщения в чате
 	updateLoadMoreButton();
 
 	// Отправляем READ ACK для всех непрочитанных сообщений
@@ -827,14 +879,33 @@ async function loadMoreMessages() {
 		return;
 	}
 
-	if (!state.lastMessageId) {
+	// Находим ID самого старого сообщения в текущем чате для пагинации
+	// state.lastMessageId может быть null, но мы можем получить ID из отфильтрованных сообщений
+	let beforeId = state.lastMessageId;
+
+	// Если lastMessageId нет, но есть отфильтрованные сообщения, берём ID первого (самого старого)
+	if (!beforeId && state.filteredMessages && state.filteredMessages.length > 0) {
+		beforeId = state.filteredMessages[0].id;
+	}
+
+	// Если всё ещё нет beforeId, но есть общие сообщения, ищем первое сообщение этого чата
+	if (!beforeId && state.messages.length > 0) {
+		const firstChatMessage = state.messages.find(m => isMessageInCurrentChat(m));
+		if (firstChatMessage) {
+			beforeId = firstChatMessage.id;
+		}
+	}
+
+	if (!beforeId) {
+		console.log('📚 Нет ID для пагинации');
 		return;
 	}
 
+	console.log(`📚 Загрузка старых сообщений до: ${beforeId}`);
 	state.isLoadingMessages = true;
 	updateLoadMoreButton();
 
-	serverClient.getMessages(50, state.lastMessageId);
+	serverClient.getMessages(50, beforeId);
 }
 
 /**
@@ -843,11 +914,12 @@ async function loadMoreMessages() {
 function updateLoadMoreButton() {
 	if (!elements.loadMoreBtn || !elements.loadMoreContainer) return;
 
-	const shouldShow = state.currentPeer && state.hasMoreMessages && state.messages.length > 0;
+	// Кнопка показывается только если есть выбранный чат и есть возможность загрузки
+	const shouldShow = hasMoreMessagesForCurrentPeer();
 	elements.loadMoreContainer.style.display = shouldShow ? 'flex' : 'none';
 
 	if (elements.loadMoreBtn) {
-		elements.loadMoreBtn.disabled = state.isLoadingMessages || !state.hasMoreMessages;
+		elements.loadMoreBtn.disabled = state.isLoadingMessages || !shouldShow;
 		elements.loadMoreBtn.textContent = state.isLoadingMessages ? 'Загрузка...' : 'Загрузить старые';
 	}
 }
