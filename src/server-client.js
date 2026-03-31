@@ -1,95 +1,165 @@
-// Модуль для работы с сервером (WebSocket + HTTP)
+/**
+ * @file Модуль для работы с сервером (WebSocket + HTTP)
+ * @module ServerClient
+ */
 
+// ============================================================================
+// Константы
+// ============================================================================
+
+const WS_CONFIG = {
+	RECONNECT_DELAY: 2000,
+	MAX_RECONNECT_ATTEMPTS: 10,
+	CONNECTION_TIMEOUT: 1000,
+};
+
+const SERVER_CANDIDATES = [
+	'ws://localhost:8080/ws',
+	'ws://127.0.0.1:8080/ws',
+];
+
+const SUBNETS = ['192.168.1.', '192.168.0.', '192.168.88.', '10.0.0.', '10.0.1.'];
+
+const MESSAGE_TYPES = {
+	REGISTER: 'register',
+	REGISTERED: 'registered',
+	MESSAGE: 'message',
+	ACK: 'ack',
+	MESSAGES: 'messages',
+	USER_ONLINE: 'user_online',
+	USER_UPDATED: 'user_updated',
+	GET_MESSAGES: 'get_messages',
+	UPDATE_PROFILE: 'update_profile',
+};
+
+const DELIVERY_STATUS = {
+	SENDING: 0,
+	SENT: 1,
+	READ: 2,
+};
+
+// ============================================================================
+// Вспомогательные функции
+// ============================================================================
+
+/**
+ * Генерирует список серверов для сканирования локальной сети
+ * @returns {string[]} Список WebSocket URL
+ */
+function generateLocalNetworkServers() {
+	const servers = [];
+	SUBNETS.forEach((subnet) => {
+		for (let i = 1; i <= 10; i++) {
+			servers.push(`ws://${subnet}${i}:8080/ws`);
+		}
+		for (let i = 100; i <= 110; i++) {
+			servers.push(`ws://${subnet}${i}:8080/ws`);
+		}
+	});
+	return servers;
+}
+
+/**
+ * Преобразует WebSocket URL в HTTP API URL
+ * @param {string} wsUrl - WebSocket URL
+ * @returns {string} HTTP API URL
+ */
+function wsToHttpUrl(wsUrl) {
+	return wsUrl.replace('ws://', 'http://').replace('/ws', '/api');
+}
+
+// ============================================================================
+// Класс ServerClient
+// ============================================================================
+
+/**
+ * Клиент для взаимодействия с сервером мессенджера
+ * @class
+ */
 class ServerClient {
 	constructor() {
+		/** @type {WebSocket|null} */
 		this.ws = null;
+
+		/** @type {Object|null} */
 		this.user = null;
+
+		/** @type {Array<{event: string, handler: Function}>} */
 		this.messageHandlers = [];
+
+		/** @type {number} */
 		this.reconnectAttempts = 0;
-		this.maxReconnectAttempts = 10;
+
+		/** @type {string|null} */
 		this.serverUrl = null;
+
+		/** @type {string|null} */
 		this.httpUrl = null;
 
-		// Список серверов для проверки
-		this.serverCandidates = [
-			'ws://localhost:8080/ws',
-			'ws://127.0.0.1:8080/ws',
-		];
-
-		// Добавляем локальные IP для поиска в сети
-		this.addLocalNetworkServers();
+		/** @type {string[]} */
+		this.serverCandidates = [...SERVER_CANDIDATES, ...generateLocalNetworkServers()];
 	}
 
-	// Добавляем серверы локальной сети
-	addLocalNetworkServers() {
-		// Сканируем типичные подсети
-		const subnets = [
-			'192.168.1.',
-			'192.168.0.',
-			'192.168.88.',
-			'10.0.0.',
-			'10.0.1.',
-		];
+	// ========================================================================
+	// Подключение к серверу
+	// ========================================================================
 
-		// Для каждой подсети добавляем адреса 1-10 и 100-110
-		subnets.forEach(subnet => {
-			for (let i = 1; i <= 10; i++) {
-				this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
-			}
-			for (let i = 100; i <= 110; i++) {
-				this.serverCandidates.push(`ws://${subnet}${i}:8080/ws`);
-			}
-		});
-	}
-
-	// Автоматическое обнаружение сервера
+	/**
+	 * Автоматическое обнаружение сервера в локальной сети
+	 * @returns {Promise<string>} URL найденного сервера
+	 * @throws {Error} Если сервер не найден
+	 */
 	async discoverServer() {
 		console.log('🔍 Поиск сервера...');
 
 		for (const url of this.serverCandidates) {
-			try {
-				const found = await this.tryConnect(url, 1000);
-				if (found) {
-					console.log('✅ Сервер найден:', url);
-					return url;
-				}
-			} catch (e) {
-				// Пробуем следующий
+			const found = await this.tryConnect(url, WS_CONFIG.CONNECTION_TIMEOUT);
+			if (found) {
+				console.log('✅ Сервер найден:', url);
+				return url;
 			}
 		}
 
 		throw new Error('Сервер не найден. Убедитесь, что сервер запущен.');
 	}
 
-	// Попытка подключения к конкретному серверу
-	async tryConnect(url, timeout = 1000) {
-		return new Promise((resolve, reject) => {
+	/**
+	 * Попытка подключения к конкретному серверу
+	 * @param {string} url - WebSocket URL
+	 * @param {number} timeout - Таймаут в мс
+	 * @returns {Promise<boolean>} true если сервер доступен
+	 */
+	async tryConnect(url, timeout = WS_CONFIG.CONNECTION_TIMEOUT) {
+		return new Promise((resolve) => {
 			const ws = new WebSocket(url);
 			const timer = setTimeout(() => {
 				ws.close();
-				resolve(false); // Не выбрасываем ошибку, просто false
+				resolve(false);
 			}, timeout);
 
 			ws.onopen = () => {
 				clearTimeout(timer);
-				ws.close(); // Закрываем тестовое соединение
-				resolve(true); // Сервер найден
+				ws.close();
+				resolve(true);
 			};
 
 			ws.onerror = () => {
 				clearTimeout(timer);
-				resolve(false); // Не выбрасываем ошибку
+				resolve(false);
 			};
 		});
 	}
 
-	// Подключение к серверу
+	/**
+	 * Подключение к серверу
+	 * @param {string|null} serverUrl - URL сервера (опционально)
+	 * @returns {Promise<void>}
+	 */
 	async connect(serverUrl = null) {
-		// Если URL не передан, находим сервер
-		const url = serverUrl || await this.discoverServer();
+		const url = serverUrl || (await this.discoverServer());
 
 		this.serverUrl = url;
-		this.httpUrl = url.replace('ws://', 'http://').replace('/ws', '/api');
+		this.httpUrl = wsToHttpUrl(url);
 
 		console.log('🔌 Подключение к', url);
 
@@ -116,7 +186,7 @@ class ServerClient {
 				this.ws.onmessage = (event) => {
 					try {
 						const data = JSON.parse(event.data);
-						this.handleMessage(JSON.parse(event.data));
+						this.handleMessage(data);
 					} catch (e) {
 						console.error('❌ Ошибка парсинга WebSocket сообщения:', e);
 					}
@@ -127,131 +197,135 @@ class ServerClient {
 		});
 	}
 
-	// Попытка переподключения
+	/**
+	 * Попытка переподключения при разрыве соединения
+	 * @private
+	 */
 	attemptReconnect() {
-		if (this.reconnectAttempts < this.maxReconnectAttempts) {
+		if (this.reconnectAttempts < WS_CONFIG.MAX_RECONNECT_ATTEMPTS) {
 			this.reconnectAttempts++;
-			console.log(`🔄 Попытка переподключения ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`);
-			setTimeout(() => this.connect(), 2000);
+			console.log(
+				`🔄 Попытка переподключения ${this.reconnectAttempts}/${WS_CONFIG.MAX_RECONNECT_ATTEMPTS}...`
+			);
+			setTimeout(() => this.connect(), WS_CONFIG.RECONNECT_DELAY);
 		} else {
 			console.error('❌ Превышено количество попыток переподключения');
 		}
 	}
 
-	// Обработка входящих сообщений
+	// ========================================================================
+	// Обработка сообщений
+	// ========================================================================
+
+	/**
+	 * Обработка входящих сообщений от сервера
+	 * @private
+	 * @param {Object} data - Данные сообщения
+	 */
 	handleMessage(data) {
-		switch (data.type) {
-			case 'registered':
+		const { type } = data;
+
+		switch (type) {
+			case MESSAGE_TYPES.REGISTERED:
 				this.user = data.user;
 				break;
 
-			case 'message':
-				// Новое сообщение от другого клиента
+			case MESSAGE_TYPES.MESSAGE:
 				console.log('📨 Message:', {
 					id: data.message?.id,
 					text: data.message?.text,
 					files: data.message?.files,
-					filesCount: data.message?.files?.length
+					filesCount: data.message?.files?.length,
 				});
-				this.notifyHandlers('message', data.message);
+				this.notifyHandlers(MESSAGE_TYPES.MESSAGE, data.message);
 				break;
 
-			case 'ack':
+			case MESSAGE_TYPES.ACK:
 				console.log('📨 ACK received:', data);
-				this.notifyHandlers('ack', data);
+				this.notifyHandlers(MESSAGE_TYPES.ACK, data);
 				break;
 
-			case 'messages':
-				this.notifyHandlers('messages', data);  // Передаём весь объект с before_id, next_before_id, has_more
+			case MESSAGE_TYPES.MESSAGES:
+				this.notifyHandlers(MESSAGE_TYPES.MESSAGES, data);
 				break;
 
-			case 'user_online':
-				this.notifyHandlers('user_online', data);
+			case MESSAGE_TYPES.USER_ONLINE:
+				this.notifyHandlers(MESSAGE_TYPES.USER_ONLINE, data);
 				break;
+
+			default:
+				console.warn('⚠️ Неизвестный тип сообщения:', type);
 		}
 	}
 
-	// Подписка на события
+	/**
+	 * Подписка на события сервера
+	 * @param {string} event - Тип события
+	 * @param {Function} handler - Обработчик события
+	 */
 	on(event, handler) {
 		this.messageHandlers.push({ event, handler });
 	}
 
-	// Уведомление подписчиков
+	/**
+	 * Уведомление подписчиков о событии
+	 * @private
+	 * @param {string} event - Тип события
+	 * @param {Object} data - Данные события
+	 */
 	notifyHandlers(event, data) {
-		this.messageHandlers
-			.filter(h => h.event === event)
-			.forEach(h => h.handler(data));
+		this.messageHandlers.filter((h) => h.event === event).forEach((h) => h.handler(data));
 	}
 
-	// Регистрация пользователя
-	async register(name) {
+	// ========================================================================
+	// HTTP API методы
+	// ========================================================================
+
+	/**
+	 * Регистрация пользователя
+	 * @param {string} name - Имя пользователя
+	 * @param {string} [avatar='👤'] - Аватар (эмодзи)
+	 * @returns {Promise<Object>} Данные пользователя
+	 * @throws {Error} При ошибке регистрации
+	 */
+	async register(name, avatar = '👤') {
 		const response = await fetch(`${this.httpUrl}/register`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name }),
+			body: JSON.stringify({ name, avatar }),
 		});
 
 		const result = await response.json();
 
 		if (result.success) {
 			this.user = result.data;
-
-			// Отправляем регистрацию через WebSocket
-			this.send({ type: 'register', name });
-
+			this.send({ type: MESSAGE_TYPES.REGISTER, name, avatar });
 			return result.data;
 		} else {
-			throw new Error(result.error);
+			throw new Error(result.error || 'Registration failed');
 		}
 	}
 
-	// Отправка сообщения
-	send(message) {
-		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-			this.ws.send(JSON.stringify(message));
-		} else {
-			console.error('❌ Нет подключения к серверу');
-		}
+	/**
+	 * Получение списка пользователей
+	 * @returns {Promise<Object[]>} Список пользователей
+	 */
+	async getUsers() {
+		const response = await fetch(`${this.httpUrl}/users`);
+		const result = await response.json();
+		return result.data || [];
 	}
 
-	// Отправка текстового сообщения
-	sendMessage(text, recipientId = null) {
-		this.send({
-			type: 'message',
-			text,
-			files: [],
-			recipient_id: recipientId,
-		});
-	}
-
-	// Отправка сообщения с файлами
-	sendMessageWithFiles(text, files, recipientId = null) {
-		const message = {
-			type: 'message',
-			text,
-			files,
-			recipient_id: recipientId,
-		};
-
-		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-			try {
-				this.ws.send(JSON.stringify(message));
-				console.log('✅ Файлы отправлены в WebSocket');
-			} catch (error) {
-				console.error('❌ Ошибка отправки в WebSocket:', error);
-			}
-		} else {
-			console.error('❌ WebSocket не готов! readyState=', this.ws?.readyState);
-		}
-	}
-
-	// Загрузка файла (возвращает информацию о файле)
+	/**
+	 * Загрузка файла на сервер
+	 * @param {File} file - Файл для загрузки
+	 * @returns {Promise<Object>} Информация о загруженном файле
+	 * @throws {Error} При ошибке загрузки
+	 */
 	async uploadFile(file) {
-		// Создаём FormData для multipart/form-data
 		const formData = new FormData();
 		formData.append('file', file);
 
-		// Загружаем файл на сервер
 		const response = await fetch(`${this.httpUrl}/files`, {
 			method: 'POST',
 			body: formData,
@@ -270,51 +344,120 @@ class ServerClient {
 		}
 	}
 
-	// Отправка файла (устаревший метод, используется uploadFile)
-	async sendFile(file, recipientId = null) {
-		const fileData = await this.uploadFile(file);
+	// ========================================================================
+	// WebSocket методы
+	// ========================================================================
 
-		// Отправляем сообщение с файлом через WebSocket
-		this.send({
-			type: 'message',
-			text: `📎 Файл: ${file.name}`,
-			files: [fileData],
-			recipient_id: recipientId,
-		});
-		return true;
+	/**
+	 * Отправка сообщения через WebSocket
+	 * @private
+	 * @param {Object} message - Сообщение для отправки
+	 */
+	send(message) {
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			this.ws.send(JSON.stringify(message));
+		} else {
+			console.error('❌ Нет подключения к серверу');
+		}
 	}
 
-	// Подтверждение прочтения
+	/**
+	 * Отправка текстового сообщения
+	 * @param {string} text - Текст сообщения
+	 * @param {string|null} recipientId - ID получателя (опционально)
+	 */
+	sendMessage(text, recipientId = null) {
+		this.send({
+			type: MESSAGE_TYPES.MESSAGE,
+			text,
+			files: [],
+			recipient_id: recipientId,
+		});
+	}
+
+	/**
+	 * Отправка сообщения с файлами
+	 * @param {string} text - Текст сообщения
+	 * @param {Object[]} files - Массив файлов
+	 * @param {string|null} recipientId - ID получателя (опционально)
+	 */
+	sendMessageWithFiles(text, files, recipientId = null) {
+		const message = {
+			type: MESSAGE_TYPES.MESSAGE,
+			text,
+			files,
+			recipient_id: recipientId,
+		};
+
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			try {
+				this.ws.send(JSON.stringify(message));
+				console.log('✅ Файлы отправлены в WebSocket');
+			} catch (error) {
+				console.error('❌ Ошибка отправки в WebSocket:', error);
+			}
+		} else {
+			console.error('❌ WebSocket не готов! readyState=', this.ws?.readyState);
+		}
+	}
+
+	/**
+	 * Отправка подтверждения прочтения (ACK)
+	 * @param {string} messageId - ID сообщения
+	 * @param {'read'|'delivered'} status - Статус прочтения
+	 */
 	sendAck(messageId, status = 'read') {
 		this.send({
-			type: 'ack',
+			type: MESSAGE_TYPES.ACK,
 			message_id: messageId,
 			status,
 		});
 	}
 
-	// Загрузка истории сообщений с пагинацией (cursor-based)
+	/**
+	 * Запрос истории сообщений с пагинацией
+	 * @param {number} limit - Количество сообщений (макс. 200)
+	 * @param {string|null} beforeId - ID сообщения для пагинации
+	 */
 	getMessages(limit = 50, beforeId = null) {
 		this.send({
-			type: 'get_messages',
-			limit,
+			type: MESSAGE_TYPES.GET_MESSAGES,
+			limit: Math.max(1, Math.min(200, limit)),
 			before_id: beforeId,
 		});
 	}
 
-	// Получение списка пользователей
-	async getUsers() {
-		const response = await fetch(`${this.httpUrl}/users`);
-		const result = await response.json();
-		return result.data || [];
+	/**
+	 * Обновление профиля пользователя
+	 * @param {string} avatar - Новый аватар (эмодзи)
+	 */
+	updateProfile(avatar) {
+		this.send({
+			type: MESSAGE_TYPES.UPDATE_PROFILE,
+			text: avatar,
+		});
 	}
 
-	// Отключение
+	// ========================================================================
+	// Управление подключением
+	// ========================================================================
+
+	/**
+	 * Отключение от сервера
+	 */
 	disconnect() {
 		if (this.ws) {
 			this.ws.close();
 			this.ws = null;
 		}
+	}
+
+	/**
+	 * Проверка состояния подключения
+	 * @returns {boolean} true если подключено
+	 */
+	isConnected() {
+		return this.ws?.readyState === WebSocket.OPEN;
 	}
 }
 

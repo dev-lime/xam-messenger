@@ -33,4 +33,4 @@ test-results/
 .jest/
 
 # Qwen
-.qwen/settings.json
+.qwen/

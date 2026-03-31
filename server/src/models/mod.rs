@@ -1,4 +1,4 @@
-// Модели данных для XAM Messenger Server
+//! Модели данных для XAM Messenger Server
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 /// Пользователь
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct User {
     pub id: String,
     pub name: String,
@@ -16,7 +16,7 @@ pub struct User {
 }
 
 /// Данные файла
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct FileData {
     pub name: String,
     pub size: u64,
@@ -24,7 +24,7 @@ pub struct FileData {
 }
 
 /// Сообщение чата
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ChatMessage {
     pub id: String,
     pub sender_id: String,
