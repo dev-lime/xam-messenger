@@ -327,11 +327,12 @@ function updateMessageWithReal(msg, localIndex) {
  * Проверка: сообщение в текущем чате
  */
 function isMessageInCurrentChat(msg) {
-	// Сообщения без recipient_id считаются общими — показываем во всех чатах
+	// Сообщения без recipient_id — это сообщения для всех (общие)
+	// Показываем их только в чате с отправителем
 	if (!msg.recipient_id) {
-		return true;
+		return msg.sender_id === state.currentPeer;
 	}
-	
+
 	// Сообщения с получателем показываем только в соответствующем чате
 	return (
 		(msg.sender_id === state.user?.id && msg.recipient_id === state.currentPeer) ||
