@@ -9,6 +9,7 @@
     "test:coverage": "jest --coverage --coverageReporters=html",
     "test:integration": "jest --config jest.integration.config.js",
     "test:all": "npm test && npm run test:integration",
+    "cleanup:test-db": "node scripts/cleanup-test-db.js",
     "lint": "eslint src/**/*.js",
     "lint:fix": "eslint src/**/*.js --fix",
     "tauri": "tauri",
