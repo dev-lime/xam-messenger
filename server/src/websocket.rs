@@ -294,21 +294,8 @@ async fn handle_get_messages(
     let limit = client_msg.limit.max(1).min(200);
     let before_id = &client_msg.before_id;
 
-    log::info!(
-        "📚 Загрузка сообщений: limit={}, before_id={:?}",
-        limit,
-        before_id
-    );
-
     match db::get_messages_with_pagination(&conn, limit, before_id.as_deref()) {
         Ok((messages, next_before_id, has_more)) => {
-            log::info!(
-                "📚 Загружено {} сообщений, has_more={}, next_before_id={:?}",
-                messages.len(),
-                has_more,
-                next_before_id
-            );
-
             let response = json!({
                 "type": "messages",
                 "messages": messages,
