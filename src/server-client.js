@@ -10,7 +10,7 @@
 const WS_CONFIG = {
 	RECONNECT_DELAY: 2000,
 	MAX_RECONNECT_ATTEMPTS: 10,
-	CONNECTION_TIMEOUT: 1000,
+	CONNECTION_TIMEOUT: 3000, // Увеличили до 3 секунд
 };
 
 const SERVER_CANDIDATES = [
@@ -18,7 +18,19 @@ const SERVER_CANDIDATES = [
 	'ws://127.0.0.1:8080/ws',
 ];
 
-const SUBNETS = ['192.168.1.', '192.168.0.', '192.168.88.', '10.0.0.', '10.0.1.'];
+// Расширенный список подсетей для сканирования
+const SUBNETS = [
+	'192.168.1.',
+	'192.168.0.',
+	'192.168.88.',
+	'192.168.2.',
+	'192.168.10.',
+	'10.0.0.',
+	'10.0.1.',
+	'10.0.2.',
+	'172.16.0.',
+	'172.16.1.',
+];
 
 const MESSAGE_TYPES = {
 	REGISTER: 'register',

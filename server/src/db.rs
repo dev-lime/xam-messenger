@@ -64,12 +64,32 @@ pub fn get_messages_with_pagination(
 ) -> Result<(Vec<ChatMessage>, Option<String>, bool), rusqlite::Error> {
     // Загружаем на 1 сообщение больше чтобы проверить есть ли ещё
     let sql = if let Some(last_id) = before_id {
-        format!(
-            "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
-             FROM messages WHERE id < '{}' ORDER BY timestamp DESC LIMIT {}",
-            last_id,
-            limit + 1
-        )
+        // Получаем timestamp последнего сообщения и используем его для пагинации
+        let result: Result<(i64,), rusqlite::Error> = conn.query_row(
+            "SELECT timestamp FROM messages WHERE id = ?1",
+            params![last_id],
+            |row| Ok((row.get(0)?,)),
+        );
+
+        if let Ok((ts,)) = result {
+            // Загружаем сообщения с timestamp меньше чем у last_id
+            // Добавляем last_id в условие чтобы исключить его из результатов
+            format!(
+                "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
+                 FROM messages \
+                 WHERE timestamp <= {} AND id != '{}' \
+                 ORDER BY timestamp DESC \
+                 LIMIT {}",
+                ts, last_id, limit + 1
+            )
+        } else {
+            // Если сообщение не найдено, возвращаем все сообщения
+            format!(
+                "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
+                 FROM messages ORDER BY timestamp DESC LIMIT {}",
+                limit + 1
+            )
+        }
     } else {
         format!(
             "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
