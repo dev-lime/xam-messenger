@@ -109,6 +109,76 @@ pub fn get_messages_with_pagination(
     Ok((messages, next_before_id, has_more))
 }
 
+/// Получение сообщений для конкретного чата с пагинацией
+/// Возвращает сообщения с участием chat_peer_id (личные + общие)
+pub fn get_messages_for_chat(
+    conn: &Connection,
+    limit: usize,
+    before_id: Option<&str>,
+    chat_peer_id: &str,
+) -> Result<(Vec<ChatMessage>, Option<String>, bool), rusqlite::Error> {
+    // Загружаем на 1 сообщение больше чтобы проверить есть ли ещё
+    let query_limit = limit + 1;
+
+    // SQL для фильтрации сообщений конкретного чата:
+    // 1. Личные сообщения где chat_peer_id — отправитель или получатель
+    // 2. Общие сообщения (без recipient_id)
+    let sql = if before_id.is_some() {
+        "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
+         FROM messages \
+         WHERE (
+             -- Личные сообщения с участием chat_peer_id
+             (sender_id = ?1 OR recipient_id = ?1)
+             OR
+             -- Общие сообщения (без получателя)
+             (recipient_id IS NULL OR recipient_id = '')
+         )
+         AND (timestamp, id) < (SELECT timestamp, id FROM messages WHERE id = ?2) \
+         ORDER BY timestamp DESC, id DESC \
+         LIMIT ?3"
+    } else {
+        "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
+         FROM messages \
+         WHERE (
+             -- Личные сообщения с участием chat_peer_id
+             (sender_id = ?1 OR recipient_id = ?1)
+             OR
+             -- Общие сообщения (без получателя)
+             (recipient_id IS NULL OR recipient_id = '')
+         )
+         ORDER BY timestamp DESC, id DESC \
+         LIMIT ?2"
+    };
+
+    let mut stmt = conn.prepare(sql)?;
+    let mut messages: Vec<ChatMessage> = if let Some(before_id_val) = before_id {
+        stmt.query_map(
+            params![chat_peer_id, before_id_val, query_limit as i64],
+            parse_message_row,
+        )?
+    } else {
+        stmt.query_map(params![chat_peer_id, query_limit as i64], parse_message_row)?
+    }
+    .filter_map(|r| r.ok())
+    .collect();
+
+    // Проверяем есть ли ещё
+    let loaded_count = messages.len();
+    let has_more = loaded_count > limit;
+
+    // Если есть ещё, убираем лишнее сообщение (оно нужно только для проверки has_more)
+    let next_before_id = if has_more {
+        messages.pop().map(|m| m.id)
+    } else {
+        None
+    };
+
+    // Разворачиваем чтобы вернуть в правильном порядке (старые → новые)
+    messages.reverse();
+
+    Ok((messages, next_before_id, has_more))
+}
+
 /// Парсинг строки базы данных в ChatMessage
 fn parse_message_row(row: &rusqlite::Row) -> Result<ChatMessage, rusqlite::Error> {
     let files_str: String = row.get(7)?;

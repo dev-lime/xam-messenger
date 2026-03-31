@@ -74,6 +74,9 @@ pub struct MessagesQuery {
     #[serde(default = "default_limit")]
     pub limit: usize,
     pub before_id: Option<String>,
+    /// ID пользователя для фильтрации сообщений конкретного чата
+    /// Если не указан, возвращаются все сообщения (общие)
+    pub chat_peer_id: Option<String>,
 }
 
 fn default_limit() -> usize {
@@ -95,17 +98,33 @@ pub async fn get_messages(
 
     let limit = query.limit.max(1).min(200);
 
-    match db::get_messages_with_pagination(&db, limit, query.before_id.as_deref()) {
-        Ok((messages, next_before_id, has_more)) => HttpResponse::Ok().json(json!({
-            "success": true,
-            "data": messages,
-            "before_id": query.before_id,
-            "next_before_id": next_before_id,
-            "has_more": has_more
-        })),
-        Err(e) => HttpResponse::InternalServerError()
-            .json(json!({"success": false, "error": e.to_string()})),
-    }
+    // Если указан chat_peer_id, используем фильтрацию по чату
+    let (messages, next_before_id, has_more) = if let Some(chat_peer_id) = &query.chat_peer_id {
+        match db::get_messages_for_chat(&db, limit, query.before_id.as_deref(), chat_peer_id) {
+            Ok(result) => result,
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"success": false, "error": e.to_string()}))
+            }
+        }
+    } else {
+        // Старое поведение: все сообщения без фильтрации
+        match db::get_messages_with_pagination(&db, limit, query.before_id.as_deref()) {
+            Ok(result) => result,
+            Err(e) => {
+                return HttpResponse::InternalServerError()
+                    .json(json!({"success": false, "error": e.to_string()}))
+            }
+        }
+    };
+
+    HttpResponse::Ok().json(json!({
+        "success": true,
+        "data": messages,
+        "before_id": query.before_id,
+        "next_before_id": next_before_id,
+        "has_more": has_more
+    }))
 }
 
 /// Загрузка файла на сервер

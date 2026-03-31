@@ -485,7 +485,7 @@ function handleMessages(data) {
 			state.lastRequestedBeforeId = nextBeforeId;
 			state.isLoadingMessages = true;
 			updateLoadMoreButton();
-			serverClient.getMessages(50, nextBeforeId);
+			serverClient.getMessages(50, nextBeforeId, state.currentPeer);
 			return;
 		}
 
@@ -597,7 +597,7 @@ async function connectToServer() {
 		if (!state.lastMessageId && state.messages.length === 0) {
 			state.isLoadingMessages = true;
 			updateLoadMoreButton();
-			serverClient.getMessages(50, null);
+			serverClient.getMessages(50, null, state.currentPeer);
 		} else {
 			state.isLoadingMessages = false;
 			updateLoadMoreButton();
@@ -917,7 +917,7 @@ async function loadMoreMessages() {
 	state.lastRequestedBeforeId = beforeId;
 	updateLoadMoreButton();
 
-	serverClient.getMessages(50, beforeId);
+	serverClient.getMessages(50, beforeId, state.currentPeer);
 }
 
 /**
