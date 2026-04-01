@@ -81,24 +81,27 @@
             <header class="chat-header chat-header-empty">
             </header>
 
-            <!-- Список сообщений -->
-            <div class="messages-container" id="messagesContainer">
-                <!-- Кнопка загрузки старых сообщений -->
-                <div class="load-more-container" id="loadMoreContainer" style="display: none;">
-                    <button class="btn btn-load-more" id="loadMoreBtn">
-                        ⏳ Загрузить старые сообщения
-                    </button>
-                </div>
+            <!-- Контейнер для прокрутки -->
+            <div class="chat-scroll-container" id="chatScrollContainer">
+                <!-- Список сообщений -->
+                <div class="messages-container" id="messagesContainer">
+                    <!-- Кнопка загрузки старых сообщений -->
+                    <div class="load-more-container" id="loadMoreContainer" style="display: none;">
+                        <button class="btn btn-load-more" id="loadMoreBtn">
+                            ⏳ Загрузить старые сообщения
+                        </button>
+                    </div>
 
-                <div class="messages" id="messages">
-                    <!-- Сообщения будут здесь -->
+                    <div class="messages" id="messages">
+                        <!-- Сообщения будут здесь -->
+                    </div>
                 </div>
             </div>
 
-            <!-- Прикреплённые файлы -->
+            <!-- Прикреплённые файлы (не прокручивается) -->
             <div class="attached-files" id="attachedFiles" style="display: none;"></div>
 
-            <!-- Панель ввода -->
+            <!-- Панель ввода (поверх контейнера) -->
             <div class="input-area" id="inputArea">
                 <button class="btn btn-attach" id="attachBtn" title="Прикрепить файл">📎</button>
                 <textarea

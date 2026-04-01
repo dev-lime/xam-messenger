@@ -5,18 +5,10 @@ use actix_web::{web, HttpResponse};
 use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::json;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::db;
 use crate::models::AppState;
-
-/// Запрос на регистрацию файла по пути
-#[derive(Deserialize)]
-pub struct RegisterFileRequest {
-    pub path: String,
-    pub name: String,
-}
 
 /// Запрос регистрации пользователя
 #[derive(Deserialize)]
@@ -208,91 +200,6 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
             "error": "No file uploaded"
         })),
     }
-}
-
-/// Регистрация файла по пути (для Tauri drag-drop)
-pub async fn register_file(
-    data: web::Data<AppState>,
-    body: web::Json<RegisterFileRequest>,
-) -> HttpResponse {
-    let file_path = PathBuf::from(&body.path);
-
-    // Проверяем существование файла
-    if !file_path.exists() {
-        return HttpResponse::NotFound().json(json!({
-            "success": false,
-            "error": "File not found"
-        }));
-    }
-
-    // Получаем размер файла
-    let size = match std::fs::metadata(&file_path) {
-        Ok(meta) => meta.len() as i64,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "success": false,
-                "error": format!("Failed to get file size: {}", e)
-            }))
-        }
-    };
-
-    // Копируем файл в директорию загрузок
-    let upload_dir = match dirs::data_local_dir() {
-        Some(dir) => dir.join("xam-messenger").join("files"),
-        None => ".".into(),
-    };
-
-    if let Err(e) = std::fs::create_dir_all(&upload_dir) {
-        return HttpResponse::InternalServerError().json(json!({
-            "success": false,
-            "error": format!("Failed to create upload dir: {}", e)
-        }));
-    }
-
-    let file_id = Uuid::new_v4().to_string();
-    let filename = &body.name;
-    let dest_path = upload_dir.join(format!("{}_{}", file_id, filename));
-
-    if let Err(e) = std::fs::copy(&file_path, &dest_path) {
-        return HttpResponse::InternalServerError().json(json!({
-            "success": false,
-            "error": format!("Failed to copy file: {}", e)
-        }));
-    }
-
-    // Сохраняем метаданные в БД
-    let db = match data.db.lock() {
-        Ok(conn) => conn,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "success": false,
-                "error": format!("Database lock error: {}", e)
-            }))
-        }
-    };
-
-    if let Err(e) = db::save_file_metadata(
-        &db,
-        &file_id,
-        filename,
-        dest_path.to_string_lossy().as_ref(),
-        size,
-    ) {
-        return HttpResponse::InternalServerError().json(json!({
-            "success": false,
-            "error": format!("Failed to save file metadata: {}", e)
-        }));
-    }
-
-    HttpResponse::Ok().json(json!({
-        "success": true,
-        "data": {
-            "id": file_id,
-            "name": filename,
-            "size": size,
-            "path": file_id
-        }
-    }))
 }
 
 /// Скачивание файла по ID
