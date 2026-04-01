@@ -94,19 +94,19 @@ impl AppConfig {
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(DEFAULT_PORT);
-        
+
         let max_file_size = std::env::var("MAX_FILE_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(MAX_PAYLOAD_SIZE);
-        
+
         let cors_origins = std::env::var("CORS_ORIGINS").unwrap_or_else(|_| "*".to_string());
-        
+
         let rate_limit = std::env::var("RATE_LIMIT")
             .ok()
             .and_then(|r| r.parse().ok())
             .unwrap_or(100);
-        
+
         let broadcast_channel_size = std::env::var("BROADCAST_CHANNEL_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -117,7 +117,7 @@ impl AppConfig {
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(get_default_db_path);
-        
+
         let upload_dir = std::env::var("XAM_UPLOAD_DIR")
             .ok()
             .map(PathBuf::from)
@@ -162,7 +162,7 @@ pub fn get_default_upload_dir() -> PathBuf {
 }
 
 /// Инициализирует директорию для базы данных
-pub fn init_db_directory(db_path: &PathBuf) -> std::io::Result<()> {
+pub fn init_db_directory(db_path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -170,7 +170,7 @@ pub fn init_db_directory(db_path: &PathBuf) -> std::io::Result<()> {
 }
 
 /// Инициализирует директорию для загрузок
-pub fn init_upload_directory(upload_dir: &PathBuf) -> std::io::Result<()> {
+pub fn init_upload_directory(upload_dir: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(upload_dir)
 }
 

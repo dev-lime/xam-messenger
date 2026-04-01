@@ -52,7 +52,7 @@ fn get_local_ips() -> Vec<String> {
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Загружаем конфигурацию из .env и переменных окружения
     let config = AppConfig::from_env();
-    
+
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
     info!("🚀 XAM Server v1.0.0");
@@ -403,7 +403,9 @@ mod tests {
         )
         .await;
 
-        let req = test::TestRequest::get().uri("/api/v1/messages").to_request();
+        let req = test::TestRequest::get()
+            .uri("/api/v1/messages")
+            .to_request();
 
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
