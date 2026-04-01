@@ -196,6 +196,7 @@ body {
 	transition: background var(--transition-normal);
 	border-bottom: 1px solid var(--border);
 	gap: 12px;
+	position: relative;
 }
 
 .peer-item:hover {
@@ -222,6 +223,57 @@ body {
 
 .peer-item.active .peer-icon {
 	background: var(--text-inverse);
+}
+
+/* Кнопка меню контакта */
+.peer-menu-btn {
+	background: none;
+	border: none;
+	padding: 6px;
+	cursor: pointer;
+	border-radius: var(--border-radius-sm);
+	transition: background var(--transition-normal);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: currentColor;
+	opacity: 0;
+	flex-shrink: 0;
+	margin-left: auto;
+}
+
+.peer-item:hover .peer-menu-btn {
+	opacity: 1;
+}
+
+.peer-menu-btn:hover {
+	background: rgba(0, 0, 0, 0.1);
+}
+
+.peer-menu-btn .menu-icon {
+	width: 18px;
+	height: 18px;
+}
+
+/* Контекстное меню контакта */
+.peer-context-menu {
+	position: absolute;
+	top: 100%;
+	right: 0;
+	background: var(--bg-primary);
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-md);
+	box-shadow: 0 8px 24px var(--shadow-lg);
+	min-width: 180px;
+	z-index: 1002;
+	display: none;
+	flex-direction: column;
+	overflow: hidden;
+	margin-top: 4px;
+}
+
+.peer-context-menu.open {
+	display: flex;
 }
 
 .peer-info {
@@ -287,81 +339,11 @@ body {
 	flex-shrink: 0;
 }
 
-/* Левая часть шапки: название чата */
-.header-left {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	flex: 1;
-	min-width: 0;
-}
-
-/* Заголовок чата */
-.chat-title {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-
-.chat-title-text {
-	font-weight: 600;
-	font-size: 14px;
-	color: var(--text-primary);
-}
-
-/* Правая часть шапки: кнопка меню */
-.header-right {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-}
-
-/* Контейнер меню чата */
-.chat-menu-container {
-	position: relative;
-}
-
-/* Кнопка меню чата (три точки) */
-.chat-menu-btn {
-	background: none;
-	border: none;
-	padding: 8px;
-	cursor: pointer;
-	border-radius: var(--border-radius-sm);
-	transition: background var(--transition-normal);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	color: var(--text-primary);
-}
-
-.chat-menu-btn:hover {
-	background: var(--bg-secondary);
-}
-
-.chat-menu-btn .menu-icon {
-	width: 20px;
-	height: 20px;
-}
-
-/* Контекстное меню чата */
-.chat-context-menu {
-	position: absolute;
-	top: calc(100% + 8px);
-	right: 0;
-	background: var(--bg-primary);
-	border: 1px solid var(--border);
-	border-radius: var(--border-radius-md);
-	box-shadow: 0 8px 24px var(--shadow-lg);
-	min-width: 180px;
-	z-index: 1001;
-	display: none;
-	flex-direction: column;
-	overflow: hidden;
-}
-
-.chat-context-menu.open {
-	display: flex;
+/* Пустой заголовок (без контента) */
+.chat-header-empty {
+	padding: 0;
+	border-bottom: 1px solid var(--border);
+	min-height: 0;
 }
 
 /* Контейнер профиля с меню */

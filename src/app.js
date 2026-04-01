@@ -57,10 +57,6 @@ const elements = {
 	userProfileHeader: document.getElementById('userProfileHeader'),
 	chatTitle: document.getElementById('chatTitle'),
 	chatTitleText: document.getElementById('chatTitleText'),
-	chatMenuContainer: document.getElementById('chatMenuContainer'),
-	chatMenuBtn: document.getElementById('chatMenuBtn'),
-	chatContextMenu: document.getElementById('chatContextMenu'),
-	menuDeleteChat: document.getElementById('menuDeleteChat'),
 	sendBtn: document.getElementById('sendBtn'),
 	attachBtn: document.getElementById('attachBtn'),
 	fileInput: document.getElementById('fileInput'),
@@ -606,29 +602,74 @@ function updateConnectionStatus(connected, statusText) {
 }
 
 /**
- * Открытие контекстного меню чата
+ * Открытие меню контакта
  */
-function openChatMenu() {
-	if (elements.chatContextMenu) {
-		elements.chatContextMenu.classList.add('open');
+function openPeerMenu(event, peerId, peerName) {
+	// Закрываем другие открытые меню
+	document.querySelectorAll('.peer-context-menu.open').forEach(menu => {
+		menu.classList.remove('open');
+	});
+	
+	// Находим или создаём меню для этого контакта
+	let menu = document.querySelector(`.peer-context-menu[data-user-id="${peerId}"]`);
+	
+	if (!menu) {
+		// Создаём меню
+		menu = document.createElement('div');
+		menu.className = 'peer-context-menu';
+		menu.dataset.userId = peerId;
+		menu.innerHTML = `
+			<button class="profile-menu-item" data-action="delete-chat">
+				<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<polyline points="3 6 5 6 21 6"/>
+					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+				</svg>
+				<span>Удалить чат</span>
+			</button>
+		`;
+		
+		// Обработчик клика по пунктам меню
+		menu.addEventListener('click', (e) => {
+			const actionBtn = e.target.closest('[data-action]');
+			if (actionBtn) {
+				const action = actionBtn.dataset.action;
+				if (action === 'delete-chat') {
+					console.log('Удалить чат с', peerName);
+					// TODO: Реализовать удаление чата
+				}
+				closePeerMenu(peerId);
+			}
+		});
+		
+		// Добавляем меню в элемент контакта
+		const peerElement = document.querySelector(`.peer-item[data-user-id="${peerId}"]`);
+		if (peerElement) {
+			peerElement.appendChild(menu);
+		}
 	}
+	
+	// Показываем меню
+	menu.classList.add('open');
+	
+	// Закрываем при клике вне
+	const closeMenu = (e) => {
+		if (!menu.contains(e.target)) {
+			closePeerMenu(peerId);
+			document.removeEventListener('click', closeMenu);
+		}
+	};
+	setTimeout(() => {
+		document.addEventListener('click', closeMenu);
+	}, 100);
 }
 
 /**
- * Закрытие контекстного меню чата
+ * Закрытие меню контакта
  */
-function closeChatMenu() {
-	if (elements.chatContextMenu) {
-		elements.chatContextMenu.classList.remove('open');
-	}
-}
-
-/**
- * Обновление заголовка чата
- */
-function updateChatTitle(peerName) {
-	if (elements.chatTitleText) {
-		elements.chatTitleText.textContent = peerName || 'Выберите чат';
+function closePeerMenu(peerId) {
+	const menu = document.querySelector(`.peer-context-menu[data-user-id="${peerId}"]`);
+	if (menu) {
+		menu.classList.remove('open');
 	}
 }
 
@@ -1157,7 +1198,6 @@ function createPeerElement(peer) {
 	item.className = `peer-item ${state.currentPeer === peer.id ? 'active' : ''}`;
 	item.dataset.userId = peer.id;
 	item.dataset.userName = peer.name;
-	item.style.cursor = 'pointer';
 
 	const lastMsg = getLastMessageFromUser(peer.id);
 	const isOnline = state.onlineUsers.has(peer.id);
@@ -1173,11 +1213,27 @@ function createPeerElement(peer) {
 		<span class="peer-time ${isOnline ? 'online' : 'offline'}" title="${timeStr}">
 			${isOnline ? 'в сети' : 'не в сети'}
 		</span>
+		<button class="peer-menu-btn" title="Меню" data-user-id="${peer.id}">
+			<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<circle cx="12" cy="12" r="1"/>
+				<circle cx="12" cy="5" r="1"/>
+				<circle cx="12" cy="19" r="1"/>
+			</svg>
+		</button>
 	`;
 
+	// Клик по контакту — выбор пира
 	item.addEventListener('click', (e) => {
+		if (e.target.closest('.peer-menu-btn')) return; // Игнорируем клик по кнопке меню
 		e.stopPropagation();
 		selectPeer(peer.id, peer.name);
+	});
+
+	// Клик по кнопке меню — открываем меню
+	const menuBtn = item.querySelector('.peer-menu-btn');
+	menuBtn.addEventListener('click', (e) => {
+		e.stopPropagation();
+		openPeerMenu(e, peer.id, peer.name);
 	});
 
 	return item;
@@ -1226,7 +1282,6 @@ function selectPeer(userId, userName) {
 		item.classList.toggle('active', item.dataset.userId === userId);
 	});
 
-	updateChatTitle(userName);
 	updateStatusDisplay(true, `Чат с ${userName}`);
 
 	// Фильтруем уже загруженные сообщения для этого чата
@@ -1372,8 +1427,6 @@ function renderMessages(useFiltered = false) {
  * Рендеринг пустого состояния чата
  */
 function renderEmptyChatState() {
-	updateChatTitle('Выберите чат');
-	
 	elements.messages.innerHTML = `
 		<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-tertiary); text-align: center; padding: 40px;">
 			<div style="font-size: 18px; margin-bottom: 10px;">Выберите чат</div>
@@ -1848,31 +1901,7 @@ function setupEventListeners() {
 		});
 	}
 
-	// Обработчики для меню чата
-	if (elements.chatMenuBtn) {
-		elements.chatMenuBtn.addEventListener('click', (e) => {
-			e.stopPropagation();
-			openChatMenu();
-		});
-	}
-
-	// Закрытие меню чата при клике вне
-	document.addEventListener('click', (e) => {
-		if (elements.chatContextMenu && elements.chatMenuContainer) {
-			if (!elements.chatMenuContainer.contains(e.target)) {
-				closeChatMenu();
-			}
-		}
-	});
-
-	// Удаление чата (пока заглушка)
-	if (elements.menuDeleteChat) {
-		elements.menuDeleteChat.addEventListener('click', () => {
-			// TODO: Реализовать удаление чата
-			console.log('Удалить чат...');
-			closeChatMenu();
-		});
-	}
+	// Обработчики для меню контакта уже добавлены в createPeerElement
 }
 
 /**
