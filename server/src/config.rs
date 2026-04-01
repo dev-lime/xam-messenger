@@ -1,5 +1,7 @@
 // Модуль конфигурации для XAM Messenger Server
 
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 /// Адрес сервера по умолчанию
@@ -47,6 +49,14 @@ pub struct AppConfig {
     pub db_path: PathBuf,
     /// Путь к директории загрузок
     pub upload_dir: PathBuf,
+    /// Максимальный размер файла
+    pub max_file_size: usize,
+    /// CORS origins
+    pub cors_origins: String,
+    /// Rate limit (запросов в минуту)
+    pub rate_limit: u32,
+    /// Размер канала для broadcast
+    pub broadcast_channel_size: usize,
 }
 
 impl Default for AppConfig {
@@ -56,6 +66,10 @@ impl Default for AppConfig {
             port: DEFAULT_PORT,
             db_path: get_default_db_path(),
             upload_dir: get_default_upload_dir(),
+            max_file_size: MAX_PAYLOAD_SIZE,
+            cors_origins: "*".to_string(),
+            rate_limit: 100,
+            broadcast_channel_size: BROADCAST_CHANNEL_SIZE,
         }
     }
 }
@@ -72,13 +86,53 @@ impl AppConfig {
 
     /// Создаёт конфигурацию из переменных окружения
     pub fn from_env() -> Self {
+        // Загружаем .env файл (если существует)
+        dotenvy::dotenv().ok();
+
         let host = std::env::var("XAM_HOST").unwrap_or_else(|_| DEFAULT_HOST.to_string());
         let port = std::env::var("XAM_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(DEFAULT_PORT);
+        
+        let max_file_size = std::env::var("MAX_FILE_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(MAX_PAYLOAD_SIZE);
+        
+        let cors_origins = std::env::var("CORS_ORIGINS").unwrap_or_else(|_| "*".to_string());
+        
+        let rate_limit = std::env::var("RATE_LIMIT")
+            .ok()
+            .and_then(|r| r.parse().ok())
+            .unwrap_or(100);
+        
+        let broadcast_channel_size = std::env::var("BROADCAST_CHANNEL_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(BROADCAST_CHANNEL_SIZE);
 
-        Self::new(host, port)
+        // Получаем пути из переменных окружения или используем значения по умолчанию
+        let db_path = std::env::var("XAM_DB_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(get_default_db_path);
+        
+        let upload_dir = std::env::var("XAM_UPLOAD_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(get_default_upload_dir);
+
+        Self {
+            host,
+            port,
+            db_path,
+            upload_dir,
+            max_file_size,
+            cors_origins,
+            rate_limit,
+            broadcast_channel_size,
+        }
     }
 
     /// Возвращает адрес для привязки сервера
@@ -129,6 +183,10 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.host, DEFAULT_HOST);
         assert_eq!(config.port, DEFAULT_PORT);
+        assert_eq!(config.max_file_size, MAX_PAYLOAD_SIZE);
+        assert_eq!(config.cors_origins, "*");
+        assert_eq!(config.rate_limit, 100);
+        assert_eq!(config.broadcast_channel_size, BROADCAST_CHANNEL_SIZE);
     }
 
     #[test]
@@ -161,5 +219,12 @@ mod tests {
     #[test]
     fn test_default_avatar() {
         assert_eq!(DEFAULT_AVATAR, "👤");
+    }
+
+    #[test]
+    fn test_config_new_fields() {
+        let config = AppConfig::default();
+        assert_eq!(config.max_file_size, 100 * 1024 * 1024);
+        assert_eq!(config.rate_limit, 100);
     }
 }

@@ -5,7 +5,7 @@ description = "LAN Messenger built with Tauri + Rust"
 authors = ["Xam"]
 license = "MIT"
 repository = "https://github.com/dev-lime/xam"
-edition = "2026"
+edition = "2024"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -98,7 +98,7 @@ function generateLocalNetworkServers() {
  * @returns {string} HTTP API URL
  */
 function wsToHttpUrl(wsUrl) {
-	return wsUrl.replace('ws://', 'http://').replace('/ws', '/api');
+	return wsUrl.replace('ws://', 'http://').replace('/ws', '/api/v1');
 }
 
 /**

@@ -26,7 +26,7 @@ if (!WebSocketClient) {
 // Проверка доступности сервера перед запуском тестов
 const checkServerAvailability = async () => {
     try {
-        const response = await fetch(`${TEST_SERVER_URL}/api/users`, {
+        const response = await fetch(`${TEST_SERVER_URL}/api/v1/users`, {
             method: 'GET',
             signal: AbortSignal.timeout(5000)
         });
@@ -38,7 +38,7 @@ const checkServerAvailability = async () => {
 
 // Вспомогательная функция для регистрации пользователя
 const registerUser = async (name) => {
-    const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+    const response = await fetch(`${TEST_SERVER_URL}/api/v1/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -95,7 +95,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
         });
 
         test('должен отклонять пустое имя', async () => {
-            const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+            const response = await fetch(`${TEST_SERVER_URL}/api/v1/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: '' }),
@@ -126,7 +126,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
             await registerUser(`User1_${Date.now()}`);
             await registerUser(`User2_${Date.now()}`);
 
-            const response = await fetch(`${TEST_SERVER_URL}/api/users`);
+            const response = await fetch(`${TEST_SERVER_URL}/api/v1/users`);
             const result = await response.json();
 
             expect(result.success).toBe(true);
@@ -618,7 +618,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 
     describe('Статусы онлайн пользователей', () => {
         test('должен возвращать список онлайн пользователей', async () => {
-            const response = await fetch(`${TEST_SERVER_URL}/api/online`);
+            const response = await fetch(`${TEST_SERVER_URL}/api/v1/online`);
             const result = await response.json();
 
             expect(result.success).toBe(true);
@@ -651,7 +651,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 
     describe('CORS заголовки', () => {
         test('должен возвращать CORS заголовки', async () => {
-            const response = await fetch(`${TEST_SERVER_URL}/api/users`, {
+            const response = await fetch(`${TEST_SERVER_URL}/api/v1/users`, {
                 headers: { 'Origin': 'http://example.com' },
             });
 
@@ -660,7 +660,7 @@ describe('Интеграционные тесты - XAM Messenger', () => {
         });
 
         test('должен поддерживать OPTIONS preflight запрос', async () => {
-            const response = await fetch(`${TEST_SERVER_URL}/api/users`, {
+            const response = await fetch(`${TEST_SERVER_URL}/api/v1/users`, {
                 method: 'OPTIONS',
                 headers: {
                     'Origin': 'http://example.com',
@@ -686,7 +686,7 @@ describe('Интеграционные тесты - Краевые случаи'
             ];
 
             for (const name of specialNames) {
-                const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+                const response = await fetch(`${TEST_SERVER_URL}/api/v1/register`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name }),
@@ -702,7 +702,7 @@ describe('Интеграционные тесты - Краевые случаи'
         test('должен обрабатывать очень длинные имена', async () => {
             const longName = 'A'.repeat(1000);
 
-            const response = await fetch(`${TEST_SERVER_URL}/api/register`, {
+            const response = await fetch(`${TEST_SERVER_URL}/api/v1/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: longName }),

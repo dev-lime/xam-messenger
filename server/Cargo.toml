@@ -20,6 +20,7 @@ log = "0.4"
 futures-util = "0.3"
 get_if_addrs = "0.5"
 mdns-sd = "0.13"
+dotenvy = "0.15"
 
 [dev-dependencies]
 actix-rt = "2"
