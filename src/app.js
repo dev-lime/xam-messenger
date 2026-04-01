@@ -65,6 +65,7 @@ const elements = {
 	inputArea: document.getElementById('inputArea'),
 	messages: document.getElementById('messages'),
 	messagesContainer: document.getElementById('messagesContainer'),
+	chatScrollContainer: document.getElementById('chatScrollContainer'),
 	peersList: document.getElementById('peersList'),
 	connectDialog: document.getElementById('connectDialog'),
 	settingsDialog: document.getElementById('settingsDialog'),
@@ -863,8 +864,9 @@ function handleMessages(data) {
 	const nextBeforeId = data.next_before_id || data.nextBeforeId || null;
 	const hasMore = data.has_more !== undefined ? data.has_more : messages.length >= 50;
 
+	const scrollContainer = document.getElementById('chatScrollContainer') || elements.messagesContainer;
 	const oldScrollHeight = elements.messagesContainer.scrollHeight;
-	const oldScrollTop = elements.messagesContainer.scrollTop;
+	const oldScrollTop = scrollContainer.scrollTop;
 
 	// ПРОВЕРКА на зацикливание: если получили ответ на запрос который уже делали
 	if (beforeId && beforeId === state.lastRequestedBeforeId) {
@@ -914,7 +916,7 @@ function handleMessages(data) {
 		// Сохраняем позицию прокрутки при загрузке старых сообщений
 		if (beforeId) {
 			const newScrollHeight = elements.messagesContainer.scrollHeight;
-			elements.messagesContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+			scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
 		}
 	} else {
 		renderMessages();
@@ -1202,17 +1204,15 @@ function createPeerElement(peer) {
 	const lastMsg = getLastMessageFromUser(peer.id);
 	const isOnline = state.onlineUsers.has(peer.id);
 	const peerAvatar = peer.avatar || CONFIG.AVATAR_DEFAULT;
-	const timeStr = formatUserLastSeen(lastMsg, isOnline);
 
 	item.innerHTML = `
 		<span class="peer-icon">${peerAvatar}</span>
 		<div class="peer-info">
 			<div class="peer-name">${escapeHtml(peer.name)}</div>
-			<div class="peer-address">ID: ${peer.id.slice(0, 8)}</div>
+			<div class="peer-status ${isOnline ? 'online' : 'offline'}">
+				${isOnline ? 'в сети' : 'не в сети'}
+			</div>
 		</div>
-		<span class="peer-time ${isOnline ? 'online' : 'offline'}" title="${timeStr}">
-			${isOnline ? 'в сети' : 'не в сети'}
-		</span>
 		<button class="peer-menu-btn" title="Меню" data-user-id="${peer.id}">
 			<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 				<circle cx="12" cy="12" r="1"/>
@@ -1246,26 +1246,6 @@ function getLastMessageFromUser(userId) {
 	return state.messages
 		.filter((m) => m.sender_id === userId)
 		.sort((a, b) => b.timestamp - a.timestamp)[0];
-}
-
-/**
- * Форматирование времени последней активности
- */
-function formatUserLastSeen(lastMsg, isOnline) {
-	if (isOnline) return 'в сети';
-
-	if (!lastMsg) return 'давно не был(а)';
-
-	const lastTime = new Date(lastMsg.timestamp * 1000);
-	const now = new Date();
-	const diff = now - lastTime;
-
-	if (diff < 60000) return 'был(а) только что';
-	if (diff < 3600000)
-		return 'был(а) в ' + lastTime.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-	if (diff < 86400000)
-		return 'был(а) ' + lastTime.toLocaleDateString('ru-RU', { day: 'numeric', month: 'numeric' });
-	return 'был(а) ' + lastTime.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
 }
 
 /**
@@ -1638,7 +1618,8 @@ function updateUserProfile(name, status) {
  * Прокрутка вниз
  */
 function scrollToBottom() {
-	elements.messagesContainer.scrollTop = elements.messagesContainer.scrollHeight;
+	const container = elements.chatScrollContainer || elements.messagesContainer;
+	container.scrollTop = container.scrollHeight;
 }
 
 // ============================================================================
@@ -1926,100 +1907,56 @@ function handleFileSelect(e) {
  */
 function initDragAndDrop() {
 	const dropZone = elements.inputArea;
-	
+
 	console.log('🔧 initDragAndDrop called');
-	
-	// Для macOS используем нативное событие Tauri
-	if (window.__TAURI__) {
-		console.log('🍎 macOS/Tauri detected - using native drag-drop');
-		
-		// Слушаем событие files-dropped от Tauri
-		window.__TAURI__.event.listen('files-dropped', (event) => {
-			console.log('📁 Tauri files-dropped event:', event.payload);
-			
-			// Показываем визуальную индикацию
-			dropZone.classList.add('drag-over');
-			setTimeout(() => dropZone.classList.remove('drag-over'), 200);
-			
-			// Получаем пути файлов и загружаем их
-			const paths = event.payload;
-			handleDroppedPaths(paths);
-		});
-	}
-	
-	// Стандартные события для других платформ
+
+	// Обработка входа драга в зону
+	dropZone.addEventListener('dragenter', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		console.log('🎯 Drag enter');
+		dropZone.classList.add('drag-over');
+	}, false);
+
+	// Обработка перемещения над зоной
 	dropZone.addEventListener('dragover', (e) => {
 		e.preventDefault();
+		e.stopPropagation();
+		if (e.dataTransfer) {
+			e.dataTransfer.dropEffect = 'copy';
+		}
+		console.log('📌 Drag over');
 		dropZone.classList.add('drag-over');
-		console.log('🎯 Drag over');
 	}, false);
 
+	// Обработка выхода из зоны
 	dropZone.addEventListener('dragleave', (e) => {
 		e.preventDefault();
-		dropZone.classList.remove('drag-over');
-		console.log('👋 Drag leave');
+		e.stopPropagation();
+		
+		// Проверяем что уходим именно из dropZone
+		if (e.target === dropZone) {
+			dropZone.classList.remove('drag-over');
+			console.log('👋 Drag leave');
+		}
 	}, false);
 
+	// Обработка сброса файлов
 	dropZone.addEventListener('drop', (e) => {
 		e.preventDefault();
+		e.stopPropagation();
 		dropZone.classList.remove('drag-over');
 		
 		console.log('📁 Drop event');
+		console.log('DataTransfer types:', e.dataTransfer?.types);
 		console.log('Files:', e.dataTransfer?.files?.length);
 		
-		const files = Array.from(e.dataTransfer.files);
-		if (files.length > 0) {
+		if (e.dataTransfer?.files?.length > 0) {
+			const files = Array.from(e.dataTransfer.files);
+			console.log('📄 Files dropped:', files.map(f => `${f.name} (${f.size} bytes)`));
 			handleDroppedFiles(files);
 		}
 	}, false);
-}
-
-/**
- * Обработка сброшенных путей файлов (Tauri native)
- */
-async function handleDroppedPaths(paths) {
-	console.log('📂 Processing dropped paths:', paths);
-	
-	// Показываем визуальную индикацию
-	elements.inputArea.classList.add('drag-over');
-	
-	for (const path of paths) {
-		try {
-			// Извлекаем имя файла из пути
-			const name = path.split('/').pop() || path.split('\\').pop() || 'Unknown';
-			
-			console.log(`📄 Reading file: ${name}`);
-			
-			// В Tauri v2 FS API может быть недоступен через withGlobalTauri
-			// Используем fallback на создание File-подобного объекта
-			// Для полноценной работы нужно читать файл через IPC
-			
-			// Создаём File-подобный объект с путём
-			const fileLike = {
-				name: name,
-				path: path,
-				size: 0, // Размер неизвестен без чтения
-				lastModified: Date.now()
-			};
-			
-			console.log(`✅ File registered: ${name} at ${path}`);
-			
-			// Добавляем в прикреплённые
-			attachedFiles.push(fileLike);
-			
-		} catch (error) {
-			console.error('❌ Error processing file:', error);
-			alert(`Не удалось прочитать файл: ${error.message}`);
-		}
-	}
-	
-	// Убираем подсветку через небольшую задержку
-	setTimeout(() => {
-		elements.inputArea.classList.remove('drag-over');
-	}, 500);
-	
-	renderAttachedFiles();
-	updateSendButton();
 }
 
 /**

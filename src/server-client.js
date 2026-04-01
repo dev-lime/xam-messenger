@@ -669,32 +669,11 @@ class ServerClient {
 
 	/**
 	 * Загрузка файла на сервер
-	 * @param {File|Object} file - Файл для загрузки (File или объект с path)
+	 * @param {File} file - Файл для загрузки
 	 * @returns {Promise<Object>} Информация о загруженном файле
 	 * @throws {Error} При ошибке загрузки
 	 */
 	async uploadFile(file) {
-		// Если это File-подобный объект с путём (из Tauri drag-drop)
-		if (file.path && !file.size) {
-			// Для Tauri drag-drop: регистрируем файл по пути
-			const response = await fetch(`${this.httpUrl}/files/register`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					path: file.path,
-					name: file.name,
-				}),
-			});
-			
-			const result = await response.json();
-			
-			if (result.success) {
-				return result.data;
-			} else {
-				throw new Error(result.error || 'Failed to register file');
-			}
-		}
-		
 		const formData = new FormData();
 		formData.append('file', file);
 

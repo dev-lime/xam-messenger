@@ -144,10 +144,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .route("/api/messages", web::get().to(handlers::get_messages))
             .route("/api/files", web::post().to(handlers::upload_file))
             .route(
-                "/api/files/register",
-                web::post().to(handlers::register_file),
-            )
-            .route(
                 "/api/files/download",
                 web::get().to(handlers::download_file),
             )

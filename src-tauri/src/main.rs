@@ -6,7 +6,6 @@ use mdns_sd::ServiceDaemon;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{Manager, Emitter};
 
 /// Информация о найденном сервере
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,23 +161,6 @@ fn main() {
             get_cached_servers,
             cache_server
         ])
-        .setup(|app| {
-            // Включаем drag'n'drop
-            if let Some(_window) = app.get_webview_window("main") {
-                println!("✅ Drag'n'drop включён");
-            }
-            Ok(())
-        })
-        // Обработка drag'n'drop на уровне окна
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position: _ }) = event {
-                println!("📁 Files dropped: {:?}", paths);
-                
-                // Отправляем пути файлов в JavaScript
-                let paths_vec: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
-                let _ = window.emit("files-dropped", paths_vec);
-            }
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

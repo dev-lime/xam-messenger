@@ -100,7 +100,7 @@ beforeEach(() => {
                             <div class="user-address-header" id="userAddress">--</div>
                         </div>
                     </div>
-                    <div class="status" id="status">⚫ Не в сети</div>
+                    <div class="status" id="status">Не в сети</div>
                 </header>
                 <div class="messages-container" id="messagesContainer">
                     <div class="messages" id="messages"></div>
