@@ -6,6 +6,7 @@ use mdns_sd::ServiceDaemon;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{Manager, Emitter};
 
 /// Информация о найденном сервере
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,11 +29,18 @@ pub struct CachedServer {
     pub source: String,
 }
 
+/// Данные о перетаскиваемом файле
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DroppedFile {
+    pub path: String,
+    pub name: String,
+}
+
 /// Поиск серверов через mDNS
 #[tauri::command]
 fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
     println!("🔍 Запуск поиска mDNS серверов...");
-    
+
     let daemon = ServiceDaemon::new()
         .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
@@ -54,12 +62,12 @@ fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
         match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
             Ok(event) => {
                 println!("📨 mDNS событие: {:?}", event);
-                
+
                 match event {
                     // ServiceResolved содержит полную информацию о сервисе
                     mdns_sd::ServiceEvent::ServiceResolved(info) => {
                         println!("✅ Найдено: {}", info.get_fullname());
-                        
+
                         // Получаем первый IP адрес
                         let addresses = info.get_addresses();
                         if addresses.is_empty() {
@@ -130,29 +138,47 @@ fn cache_server(ip: String, port: u16, source: String) -> Result<(), String> {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     let cached = CachedServer {
         ip,
         port,
         last_seen: timestamp,
         source,
     };
-    
+
     // В реальной реализации будет запись в localStorage через JS
     // Здесь просто логируем
     println!("📦 Кэширование сервера: {:?}", cached);
-    
+
     Ok(())
 }
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             search_mdns_servers,
             get_cached_servers,
             cache_server
         ])
+        .setup(|app| {
+            // Включаем drag'n'drop
+            if let Some(_window) = app.get_webview_window("main") {
+                println!("✅ Drag'n'drop включён");
+            }
+            Ok(())
+        })
+        // Обработка drag'n'drop на уровне окна
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position: _ }) = event {
+                println!("📁 Files dropped: {:?}", paths);
+                
+                // Отправляем пути файлов в JavaScript
+                let paths_vec: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                let _ = window.emit("files-dropped", paths_vec);
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1098,6 +1098,7 @@ body {
 	font-size: 13px;
 	color: var(--text-secondary);
 	line-height: 1.5;
+	margin-top: 20px;
 }
 
 .dialog-actions {
@@ -1359,7 +1360,7 @@ body {
 	background: var(--accent);
 	color: var(--text-inverse);
 	border: none;
-	border-radius: var(--border-radius-sm);
+	border-radius: 32px;
 	font-size: 13px;
 	font-weight: 500;
 	cursor: pointer;

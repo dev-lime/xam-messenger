@@ -1897,64 +1897,111 @@ function handleFileSelect(e) {
  */
 function initDragAndDrop() {
 	const dropZone = elements.inputArea;
-	let dragCounter = 0;
-
-	// Предотвращаем стандартное поведение для всех drag событий
-	['dragenter', 'dragover', 'dragleave', 'drop'].forEach((eventName) => {
-		document.addEventListener(eventName, (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-		}, false);
-	});
-
-	// Обработка входа драга в зону
-	dropZone.addEventListener('dragenter', (e) => {
-		dragCounter++;
-		if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+	
+	console.log('🔧 initDragAndDrop called');
+	
+	// Для macOS используем нативное событие Tauri
+	if (window.__TAURI__) {
+		console.log('🍎 macOS/Tauri detected - using native drag-drop');
+		
+		// Слушаем событие files-dropped от Tauri
+		window.__TAURI__.event.listen('files-dropped', (event) => {
+			console.log('📁 Tauri files-dropped event:', event.payload);
+			
+			// Показываем визуальную индикацию
 			dropZone.classList.add('drag-over');
-		}
-	}, false);
-
-	// Обработка перемещения над зоной
+			setTimeout(() => dropZone.classList.remove('drag-over'), 200);
+			
+			// Получаем пути файлов и загружаем их
+			const paths = event.payload;
+			handleDroppedPaths(paths);
+		});
+	}
+	
+	// Стандартные события для других платформ
 	dropZone.addEventListener('dragover', (e) => {
-		if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-			dropZone.classList.add('drag-over');
-		}
+		e.preventDefault();
+		dropZone.classList.add('drag-over');
+		console.log('🎯 Drag over');
 	}, false);
 
-	// Обработка выхода драга из зоны
 	dropZone.addEventListener('dragleave', (e) => {
-		dragCounter--;
-		if (dragCounter === 0) {
-			dropZone.classList.remove('drag-over');
-		}
+		e.preventDefault();
+		dropZone.classList.remove('drag-over');
+		console.log('👋 Drag leave');
 	}, false);
 
-	// Обработка сброса файлов
 	dropZone.addEventListener('drop', (e) => {
-		dragCounter = 0;
+		e.preventDefault();
 		dropZone.classList.remove('drag-over');
-
+		
+		console.log('📁 Drop event');
+		console.log('Files:', e.dataTransfer?.files?.length);
+		
 		const files = Array.from(e.dataTransfer.files);
 		if (files.length > 0) {
 			handleDroppedFiles(files);
 		}
 	}, false);
+}
 
-	// Глобальная обработка для сброса состояния при уходе за пределы окна
-	document.addEventListener('dragleave', (e) => {
-		if (e.relatedTarget === null) {
-			dragCounter = 0;
-			dropZone.classList.remove('drag-over');
+/**
+ * Обработка сброшенных путей файлов (Tauri native)
+ */
+async function handleDroppedPaths(paths) {
+	console.log('📂 Processing dropped paths:', paths);
+	
+	// Показываем визуальную индикацию
+	elements.inputArea.classList.add('drag-over');
+	
+	for (const path of paths) {
+		try {
+			// Извлекаем имя файла из пути
+			const name = path.split('/').pop() || path.split('\\').pop() || 'Unknown';
+			
+			console.log(`📄 Reading file: ${name}`);
+			
+			// В Tauri v2 FS API может быть недоступен через withGlobalTauri
+			// Используем fallback на создание File-подобного объекта
+			// Для полноценной работы нужно читать файл через IPC
+			
+			// Создаём File-подобный объект с путём
+			const fileLike = {
+				name: name,
+				path: path,
+				size: 0, // Размер неизвестен без чтения
+				lastModified: Date.now()
+			};
+			
+			console.log(`✅ File registered: ${name} at ${path}`);
+			
+			// Добавляем в прикреплённые
+			attachedFiles.push(fileLike);
+			
+		} catch (error) {
+			console.error('❌ Error processing file:', error);
+			alert(`Не удалось прочитать файл: ${error.message}`);
 		}
-	}, false);
+	}
+	
+	// Убираем подсветку через небольшую задержку
+	setTimeout(() => {
+		elements.inputArea.classList.remove('drag-over');
+	}, 500);
+	
+	renderAttachedFiles();
+	updateSendButton();
 }
 
 /**
  * Обработка сброшенных файлов
  */
 function handleDroppedFiles(files) {
+	console.log('📁 Drop files:', files);
+	
 	files.forEach((file) => {
+		console.log('📄 File:', file.name, file.size, 'bytes');
+		
 		if (file.size > CONFIG.MAX_FILE_SIZE) {
 			alert(`Файл "${file.name}" слишком большой (макс. 100MB)`);
 			return;

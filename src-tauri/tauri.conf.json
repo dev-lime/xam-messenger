@@ -20,11 +20,13 @@
 				"minHeight": 500,
 				"resizable": true,
 				"fullscreen": false,
-				"center": true
+				"center": true,
+				"dragDropEnabled": true
 			}
 		],
 		"security": {
-			"csp": null
+			"csp": null,
+			"capabilities": ["main-capability"]
 		}
 	},
 	"bundle": {
