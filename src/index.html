@@ -77,38 +77,8 @@
 
         <!-- Основная панель - чат -->
         <main class="chat">
-            <!-- Верхняя панель -->
-            <header class="chat-header">
-                <!-- Левая часть: Название чата -->
-                <div class="header-left">
-                    <div class="chat-title" id="chatTitle">
-                        <span class="chat-title-text">Выберите чат</span>
-                    </div>
-                </div>
-                
-                <!-- Правая часть: Кнопка меню чата -->
-                <div class="header-right">
-                    <div class="chat-menu-container" id="chatMenuContainer">
-                        <button class="chat-menu-btn" id="chatMenuBtn" title="Меню чата">
-                            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="1"/>
-                                <circle cx="12" cy="5" r="1"/>
-                                <circle cx="12" cy="19" r="1"/>
-                            </svg>
-                        </button>
-                        
-                        <!-- Контекстное меню чата -->
-                        <div class="chat-context-menu" id="chatContextMenu">
-                            <button class="profile-menu-item" id="menuDeleteChat">
-                                <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="3 6 5 6 21 6"/>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
-                                <span>Удалить чат</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
+            <!-- Верхняя панель (пустая, без заголовка) -->
+            <header class="chat-header chat-header-empty">
             </header>
 
             <!-- Список сообщений -->
