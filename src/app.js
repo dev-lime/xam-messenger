@@ -610,16 +610,20 @@ function openPeerMenu(event, peerId, peerName) {
 	document.querySelectorAll('.peer-context-menu.open').forEach(menu => {
 		menu.classList.remove('open');
 	});
-	
+
 	// Находим или создаём меню для этого контакта
 	let menu = document.querySelector(`.peer-context-menu[data-user-id="${peerId}"]`);
-	
+
 	if (!menu) {
 		// Создаём меню
 		menu = document.createElement('div');
 		menu.className = 'peer-context-menu';
 		menu.dataset.userId = peerId;
 		menu.innerHTML = `
+			<div class="peer-menu-info">
+				<div class="peer-menu-id">ID: ${peerId}</div>
+			</div>
+			<div class="profile-menu-divider"></div>
 			<button class="profile-menu-item" data-action="delete-chat">
 				<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<polyline points="3 6 5 6 21 6"/>
@@ -628,7 +632,7 @@ function openPeerMenu(event, peerId, peerName) {
 				<span>Удалить чат</span>
 			</button>
 		`;
-		
+
 		// Обработчик клика по пунктам меню
 		menu.addEventListener('click', (e) => {
 			const actionBtn = e.target.closest('[data-action]');
@@ -641,17 +645,17 @@ function openPeerMenu(event, peerId, peerName) {
 				closePeerMenu(peerId);
 			}
 		});
-		
+
 		// Добавляем меню в элемент контакта
 		const peerElement = document.querySelector(`.peer-item[data-user-id="${peerId}"]`);
 		if (peerElement) {
 			peerElement.appendChild(menu);
 		}
 	}
-	
+
 	// Показываем меню
 	menu.classList.add('open');
-	
+
 	// Закрываем при клике вне
 	const closeMenu = (e) => {
 		if (!menu.contains(e.target)) {
