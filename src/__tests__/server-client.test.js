@@ -51,7 +51,7 @@ class TestServerClient {
     async connect(serverUrl = null) {
         const url = serverUrl || this.serverCandidates[0];
         this.serverUrl = url;
-        this.httpUrl = url.replace('ws://', 'http://').replace('/ws', '/api');
+        this.httpUrl = url.replace('ws://', 'http://').replace('/ws', '/api/v1');
 
         this.ws = new MockWebSocket(url);
 
@@ -199,7 +199,7 @@ describe('ServerClient', () => {
             await client.connect('ws://localhost:8080/ws');
 
             expect(client.serverUrl).toBe('ws://localhost:8080/ws');
-            expect(client.httpUrl).toBe('http://localhost:8080/api');
+            expect(client.httpUrl).toBe('http://localhost:8080/api/v1');
         });
 
         test('должен использовать первый сервер из списка если URL не указан', async () => {
@@ -211,7 +211,7 @@ describe('ServerClient', () => {
         test('должен преобразовывать WebSocket URL в HTTP URL', async () => {
             await client.connect('ws://192.168.1.100:8080/ws');
 
-            expect(client.httpUrl).toBe('http://192.168.1.100:8080/api');
+            expect(client.httpUrl).toBe('http://192.168.1.100:8080/api/v1');
         });
     });
 
@@ -338,7 +338,7 @@ describe('ServerClient', () => {
             expect(user).toEqual(mockUser);
             expect(client.user).toEqual(mockUser);
             expect(fetch).toHaveBeenCalledWith(
-                'http://localhost:8080/api/register',
+                'http://localhost:8080/api/v1/register',
                 expect.objectContaining({
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -370,7 +370,7 @@ describe('ServerClient', () => {
             });
 
             await client.connect('ws://localhost:8080/ws');
-            client.httpUrl = 'http://localhost:8080/api';
+            client.httpUrl = 'http://localhost:8080/api/v1';
 
             await expect(client.register('')).rejects.toThrow('Invalid name');
         });
@@ -389,7 +389,7 @@ describe('ServerClient', () => {
                 json: async () => ({ success: true, data: mockUsers })
             });
 
-            client.httpUrl = 'http://localhost:8080/api';
+            client.httpUrl = 'http://localhost:8080/api/v1';
             const users = await client.getUsers();
 
             expect(users).toEqual(mockUsers);
@@ -402,7 +402,7 @@ describe('ServerClient', () => {
                 json: async () => ({ success: true })
             });
 
-            client.httpUrl = 'http://localhost:8080/api';
+            client.httpUrl = 'http://localhost:8080/api/v1';
             const users = await client.getUsers();
 
             expect(users).toEqual([]);
@@ -808,7 +808,7 @@ describe('ServerClient - Краевые случаи', () => {
             await client.connect('ws://localhost:8081/ws');
 
             expect(client.serverUrl).toBe('ws://localhost:8081/ws');
-            expect(client.httpUrl).toBe('http://localhost:8081/api');
+            expect(client.httpUrl).toBe('http://localhost:8081/api/v1');
             expect(client.ws).not.toBe(firstWs);
         });
 

@@ -10,6 +10,7 @@
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::needless_return)]
 
+mod config;
 mod db;
 mod handlers;
 mod models;
@@ -24,6 +25,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
+use config::AppConfig;
 use models::AppState;
 use websocket::ws_handler;
 
@@ -48,22 +50,28 @@ fn get_local_ips() -> Vec<String> {
 
 #[actix_web::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Загружаем конфигурацию из .env и переменных окружения
+    let config = AppConfig::from_env();
+    
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-    // Инициализация БД
-    let db_path = dirs::config_dir()
-        .unwrap_or_else(|| ".".into())
-        .join("xam-messenger")
-        .join("xam.db");
+    info!("🚀 XAM Server v1.0.0");
+    info!("📡 Хост: {}, Порт: {}", config.host, config.port);
 
+    // Инициализация БД
+    let db_path = &config.db_path;
     std::fs::create_dir_all(db_path.parent().unwrap())?;
 
-    let conn = Connection::open(&db_path)?;
+    let conn = Connection::open(db_path)?;
 
     // Инициализация схемы БД
     db::init_database(&conn)?;
 
     info!("✅ База данных: {}", db_path.display());
+
+    // Инициализация директории для загрузок
+    std::fs::create_dir_all(&config.upload_dir)?;
+    info!("📁 Директория загрузок: {}", config.upload_dir.display());
 
     // Получаем и выводим локальные IP адреса
     let local_ips = get_local_ips();
@@ -115,7 +123,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     let db = Arc::new(Mutex::new(conn));
-    let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
+    let broadcast_size = config.broadcast_channel_size;
+    let (tx, _rx) = broadcast::channel::<serde_json::Value>(broadcast_size);
     let online_users = Arc::new(Mutex::new(HashMap::new()));
     let state = AppState {
         db,
@@ -123,8 +132,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         online_users,
     };
 
-    info!("🚀 XAM Server на 0.0.0.0:8080");
+    info!("🚀 Запуск сервера на {}:{}", config.host, config.port);
 
+    let server_config = config.clone();
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -137,19 +147,19 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .wrap(cors)
             .app_data(web::Data::new(state.clone()))
             .wrap(middleware::Logger::default())
-            .app_data(web::PayloadConfig::new(100 * 1024 * 1024))
+            .app_data(web::PayloadConfig::new(server_config.max_file_size))
             .route("/ws", web::get().to(ws_handler))
-            .route("/api/register", web::post().to(handlers::register))
-            .route("/api/users", web::get().to(handlers::get_users))
-            .route("/api/messages", web::get().to(handlers::get_messages))
-            .route("/api/files", web::post().to(handlers::upload_file))
+            .route("/api/v1/register", web::post().to(handlers::register))
+            .route("/api/v1/users", web::get().to(handlers::get_users))
+            .route("/api/v1/messages", web::get().to(handlers::get_messages))
+            .route("/api/v1/files", web::post().to(handlers::upload_file))
             .route(
-                "/api/files/download",
+                "/api/v1/files/download",
                 web::get().to(handlers::download_file),
             )
-            .route("/api/online", web::get().to(handlers::get_online_users))
+            .route("/api/v1/online", web::get().to(handlers::get_online_users))
     })
-    .bind("0.0.0.0:8080")?
+    .bind(format!("{}:{}", server_config.host, server_config.port))?
     .run()
     .await;
 
@@ -233,12 +243,12 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/register", web::post().to(handlers::register)),
+                .route("/api/v1/register", web::post().to(handlers::register)),
         )
         .await;
 
         let req = test::TestRequest::post()
-            .uri("/api/register")
+            .uri("/api/v1/register")
             .set_json(json!({ "name": "Тестовый Пользователь" }))
             .to_request();
 
@@ -268,12 +278,12 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/register", web::post().to(handlers::register)),
+                .route("/api/v1/register", web::post().to(handlers::register)),
         )
         .await;
 
         let req = test::TestRequest::post()
-            .uri("/api/register")
+            .uri("/api/v1/register")
             .set_json(json!({ "name": "Existing User" }))
             .to_request();
 
@@ -292,12 +302,12 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/register", web::post().to(handlers::register)),
+                .route("/api/v1/register", web::post().to(handlers::register)),
         )
         .await;
 
         let req = test::TestRequest::post()
-            .uri("/api/register")
+            .uri("/api/v1/register")
             .set_json(json!({ "name": "" }))
             .to_request();
 
@@ -335,11 +345,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/users", web::get().to(handlers::get_users)),
+                .route("/api/v1/users", web::get().to(handlers::get_users)),
         )
         .await;
 
-        let req = test::TestRequest::get().uri("/api/users").to_request();
+        let req = test::TestRequest::get().uri("/api/v1/users").to_request();
 
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
@@ -364,11 +374,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/online", web::get().to(handlers::get_online_users)),
+                .route("/api/v1/online", web::get().to(handlers::get_online_users)),
         )
         .await;
 
-        let req = test::TestRequest::get().uri("/api/online").to_request();
+        let req = test::TestRequest::get().uri("/api/v1/online").to_request();
 
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
@@ -389,11 +399,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/messages", web::get().to(handlers::get_messages)),
+                .route("/api/v1/messages", web::get().to(handlers::get_messages)),
         )
         .await;
 
-        let req = test::TestRequest::get().uri("/api/messages").to_request();
+        let req = test::TestRequest::get().uri("/api/v1/messages").to_request();
 
         let resp = test::call_service(&app, req).await;
         assert!(resp.status().is_success());
@@ -430,12 +440,12 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/messages", web::get().to(handlers::get_messages)),
+                .route("/api/v1/messages", web::get().to(handlers::get_messages)),
         )
         .await;
 
         let req = test::TestRequest::get()
-            .uri("/api/messages?limit=5")
+            .uri("/api/v1/messages?limit=5")
             .to_request();
 
         let resp = test::call_service(&app, req).await;
@@ -488,13 +498,13 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/messages", web::get().to(handlers::get_messages)),
+                .route("/api/v1/messages", web::get().to(handlers::get_messages)),
         )
         .await;
 
         // Запрашиваем сообщения для чата user1-user2
         let req = test::TestRequest::get()
-            .uri("/api/messages?chat_peer_id=user2")
+            .uri("/api/v1/messages?chat_peer_id=user2")
             .to_request();
 
         let resp = test::call_service(&app, req).await;
@@ -517,11 +527,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
-                .route("/api/files", web::post().to(handlers::upload_file)),
+                .route("/api/v1/files", web::post().to(handlers::upload_file)),
         )
         .await;
 
-        let req = test::TestRequest::post().uri("/api/files").to_request();
+        let req = test::TestRequest::post().uri("/api/v1/files").to_request();
 
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 400);
@@ -535,13 +545,13 @@ mod tests {
     async fn test_download_file_not_found() {
         let state = create_test_state();
         let app = test::init_service(App::new().app_data(web::Data::new(state)).route(
-            "/api/files/download",
+            "/api/v1/files/download",
             web::get().to(handlers::download_file),
         ))
         .await;
 
         let req = test::TestRequest::get()
-            .uri("/api/files/download?path=/nonexistent")
+            .uri("/api/v1/files/download?path=/nonexistent")
             .to_request();
 
         let resp = test::call_service(&app, req).await;
