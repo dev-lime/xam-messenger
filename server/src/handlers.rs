@@ -24,19 +24,12 @@ fn default_avatar() -> String {
 
 /// Регистрация нового пользователя
 pub async fn register(data: web::Data<AppState>, body: web::Json<RegisterRequest>) -> HttpResponse {
-    let db = match data.db.lock() {
-        Ok(conn) => conn,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(json!({"success": false, "error": format!("Database lock error: {}", e)}))
-        }
-    };
-
     let name = body.name.trim();
     if name.is_empty() {
         return HttpResponse::BadRequest().json(json!({"success": false, "error": "Empty name"}));
     }
 
+    let db = data.db.lock().await;
     match db::get_or_create_user(&db, name, &body.avatar) {
         Ok(user) => HttpResponse::Ok().json(json!({"success": true, "data": user})),
         Err(e) => HttpResponse::InternalServerError()
@@ -46,14 +39,7 @@ pub async fn register(data: web::Data<AppState>, body: web::Json<RegisterRequest
 
 /// Получение списка всех пользователей
 pub async fn get_users(data: web::Data<AppState>) -> HttpResponse {
-    let db = match data.db.lock() {
-        Ok(conn) => conn,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(json!({"success": false, "error": format!("Database lock error: {}", e)}))
-        }
-    };
-
+    let db = data.db.lock().await;
     match db::get_all_users(&db) {
         Ok(users) => HttpResponse::Ok().json(json!({"success": true, "data": users})),
         Err(e) => HttpResponse::InternalServerError()
@@ -63,7 +49,7 @@ pub async fn get_users(data: web::Data<AppState>) -> HttpResponse {
 
 /// Получение списка пользователей онлайн
 pub async fn get_online_users(data: web::Data<AppState>) -> HttpResponse {
-    let online = data.online_users.lock().unwrap();
+    let online = data.online_users.lock().await;
     let online_list: Vec<String> = online.keys().cloned().collect();
     HttpResponse::Ok().json(json!({"success": true, "data": online_list}))
 }
@@ -88,16 +74,9 @@ pub async fn get_messages(
     data: web::Data<AppState>,
     query: web::Query<MessagesQuery>,
 ) -> HttpResponse {
-    let db = match data.db.lock() {
-        Ok(conn) => conn,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(json!({"success": false, "error": format!("Database lock error: {}", e)}))
-        }
-    };
-
     let limit = query.limit.max(1).min(200);
 
+    let db = data.db.lock().await;
     // Если указан chat_peer_id, используем фильтрацию по чату
     let (messages, next_before_id, has_more) = if let Some(chat_peer_id) = &query.chat_peer_id {
         match db::get_messages_for_chat(&db, limit, query.before_id.as_deref(), chat_peer_id) {
@@ -169,19 +148,20 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 }));
             }
 
-            let db = data.db.lock().unwrap_or_else(|e| e.into_inner());
-
-            if let Err(e) = db::save_file_metadata(
-                &db,
-                &file_id,
-                &filename,
-                filepath.to_string_lossy().as_ref(),
-                size as i64,
-            ) {
-                return HttpResponse::InternalServerError().json(json!({
-                    "success": false,
-                    "error": format!("Failed to save file metadata: {}", e)
-                }));
+            {
+                let db = data.db.lock().await;
+                if let Err(e) = db::save_file_metadata(
+                    &db,
+                    &file_id,
+                    &filename,
+                    filepath.to_string_lossy().as_ref(),
+                    size as i64,
+                ) {
+                    return HttpResponse::InternalServerError().json(json!({
+                        "success": false,
+                        "error": format!("Failed to save file metadata: {}", e)
+                    }));
+                }
             }
 
             // Возвращаем только ID файла, а не полный путь
@@ -218,14 +198,7 @@ pub async fn download_file(
     };
 
     // Ищем файл в базе данных по ID
-    let db = match data.db.lock() {
-        Ok(conn) => conn,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(json!({"success": false, "error": format!("Database error: {}", e)}))
-        }
-    };
-
+    let db = data.db.lock().await;
     let filepath = match db::get_file_path(&db, file_id) {
         Ok(Some(path)) => path,
         Ok(None) => {

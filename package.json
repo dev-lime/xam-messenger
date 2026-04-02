@@ -45,8 +45,17 @@
       "integration.test.js"
     ],
     "collectCoverageFrom": [
-      "src/**/*.js",
-      "!src/__tests__/**"
+      "<rootDir>/src/**/*.js",
+      "!<rootDir>/src/__tests__/**"
+    ],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/",
+      "/__tests__/"
+    ],
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "html"
     ],
     "transformIgnorePatterns": [
       "node_modules/(?!(node_modules)/)"

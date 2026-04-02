@@ -289,29 +289,48 @@ class ServerClient {
 		console.log('🔍 Сканирование локальной сети...');
 		const candidates = generateLocalNetworkServers();
 		const found = [];
-
-		// Сканируем с ограничением по времени
-		const startTime = Date.now();
 		
-		for (const url of candidates) {
-			if (Date.now() - startTime > 15000) { // Максимум 15 секунд на сканирование
-				console.log('⏱️ Превышено время сканирования');
-				break;
+		// Оптимизация: параллельное сканирование с ограничением concurrent запросов
+		const CONCURRENCY = 20;  // Максимум 20 одновременных запросов
+		const SCAN_TIMEOUT = 500;  // Уменьшенный таймаут (500ms вместо 2000ms)
+		
+		console.log(`📡 Сканирование ${candidates.length} адресов (параллельно по ${CONCURRENCY})...`);
+		
+		// Функция для пинга с ограничением по времени
+		const pingWithTimeout = async (url) => {
+			const httpUrl = wsToHttpUrl(url);
+			const isAlive = await pingServer(httpUrl, SCAN_TIMEOUT);
+			return { url, httpUrl, isAlive };
+		};
+		
+		// Сканируем пачками по CONCURRENCY адресов
+		for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+			const batch = candidates.slice(i, i + CONCURRENCY);
+			
+			// Параллельный пинг всех адресов в пачке
+			const results = await Promise.allSettled(
+				batch.map(url => pingWithTimeout(url))
+			);
+			
+			// Обрабатываем результаты
+			for (const result of results) {
+				if (result.status === 'fulfilled' && result.value.isAlive) {
+					const { url, httpUrl } = result.value;
+					const ip = extractIpFromWsUrl(url);
+					found.push({
+						ip,
+						port: 8080,
+						wsUrl: url,
+						httpUrl,
+						source: 'scan',
+					});
+					console.log('✅ Найден сервер:', url);
+				}
 			}
 			
-			const httpUrl = wsToHttpUrl(url);
-			const isAlive = await pingServer(httpUrl, WS_CONFIG.SCAN_TIMEOUT);
-			
-			if (isAlive) {
-				const ip = extractIpFromWsUrl(url);
-				found.push({
-					ip,
-					port: 8080,
-					wsUrl: url,
-					httpUrl,
-					source: 'scan',
-				});
-				console.log('✅ Найден сервер:', url);
+			// Небольшая задержка между пачками для избежания перегрузки сети
+			if (i + CONCURRENCY < candidates.length) {
+				await new Promise(resolve => setTimeout(resolve, 50));
 			}
 		}
 
