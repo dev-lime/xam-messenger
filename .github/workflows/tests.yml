@@ -107,12 +107,24 @@ jobs:
     - name: Build server
       working-directory: ./server
       run: cargo build --release
-    
+
     - name: Start server
       run: |
         ./server/target/release/xam-server &
         sleep 2
-    
+
+    - name: Wait for server to be ready
+      run: |
+        for i in {1..10}; do
+          if curl -s http://localhost:8080/api/v1/users > /dev/null; then
+            echo "✅ Server is ready"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "❌ Server did not start"
+        exit 1
+
     - name: Run integration tests
       run: npm run test:integration
       env:
