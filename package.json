@@ -4,7 +4,7 @@
   "description": "LAN Messenger Client Tests",
   "private": true,
   "scripts": {
-    "test": "jest --coverage --transformIgnorePatterns 'node_modules/' --testPathIgnorePatterns 'integration.test.js'",
+    "test": "jest --coverage --testPathIgnorePatterns 'integration.test.js'",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage --coverageReporters=html",
     "test:integration": "jest --config jest.integration.config.js",
@@ -57,8 +57,14 @@
       "lcov",
       "html"
     ],
+    "transform": {
+      "^.+\\.jsx?$": "babel-jest"
+    },
     "transformIgnorePatterns": [
       "node_modules/(?!(node_modules)/)"
-    ]
+    ],
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/src/$1"
+    }
   }
 }

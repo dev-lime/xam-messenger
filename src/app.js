@@ -14,6 +14,9 @@ import {
 	STATUS_ICONS,
 } from './utils/helpers.js';
 
+// Импортируем ServerClient для инициализации
+import './server-client.js';
+
 // ============================================================================
 // DOM элементы
 // ============================================================================
@@ -1936,8 +1939,57 @@ if (typeof window !== 'undefined' && !window.__TEST_MODE__) {
 }
 
 /**
- * Экспорт для тестов
+ * Экспорт для тестов (ES modules + CommonJS)
+ */
+export {
+	init,
+	loadUserSettings,
+	saveUserSettings,
+	connectToServer,
+	discoverAndConnect,
+	openServerSelector,
+	refreshServerList,
+	handleNewMessage,
+	handleAck,
+	handleMessages,
+	handleUserOnline,
+	handleUserUpdated,
+	selectPeer,
+	renderPeers,
+	loadPeers,
+	sendMessage,
+	renderMessages,
+	filterMessagesForCurrentPeer,
+	isMessageInCurrentChat,
+	updateLoadMoreButton,
+	loadMoreMessages,
+};
+
+/**
+ * Экспорт для тестов (CommonJS для Jest)
  */
 if (typeof module !== 'undefined' && module.exports) {
-	module.exports = { init, loadUserSettings };
+	module.exports = {
+		init,
+		loadUserSettings,
+		saveUserSettings,
+		connectToServer,
+		discoverAndConnect,
+		openServerSelector,
+		refreshServerList,
+		handleNewMessage,
+		handleAck,
+		handleMessages,
+		handleUserOnline,
+		handleUserUpdated,
+		selectPeer,
+		renderPeers,
+		loadPeers,
+		sendMessage,
+		renderMessages,
+		filterMessagesForCurrentPeer,
+		isMessageInCurrentChat,
+		updateLoadMoreButton,
+		loadMoreMessages,
+	};
 }
