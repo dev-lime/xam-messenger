@@ -5,7 +5,6 @@
 //! - HTTP API для регистрации, получения пользователей и загрузки файлов
 //! - SQLite для хранения данных
 
-#![allow(clippy::await_holding_lock)]
 #![allow(clippy::manual_clamp)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::needless_return)]
@@ -22,8 +21,8 @@ use log::{info, warn};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use rusqlite::Connection;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
 
 use config::AppConfig;
 use models::AppState;
@@ -135,16 +134,49 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("🚀 Запуск сервера на {}:{}", config.host, config.port);
 
     let server_config = config.clone();
+    let cors_origins = config.cors_origins.clone();
     let server = HttpServer::new(move || {
-        let cors = Cors::default()
-            .allow_any_origin()
-            .allow_any_method()
-            .allow_any_header()
-            .send_wildcard()
-            .max_age(3600);
+        // Настройка CORS из конфигурации
+        let cors = if cors_origins == "*" {
+            // Разрешить все origin
+            Cors::default()
+                .allow_any_origin()
+                .allow_any_method()
+                .allow_any_header()
+                .send_wildcard()
+                .max_age(3600)
+        } else {
+            // Использовать список разрешённых origin из конфигурации
+            let origins: Arc<str> = cors_origins.clone().into();
+            Cors::default()
+                .allowed_origin_fn(move |origin, _req_head| {
+                    origins.split(',').any(|s| s.trim() == origin)
+                })
+                .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+                .allowed_headers(vec!["Content-Type", "Authorization"])
+                .send_wildcard()
+                .max_age(3600)
+        };
+
+        // Настройка Rate Limiting
+        // rate_limit = запросов в минуту, конвертируем в секунды на запрос
+        // При rate_limit=100: 60/100 = 0.6 сек на запрос, но используем целочисленное деление
+        // Поэтому используем формулу: seconds_per_request = 60 / rate_limit (минимум 1)
+        let seconds_per_request = if server_config.rate_limit >= 60 {
+            1
+        } else {
+            60 / server_config.rate_limit.max(1)
+        };
+        
+        let governor_conf = actix_governor::GovernorConfigBuilder::default()
+            .seconds_per_request(seconds_per_request.into())
+            .burst_size(server_config.rate_limit)
+            .finish()
+            .expect("Failed to create GovernorConfig");
 
         App::new()
             .wrap(cors)
+            .wrap(actix_governor::Governor::new(&governor_conf))
             .app_data(web::Data::new(state.clone()))
             .wrap(middleware::Logger::default())
             .app_data(web::PayloadConfig::new(server_config.max_file_size))
@@ -180,37 +212,38 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 /// Создаёт тестовое состояние с временной БД (в памяти)
 #[cfg(test)]
-pub fn create_test_state() -> AppState {
+pub async fn create_test_state() -> AppState {
     let db = Arc::new(Mutex::new(
         Connection::open(":memory:").expect("Failed to create in-memory DB"),
     ));
 
     // Инициализация тестовой БД
-    let conn = db.lock().unwrap();
-    conn.execute("PRAGMA journal_mode = WAL", []).ok();
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
-            text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
-            recipient_id TEXT, files TEXT DEFAULT '[]'
-        )",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS files (
-            id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
-            sender_id TEXT, recipient_id TEXT, timestamp INTEGER
-        )",
-        [],
-    )
-    .unwrap();
-    drop(conn);
+    {
+        let conn = db.lock().await;
+        conn.execute("PRAGMA journal_mode = WAL", []).ok();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
+                text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
+                recipient_id TEXT, files TEXT DEFAULT '[]'
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
+                sender_id TEXT, recipient_id TEXT, timestamp INTEGER
+            )",
+            [],
+        )
+        .unwrap();
+    }
 
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
     let online_users = Arc::new(Mutex::new(HashMap::new()));
@@ -239,7 +272,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_register_new_user() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
@@ -263,11 +296,11 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_register_existing_user() {
-        let state = create_test_state();
+        let state = create_test_state().await;
 
         // Создаём пользователя
         {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock().await;
             conn.execute(
                 "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
                 params!["test-id", "Existing User", "👤"],
@@ -298,7 +331,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_register_empty_name() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
@@ -325,11 +358,11 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_get_users() {
-        let state = create_test_state();
+        let state = create_test_state().await;
 
         // Добавляем тестовых пользователей
         {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock().await;
             conn.execute(
                 "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
                 params!["user1", "Alice", "👩"],
@@ -362,11 +395,11 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_get_online_users() {
-        let state = create_test_state();
+        let state = create_test_state().await;
 
         // Добавляем пользователя в онлайн
         {
-            let mut online = state.online_users.lock().unwrap();
+            let mut online = state.online_users.lock().await;
             online.insert("user1".to_string(), 12345);
             online.insert("user2".to_string(), 12346);
         }
@@ -395,7 +428,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_get_messages_empty() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
@@ -417,11 +450,11 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_get_messages_with_limit() {
-        let state = create_test_state();
+        let state = create_test_state().await;
 
         // Добавляем тестовые сообщения
         {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock().await;
             for i in 0..10 {
                 conn.execute(
                     "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status) \
@@ -461,11 +494,11 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_get_messages_for_chat() {
-        let state = create_test_state();
+        let state = create_test_state().await;
 
         // Добавляем тестовые сообщения для разных чатов
         {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock().await;
             // Личные сообщения между user1 и user2
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
@@ -525,7 +558,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_upload_file_no_file() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
@@ -545,7 +578,7 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_download_file_not_found() {
-        let state = create_test_state();
+        let state = create_test_state().await;
         let app = test::init_service(App::new().app_data(web::Data::new(state)).route(
             "/api/v1/files/download",
             web::get().to(handlers::download_file),

@@ -555,3 +555,6 @@ describe('app.js - isMessageInCurrentChat', () => {
         });
     });
 });
+
+// Импортируем модули для отслеживания покрытия (после всех тестов)
+require('../server-client.js');

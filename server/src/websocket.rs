@@ -3,28 +3,63 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_ws::{Message, MessageStream};
 use chrono::Utc;
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
+use std::panic::AssertUnwindSafe;
 use std::time::SystemTime;
 use uuid::Uuid;
 
 use crate::db;
 use crate::models::{AppState, ChatMessage, ClientMsg, User};
 
-/// Обработка клиентского сообщения
+/// Обработка клиентского сообщения с защитой от паник
 pub async fn handle_client_message(
     client_msg: ClientMsg,
     user_id: &mut Option<String>,
     session: &mut actix_ws::Session,
     state: &AppState,
 ) {
-    match client_msg.msg_type.as_str() {
-        "register" => handle_register(client_msg, user_id, session, state).await,
-        "update_profile" => handle_update_profile(client_msg, user_id, session, state).await,
-        "message" => handle_message(client_msg, user_id, session, state).await,
-        "ack" => handle_ack(client_msg, user_id, session, state).await,
-        "get_messages" => handle_get_messages(client_msg, session, state).await,
-        _ => log::warn!("⚠️ Неизвестный тип сообщения: {}", client_msg.msg_type),
+    let msg_type = client_msg.msg_type.clone();
+
+    // Используем AssertUnwindSafe для защиты от паник в async контексте
+    let future = AssertUnwindSafe(async {
+        match client_msg.msg_type.as_str() {
+            "register" => handle_register(client_msg, user_id, session, state).await,
+            "update_profile" => handle_update_profile(client_msg, user_id, session, state).await,
+            "message" => handle_message(client_msg, user_id, session, state).await,
+            "ack" => handle_ack(client_msg, user_id, session, state).await,
+            "get_messages" => handle_get_messages(client_msg, session, state).await,
+            _ => log::warn!("⚠️ Неизвестный тип сообщения: {}", client_msg.msg_type),
+        }
+    });
+
+    // Ловим паники внутри future
+    match future.catch_unwind().await {
+        Ok(()) => {}
+        Err(e) => {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Неизвестная паника".to_string()
+            };
+            log::error!(
+                "❌ Паника при обработке сообщения типа '{}': {}",
+                msg_type,
+                msg
+            );
+            // Отправляем сообщение об ошибке клиенту
+            let _ = session
+                .text(
+                    json!({
+                        "type": "error",
+                        "message": format!("Ошибка обработки: {}", msg)
+                    })
+                    .to_string(),
+                )
+                .await;
+        }
     }
 }
 
@@ -35,25 +70,20 @@ async fn handle_register(
     session: &mut actix_ws::Session,
     state: &AppState,
 ) {
-    let conn = match state.db.lock() {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to lock database: {}", e);
-            return;
-        }
-    };
-
     let avatar = if !client_msg.text.is_empty() {
         client_msg.text.clone()
     } else {
         "👤".to_string()
     };
 
-    let user: User = match db::get_or_create_user(&conn, &client_msg.name, &avatar) {
-        Ok(u) => u,
-        Err(e) => {
-            log::error!("Failed to create user: {}", e);
-            return;
+    let user: User = {
+        let conn = state.db.lock().await;
+        match db::get_or_create_user(&conn, &client_msg.name, &avatar) {
+            Ok(u) => u,
+            Err(e) => {
+                log::error!("Failed to create user: {}", e);
+                return;
+            }
         }
     };
 
@@ -67,11 +97,11 @@ async fn handle_register(
     state
         .online_users
         .lock()
-        .unwrap()
+        .await
         .insert(user.id.clone(), timestamp);
 
     // Отправляем список текущих онлайн пользователей
-    let online_list: Vec<String> = state.online_users.lock().unwrap().keys().cloned().collect();
+    let online_list: Vec<String> = state.online_users.lock().await.keys().cloned().collect();
     for online_id in &online_list {
         let _ = session
             .text(
@@ -122,17 +152,12 @@ async fn handle_update_profile(
 
     log::info!("👤 Обновление профиля: user={}, avatar={}", uid, new_avatar);
 
-    let conn = match state.db.lock() {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to lock database: {}", e);
+    {
+        let conn = state.db.lock().await;
+        if let Err(e) = db::update_user_avatar(&conn, &uid, &new_avatar) {
+            log::error!("Failed to update avatar: {}", e);
             return;
         }
-    };
-
-    if let Err(e) = db::update_user_avatar(&conn, &uid, &new_avatar) {
-        log::error!("Failed to update avatar: {}", e);
-        return;
     }
 
     // Обновляем онлайн пользователей и рассылаем новый аватар
@@ -170,22 +195,16 @@ async fn handle_message(
         );
     }
 
-    let conn = match state.db.lock() {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to lock database: {}", e);
-            return;
+    let uname = {
+        let conn = state.db.lock().await;
+        match db::get_user_name(&conn, &uid) {
+            Ok(name) => name,
+            Err(e) => {
+                log::error!("Failed to get user name: {}", e);
+                return;
+            }
         }
     };
-
-    let uname = match db::get_user_name(&conn, &uid) {
-        Ok(name) => name,
-        Err(e) => {
-            log::error!("Failed to get user name: {}", e);
-            return;
-        }
-    };
-    drop(conn);
 
     log::info!(
         "📩 Получено сообщение: text={}, files={}",
@@ -206,17 +225,12 @@ async fn handle_message(
 
     log::info!("💾 Сохраняем сообщение с {} файлами", message.files.len());
 
-    let conn = match state.db.lock() {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to lock database: {}", e);
+    {
+        let conn = state.db.lock().await;
+        if let Err(e) = db::save_message(&conn, &message) {
+            log::error!("Failed to save message: {}", e);
             return;
         }
-    };
-
-    if let Err(e) = db::save_message(&conn, &message) {
-        log::error!("Failed to save message: {}", e);
-        return;
     }
 
     log::info!(
@@ -253,17 +267,12 @@ async fn handle_ack(
         ack_sender_id
     );
 
-    let conn = match state.db.lock() {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to lock database: {}", e);
+    {
+        let conn = state.db.lock().await;
+        if let Err(e) = db::update_message_delivery_status(&conn, &client_msg.message_id, status) {
+            log::error!("Failed to update delivery status: {}", e);
             return;
         }
-    };
-
-    if let Err(e) = db::update_message_delivery_status(&conn, &client_msg.message_id, status) {
-        log::error!("Failed to update delivery status: {}", e);
-        return;
     }
 
     let ack_msg = json!({
@@ -282,18 +291,10 @@ async fn handle_get_messages(
     session: &mut actix_ws::Session,
     state: &AppState,
 ) {
-    let conn = match state.db.lock() {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to lock database: {}", e);
-            return;
-        }
-    };
-
-    // Поддержка пагинации: limit (по умолчанию 50, макс 200) и before_id (опционально)
     let limit = client_msg.limit.max(1).min(200);
     let before_id = &client_msg.before_id;
 
+    let conn = state.db.lock().await;
     match db::get_messages_with_pagination(&conn, limit, before_id.as_deref()) {
         Ok((messages, next_before_id, has_more)) => {
             let response = json!({
@@ -407,7 +408,7 @@ pub async fn handle_websocket_session(
 
 /// Удаление пользователя из списка онлайн
 async fn remove_user_from_online(state: &AppState, user_id: &str) {
-    state.online_users.lock().unwrap().remove(user_id);
+    state.online_users.lock().await.remove(user_id);
     let _ = state.tx.send(json!({
         "type": "user_online",
         "user_id": user_id,

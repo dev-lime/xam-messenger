@@ -3,8 +3,8 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
 
 /// Пользователь
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
