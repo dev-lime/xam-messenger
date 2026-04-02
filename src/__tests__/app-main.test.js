@@ -123,14 +123,14 @@ describe('discoverAndConnect', () => {
 
     test('должен показывать кнопку выбора если серверы не найдены', async () => {
         mockServerClient.discoverAllServers.mockResolvedValue([]);
-        
-        const servers = await mockServerClient.discoverAllServers();
-        
+
+        await mockServerClient.discoverAllServers();
+
         // Симулируем обновление статуса
         mockElements.serverStatus.innerHTML = '❌ Серверы не найдены';
         mockElements.confirmConnect.disabled = true;
         mockElements.selectServerBtn.style.display = 'block';
-        
+
         expect(mockElements.serverStatus.innerHTML).toContain('❌ Серверы не найдены');
         expect(mockElements.confirmConnect.disabled).toBe(true);
         expect(mockElements.selectServerBtn.style.display).toBe('block');
