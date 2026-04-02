@@ -842,5 +842,10 @@ class ServerClient {
 	}
 }
 
-// Экспортируем глобально для использования в app.js
-window.ServerClient = ServerClient;
+// Экспортируем класс для ES modules
+export { ServerClient };
+
+// Экспортируем глобально для обратной совместимости
+if (typeof window !== 'undefined') {
+	window.ServerClient = ServerClient;
+}
