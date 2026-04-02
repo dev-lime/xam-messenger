@@ -129,7 +129,8 @@ beforeEach(() => {
                 <p class="hint">💡 Введите имя для подключения к серверу</p>
                 <div id="serverStatus"></div>
             </div>
-            <div class="dialog-actions">
+            <div class="dialog-actions dialog-actions-connect">
+                <button class="btn" id="selectServerBtn" type="button">🔧 Выбрать сервер</button>
                 <button class="btn btn-primary" id="confirmConnect" disabled>Войти</button>
             </div>
         </dialog>

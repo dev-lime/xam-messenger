@@ -1131,6 +1131,15 @@ body {
 	border-top: 1px solid var(--border);
 }
 
+/* Диалог подключения: две кнопки (Выбрать сервер + Войти) */
+.dialog-actions-connect {
+	justify-content: space-between;
+}
+
+.dialog-actions-connect .btn:first-child {
+	margin-right: auto;
+}
+
 /* ============================================================================
    Buttons (Кнопки)
    ============================================================================ */

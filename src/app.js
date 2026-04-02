@@ -70,9 +70,9 @@ const elements = {
 	connectDialog: document.getElementById('connectDialog'),
 	settingsDialog: document.getElementById('settingsDialog'),
 	userNameInput: document.getElementById('userNameInput'),
-	serverAddressInput: document.getElementById('serverAddressInput'),
 	serverStatus: document.getElementById('serverStatus'),
 	confirmConnect: document.getElementById('confirmConnect'),
+	selectServerBtn: document.getElementById('selectServerBtn'),
 	cancelSettings: document.getElementById('cancelSettings'),
 	saveSettings: document.getElementById('saveSettings'),
 	settingsNameInput: document.getElementById('settingsNameInput'),
@@ -305,28 +305,39 @@ async function discoverAndConnect() {
 		if (servers.length === 0) {
 			updateServerStatus('❌ Серверы не найдены', 'error');
 			state.isDiscovering = false;
+			// Блокируем кнопку "Войти", показываем кнопку выбора сервера
+			if (elements.confirmConnect) {
+				elements.confirmConnect.disabled = true;
+			}
+			if (elements.selectServerBtn) {
+				elements.selectServerBtn.style.display = 'block';
+			}
 			return false;
 		}
 
-		// Подключаемся к первому (приоритетному) серверу
-		const selectedServer = servers[0];
-		await serverClient.connectToServer(selectedServer.wsUrl);
-
-		updateServerStatus(`✅ Подключено к ${selectedServer.ip}`, 'success');
+		// Показываем количество найденных серверов
+		updateServerStatus(`✅ Найдено серверов: ${servers.length}`, 'success');
+		
+		// Разблокируем кнопку "Войти"
+		if (elements.confirmConnect) {
+			elements.confirmConnect.disabled = false;
+		}
+		// Скрываем кнопку выбора сервера (он найден)
+		if (elements.selectServerBtn) {
+			elements.selectServerBtn.style.display = 'none';
+		}
+		
 		state.isDiscovering = false;
-		
-		// Проверяем что подключение успешно
-		if (!serverClient.httpUrl) {
-			console.error('❌ httpUrl не установлен после подключения');
-			return false;
-		}
-		
 		return true;
 
 	} catch (error) {
 		console.error('❌ Ошибка обнаружения серверов:', error);
 		updateServerStatus('❌ Ошибка подключения', 'error');
 		state.isDiscovering = false;
+		// Показываем кнопку выбора сервера при ошибке
+		if (elements.selectServerBtn) {
+			elements.selectServerBtn.style.display = 'block';
+		}
 		return false;
 	}
 }
@@ -985,11 +996,11 @@ function handleUserUpdated(data) {
 
 /**
  * Подключение к серверу и регистрация
+ * Использует авто-обнаружение серверов
  */
 async function connectToServer() {
 	const name = elements.userNameInput.value.trim();
 	const avatar = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
-	const serverAddress = elements.serverAddressInput.value.trim();
 
 	if (!name) {
 		alert('Введите ваше имя');
@@ -1001,20 +1012,15 @@ async function connectToServer() {
 			'<span style="color: var(--warning);">🔌 Подключение...</span>';
 		elements.confirmConnect.disabled = true;
 
-		// Если указан адрес сервера, подключаемся напрямую
-		if (serverAddress) {
-			const wsUrl = serverAddress.startsWith('ws://')
-				? `${serverAddress}/ws`
-				: `ws://${serverAddress}:8080/ws`;
-			console.log('🔌 Подключение к указанному серверу:', wsUrl);
-			await serverClient.connect(wsUrl);
-		} else {
-			// Автоматическое обнаружение (mDNS → кэш → сканирование)
-			const connected = await discoverAndConnect();
-			if (!connected) {
-				throw new Error('Не удалось подключиться к серверу');
-			}
+		// Автоматическое обнаружение (mDNS → кэш → сканирование)
+		const connected = await discoverAndConnect();
+		if (!connected) {
+			throw new Error('Не удалось подключиться к серверу');
 		}
+
+		// Подключаемся к первому найденному серверу
+		const selectedServer = state.discoveredServers[0];
+		await serverClient.connectToServer(selectedServer.wsUrl);
 
 		const user = await serverClient.register(name, avatar);
 		state.user = user;
@@ -1772,17 +1778,13 @@ function setupEventListeners() {
 		elements.confirmConnect.disabled = elements.userNameInput.value.trim().length === 0;
 	});
 
-	elements.serverAddressInput.addEventListener('input', () => {
-		// При вводе адреса сервера показываем что будет использован ручной режим
-		const addr = elements.serverAddressInput.value.trim();
-		if (addr) {
-			elements.serverStatus.innerHTML =
-				`<span style="color: var(--text-secondary);">🔧 Будет использован сервер: ${addr}</span>`;
-		} else {
-			elements.serverStatus.innerHTML =
-				'<span style="color: var(--text-secondary);">🔍 Поиск сервера...</span>';
-		}
-	});
+	// Кнопка выбора сервера вручную
+	if (elements.selectServerBtn) {
+		elements.selectServerBtn.addEventListener('click', () => {
+			elements.connectDialog.close();
+			openServerSelector();
+		});
+	}
 
 	elements.sendBtn.addEventListener('click', sendMessage);
 	elements.messageInput.addEventListener('input', updateSendButton);
