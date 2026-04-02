@@ -3,40 +3,8 @@
  * Тестируем вспомогательные функции и UI взаимодействия
  */
 
-// Вспомогательные функции (те же что в app.js)
-const escapeHtml = (text) => {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-};
-
-const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-};
-
-const getFileIcon = (filename) => {
-    const ext = filename.split('.').pop().toLowerCase();
-    const icons = {
-        'pdf': '📄',
-        'doc': '📝', 'docx': '📝',
-        'xls': '📊', 'xlsx': '📊',
-        'ppt': '📊', 'pptx': '📊',
-        'txt': '📄',
-        'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'bmp': '🖼️', 'svg': '🖼️',
-        'mp3': '🎵', 'wav': '🎵', 'ogg': '🎵',
-        'mp4': '🎬', 'avi': '🎬', 'mkv': '🎬', 'mov': '🎬',
-        'zip': '📦', 'rar': '📦', '7z': '📦', 'tar': '📦', 'gz': '📦',
-        'exe': '⚙️', 'msi': '⚙️', 'deb': '⚙️', 'rpm': '⚙️',
-        'js': '📜', 'ts': '📜', 'py': '📜', 'java': '📜', 'cpp': '📜', 'c': '📜', 'h': '📜',
-        'html': '🌐', 'css': '🎨', 'json': '📋', 'xml': '📋', 'yaml': '📋', 'yml': '📋',
-        'md': '📝', 'rtf': '📄',
-    };
-    return icons[ext] || '📎';
-};
+// Импортируем реальные функции из модуля helpers
+import { escapeHtml, formatFileSize, getFileIcon } from '../utils/helpers.js';
 
 describe('app.js - Вспомогательные функции', () => {
     describe('escapeHtml', () => {
