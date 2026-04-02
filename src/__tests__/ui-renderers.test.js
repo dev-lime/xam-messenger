@@ -14,6 +14,7 @@ import {
     createEmptyChatHtml,
     createAttachedFilesHtml,
 } from 'src/ui/renderers.js';
+import { DELIVERY_STATUS } from 'src/utils/helpers.js';
 
 describe('ui/renderers.js - createFilesHtml', () => {
     test('должен возвращать пустую строку для пустого массива', () => {
@@ -56,11 +57,11 @@ describe('ui/renderers.js - createFilesHtml', () => {
 });
 
 describe('ui/renderers.js - getStatusIcon', () => {
-    test('должен возвращать иконку для статуса 0 (SENDING)', () => {
-        expect(getStatusIcon(0)).toBe('⏳');
+    test('должен возвращать иконку для статуса 0 (SENT)', () => {
+        expect(getStatusIcon(0)).toBe('🕐');
     });
 
-    test('должен возвращать иконку для статуса 1 (SENT)', () => {
+    test('должен возвращать иконку для статуса 1 (DELIVERED)', () => {
         expect(getStatusIcon(1)).toBe('✓');
     });
 
@@ -75,20 +76,20 @@ describe('ui/renderers.js - getStatusIcon', () => {
 });
 
 describe('ui/renderers.js - getStatusTitle', () => {
-    test('должен возвращать описание для статуса 0', () => {
-        expect(getStatusTitle(0)).toBe('Отправляется...');
+    test('должен возвращать описание для статуса 0 (SENT)', () => {
+        expect(getStatusTitle(0)).toBe('Отправлено');
     });
 
-    test('должен возвращать описание для статуса 1', () => {
-        expect(getStatusTitle(1)).toBe('Отправлено');
+    test('должен возвращать описание для статуса 1 (DELIVERED)', () => {
+        expect(getStatusTitle(1)).toBe('Доставлено');
     });
 
-    test('должен возвращать описание для статуса 2', () => {
+    test('должен возвращать описание для статуса 2 (READ)', () => {
         expect(getStatusTitle(2)).toBe('Прочитано');
     });
 
-    test('должен возвращать "Неизвестно" для неизвестного статуса', () => {
-        expect(getStatusTitle(99)).toBe('Неизвестно');
+    test('должен возвращать "Отправлено" для неизвестного статуса', () => {
+        expect(getStatusTitle(99)).toBe('Отправлено');
     });
 });
 
@@ -111,7 +112,7 @@ describe('ui/renderers.js - createMineMessageHtml', () => {
     const msg = {
         id: 'msg-1',
         text: 'Привет!',
-        delivery_status: 1,
+        delivery_status: DELIVERY_STATUS.DELIVERED,
         files: [],
     };
 
@@ -122,7 +123,7 @@ describe('ui/renderers.js - createMineMessageHtml', () => {
         expect(html).toContain('data-message-id="msg-1"');
         expect(html).toContain('Привет!');
         expect(html).toContain('14:30');
-        expect(html).toContain('✓'); // SENT status
+        expect(html).toContain('✓'); // DELIVERED status
     });
 
     test('должен создавать HTML для сообщения с файлами', () => {

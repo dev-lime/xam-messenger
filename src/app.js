@@ -732,7 +732,7 @@ function handleAck(data) {
 	const msg = findMessageByAck(data);
 	if (msg) {
 		const oldStatus = msg.delivery_status;
-		msg.delivery_status = data.status === 'read' ? DELIVERY_STATUS.READ : DELIVERY_STATUS.SENT;
+		msg.delivery_status = data.status === 'read' ? DELIVERY_STATUS.READ : DELIVERY_STATUS.DELIVERED;
 		console.log(`🔄 Статус сообщения ${data.message_id}: ${oldStatus} → ${msg.delivery_status}`);
 
 		updateFilteredMessage(msg);
@@ -1003,7 +1003,7 @@ async function sendMessage() {
 		sender_name: state.user.name,
 		text: text || (filesData.length > 0 ? `📎 Файлов: ${filesData.length}` : ''),
 		timestamp: Date.now() / 1000,
-		delivery_status: DELIVERY_STATUS.SENDING,
+		delivery_status: DELIVERY_STATUS.SENT,
 		files: filesData,
 		recipient_id: state.currentPeer,
 	};
@@ -1427,14 +1427,14 @@ function createTheirsMessageContent(msg, time) {
  */
 function getStatusIcon(status) {
 	switch (status) {
-		case DELIVERY_STATUS.SENDING:
-			return STATUS_ICONS.SENDING;
 		case DELIVERY_STATUS.SENT:
 			return STATUS_ICONS.SENT;
+		case DELIVERY_STATUS.DELIVERED:
+			return STATUS_ICONS.DELIVERED;
 		case DELIVERY_STATUS.READ:
 			return STATUS_ICONS.READ;
 		default:
-			return STATUS_ICONS.PENDING;
+			return STATUS_ICONS.SENT;
 	}
 }
 
@@ -1443,9 +1443,9 @@ function getStatusIcon(status) {
  */
 function getStatusTitle(status) {
 	switch (status) {
-		case DELIVERY_STATUS.SENDING:
-			return 'Отправка...';
 		case DELIVERY_STATUS.SENT:
+			return 'Отправлено';
+		case DELIVERY_STATUS.DELIVERED:
 			return 'Доставлено';
 		case DELIVERY_STATUS.READ:
 			return 'Прочитано';

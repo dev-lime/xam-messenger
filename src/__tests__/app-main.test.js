@@ -3,6 +3,8 @@
  * Тестируем подключение, обнаружение серверов, обработку сообщений
  */
 
+import { DELIVERY_STATUS } from 'src/utils/helpers.js';
+
 // Мок для serverClient
 const mockServerClient = {
     connectToServer: jest.fn(),
@@ -178,24 +180,24 @@ describe('handleNewMessage', () => {
             sender_id: 'user-1',
             text: 'Привет!',
             timestamp: Date.now() / 1000,
-            delivery_status: 0
+            delivery_status: DELIVERY_STATUS.SENT
         };
-        
+
         mockState.messages = [localMessage];
-        
+
         const realMessage = {
             id: 'real-uuid',
             sender_id: 'user-1',
             text: 'Привет!',
             timestamp: Date.now() / 1000,
-            delivery_status: 1
+            delivery_status: DELIVERY_STATUS.DELIVERED
         };
-        
+
         // Симулируем замену локального сообщения реальным
         const localIndex = mockState.messages.findIndex(
             (m) => m.id.startsWith('local_') && m.text === realMessage.text
         );
-        
+
         if (localIndex !== -1) {
             realMessage.delivery_status = mockState.messages[localIndex].delivery_status;
             mockState.messages[localIndex] = realMessage;

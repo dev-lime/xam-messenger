@@ -5,6 +5,8 @@
 
 'use strict';
 
+import { DELIVERY_STATUS } from '../utils/helpers.js';
+
 /**
  * Проверка: сообщение в текущем чате
  */
@@ -101,7 +103,7 @@ export function createLocalMessage(text, userId, userName, files = [], recipient
         sender_name: userName,
         text,
         timestamp: Date.now() / 1000,
-        delivery_status: 0, // SENDING
+        delivery_status: DELIVERY_STATUS.SENT,
         recipient_id: recipientId,
         files,
     };
@@ -125,22 +127,22 @@ export function updateMessageWithReal(localMsg, realMsg) {
  * @param {boolean} isMine - true если сообщение от текущего пользователя
  * @param {string|null} currentPeer - ID текущего собеседника
  * @param {string} senderId - ID отправителя
- * @returns {number} Статус доставки (0=отправка, 1=отправлено, 2=прочитано)
+ * @returns {number} Статус доставки (0=отправлено, 1=доставлено, 2=прочитано)
  */
-function getDeliveryStatusForNewMessage(isMine, currentPeer, senderId) {
+export function getDeliveryStatusForNewMessage(isMine, currentPeer, senderId) {
     // Если это наше сообщение в открытом чате с получателем — сразу READ
     if (isMine && currentPeer && senderId === currentPeer) {
-        return 2; // READ
+        return DELIVERY_STATUS.READ;
     }
-    // Если наше сообщение — SENT
+    // Если наше сообщение — DELIVERED
     if (isMine) {
-        return 1; // SENT
+        return DELIVERY_STATUS.DELIVERED;
     }
     // Если сообщение от текущего пира в открытом чате — READ
     if (currentPeer && senderId === currentPeer) {
-        return 2; // READ
+        return DELIVERY_STATUS.READ;
     }
-    return 1; // SENT
+    return DELIVERY_STATUS.DELIVERED;
 }
 
 // Экспорт для CommonJS (Jest)

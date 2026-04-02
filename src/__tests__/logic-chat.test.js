@@ -14,6 +14,7 @@ import {
     updateMessageWithReal,
     getDeliveryStatusForNewMessage,
 } from 'src/logic/chat.js';
+import { DELIVERY_STATUS } from 'src/utils/helpers.js';
 
 describe('logic/chat.js - isMessageInCurrentChat', () => {
     const user = { id: 'user-1' };
@@ -226,7 +227,7 @@ describe('logic/chat.js - createLocalMessage', () => {
         expect(msg.sender_id).toBe(userId);
         expect(msg.sender_name).toBe(userName);
         expect(msg.text).toBe('Привет!');
-        expect(msg.delivery_status).toBe(0); // SENDING
+        expect(msg.delivery_status).toBe(DELIVERY_STATUS.SENT);
         expect(msg.recipient_id).toBeNull();
         expect(msg.files).toEqual([]);
     });
@@ -257,12 +258,12 @@ describe('logic/chat.js - updateMessageWithReal', () => {
     test('должен объединять локальное и реальное сообщение', () => {
         const localMsg = {
             id: 'local_123',
-            delivery_status: 0, // SENDING
+            delivery_status: DELIVERY_STATUS.SENT,
             text: 'Привет',
         };
         const realMsg = {
             id: 'real-uuid',
-            delivery_status: 1, // SENT
+            delivery_status: DELIVERY_STATUS.DELIVERED,
             text: 'Привет',
             sender_id: 'user-1',
         };
@@ -270,7 +271,7 @@ describe('logic/chat.js - updateMessageWithReal', () => {
         const result = updateMessageWithReal(localMsg, realMsg);
 
         expect(result.id).toBe('real-uuid');
-        expect(result.delivery_status).toBe(0); // Сохранён статус локального
+        expect(result.delivery_status).toBe(DELIVERY_STATUS.SENT); // Сохранён статус локального
         expect(result.text).toBe('Привет');
         expect(result.sender_id).toBe('user-1');
     });
@@ -279,21 +280,21 @@ describe('logic/chat.js - updateMessageWithReal', () => {
 describe('logic/chat.js - getDeliveryStatusForNewMessage', () => {
     test('должен возвращать READ для нашего сообщения в открытом чате', () => {
         const status = getDeliveryStatusForNewMessage(true, 'user-2', 'user-2');
-        expect(status).toBe(2); // READ
+        expect(status).toBe(DELIVERY_STATUS.READ);
     });
 
-    test('должен возвращать SENT для нашего сообщения без чата', () => {
+    test('должен возвращать DELIVERED для нашего сообщения без чата', () => {
         const status = getDeliveryStatusForNewMessage(true, null, null);
-        expect(status).toBe(1); // SENT
+        expect(status).toBe(DELIVERY_STATUS.DELIVERED);
     });
 
     test('должен возвращать READ для сообщения от текущего пира', () => {
         const status = getDeliveryStatusForNewMessage(false, 'user-2', 'user-2');
-        expect(status).toBe(2); // READ
+        expect(status).toBe(DELIVERY_STATUS.READ);
     });
 
-    test('должен возвращать SENT для сообщения от другого пользователя', () => {
+    test('должен возвращать DELIVERED для сообщения от другого пользователя', () => {
         const status = getDeliveryStatusForNewMessage(false, 'user-2', 'user-3');
-        expect(status).toBe(1); // SENT
+        expect(status).toBe(DELIVERY_STATUS.DELIVERED);
     });
 });
