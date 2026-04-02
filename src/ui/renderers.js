@@ -5,7 +5,7 @@
 
 'use strict';
 
-import { escapeHtml, getFileIcon, formatFileSize, STATUS_ICONS } from '../utils/helpers.js';
+import { escapeHtml, getFileIcon, formatFileSize, STATUS_ICONS, DELIVERY_STATUS } from '../utils/helpers.js';
 
 /**
  * Создание HTML для списка файлов
@@ -36,10 +36,10 @@ function createFilesHtml(files) {
  */
 function getStatusIcon(status) {
     switch (status) {
-    case 0: return STATUS_ICONS.SENDING;
-    case 1: return STATUS_ICONS.SENT;
-    case 2: return STATUS_ICONS.READ;
-    default: return STATUS_ICONS.PENDING;
+    case DELIVERY_STATUS.SENT: return STATUS_ICONS.SENT;
+    case DELIVERY_STATUS.DELIVERED: return STATUS_ICONS.DELIVERED;
+    case DELIVERY_STATUS.READ: return STATUS_ICONS.READ;
+    default: return STATUS_ICONS.SENT;
     }
 }
 
@@ -50,10 +50,10 @@ function getStatusIcon(status) {
  */
 function getStatusTitle(status) {
     switch (status) {
-    case 0: return 'Отправляется...';
-    case 1: return 'Отправлено';
-    case 2: return 'Прочитано';
-    default: return 'Неизвестно';
+    case DELIVERY_STATUS.SENT: return 'Отправлено';
+    case DELIVERY_STATUS.DELIVERED: return 'Доставлено';
+    case DELIVERY_STATUS.READ: return 'Прочитано';
+    default: return 'Отправлено';
     }
 }
 

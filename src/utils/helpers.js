@@ -72,17 +72,16 @@ export const CONFIG = {
  * Статусы доставки сообщений
  */
 export const DELIVERY_STATUS = {
-    SENDING: 0,
-    SENT: 1,
-    READ: 2,
+    SENT: 0,        // сервер принял
+    DELIVERED: 1,   // клиент получил
+    READ: 2,        // клиент прочитал
 };
 
 /**
  * Иконки статусов доставки
  */
 export const STATUS_ICONS = {
-    SENDING: '⏳',
-    SENT: '✓',
-    READ: '✓✓',
-    PENDING: '🕐',
+    SENT: '🕐',      // круглые часы
+    DELIVERED: '✓', // одна галочка
+    READ: '✓✓',     // две галочки
 };
