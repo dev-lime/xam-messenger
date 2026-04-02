@@ -167,7 +167,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         } else {
             60 / server_config.rate_limit.max(1)
         };
-        
+
         let governor_conf = actix_governor::GovernorConfigBuilder::default()
             .seconds_per_request(seconds_per_request.into())
             .burst_size(server_config.rate_limit)
