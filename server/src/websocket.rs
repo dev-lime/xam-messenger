@@ -291,7 +291,7 @@ async fn handle_get_messages(
     session: &mut actix_ws::Session,
     state: &AppState,
 ) {
-    let limit = client_msg.limit.max(1).min(200);
+    let limit = client_msg.limit.clamp(1, 200);
     let before_id = &client_msg.before_id;
 
     let conn = state.db.lock().await;

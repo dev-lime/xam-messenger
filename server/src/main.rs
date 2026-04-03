@@ -30,10 +30,10 @@ fn get_local_ips() -> Vec<String> {
 
     if let Ok(interfaces) = if_addrs::get_if_addrs() {
         for iface in interfaces {
-            if !iface.is_loopback() {
-                if let if_addrs::IfAddr::V4(ipv4) = iface.addr {
-                    ips.push(ipv4.ip.to_string());
-                }
+            if !iface.is_loopback()
+                && let if_addrs::IfAddr::V4(ipv4) = iface.addr
+            {
+                ips.push(ipv4.ip.to_string());
             }
         }
     }

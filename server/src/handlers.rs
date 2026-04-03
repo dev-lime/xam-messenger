@@ -108,7 +108,7 @@ pub async fn get_messages(
     data: web::Data<AppState>,
     query: web::Query<MessagesQuery>,
 ) -> HttpResponse {
-    let limit = query.limit.max(1).min(200);
+    let limit = query.limit.clamp(1, 200);
 
     let db = data.db.lock().await;
     // Если указан chat_peer_id, используем фильтрацию по чату
