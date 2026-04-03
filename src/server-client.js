@@ -121,17 +121,18 @@ function cacheServer(ip, port, source) {
 	try {
 		const cache = JSON.parse(localStorage.getItem(CACHE_CONFIG.KEY) || '[]');
 		const timestamp = Date.now();
-		
+
 		// Удаляем старую запись для этого IP
 		const filtered = cache.filter(s => s.ip !== ip);
-		
+
 		// Добавляем новую
 		filtered.push({ ip, port, lastSeen: timestamp, source });
-		
+
 		localStorage.setItem(CACHE_CONFIG.KEY, JSON.stringify(filtered));
-		
+
 		// Если в Tauri, вызываем нативную команду для кэширования
-		if (this.isTauri) {
+		const isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
+		if (isTauri) {
 			invokeTauri('cache_server', { ip, port, source }).catch(console.warn);
 		}
 	} catch (e) {
@@ -389,9 +390,22 @@ class ServerClient {
 	 */
 	async discoverServer() {
 		const servers = await this.discoverAllServers();
-		
+
 		if (servers.length === 0) {
 			throw new Error('Сервер не найден. Убедитесь, что сервер запущен.');
+		}
+
+		// В Tauri пропускаем HTTP ping — WebSocket работает напрямую
+		if (this.isTauri) {
+			console.log('✅ Tauri: подключаемся напрямую к', servers[0].wsUrl);
+			return servers[0].wsUrl;
+		}
+
+		// Если нет интернета, пробуем подключиться напрямую без HTTP ping
+		if (!navigator.onLine) {
+			console.log('⚠️ Нет интернета, пробуем подключиться напрямую...');
+			console.log('✅ Сервер найден:', servers[0].wsUrl);
+			return servers[0].wsUrl;
 		}
 
 		// Проверяем доступность первого сервера (приоритетного)
@@ -454,7 +468,8 @@ class ServerClient {
 		// Кэшируем подключенный сервер
 		const ip = extractIpFromWsUrl(url);
 		if (ip) {
-			cacheServer(ip, 8080, this.isTauri ? 'mdns' : 'manual');
+			const isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
+			cacheServer(ip, 8080, isTauri ? 'mdns' : 'manual');
 		}
 
 		console.log('🔌 Подключение к', url);
@@ -517,7 +532,8 @@ class ServerClient {
 		// Кэшируем подключенный сервер
 		const ip = extractIpFromWsUrl(wsUrl);
 		if (ip) {
-			cacheServer(ip, 8080, this.isTauri ? 'mdns' : 'manual');
+			const isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
+			cacheServer(ip, 8080, isTauri ? 'mdns' : 'manual');
 		}
 
 		// Подключаемся
@@ -537,18 +553,28 @@ class ServerClient {
 			try {
 				this.ws = new WebSocket(url);
 
+				// Увеличенный таймаут для локальной сети (10 секунд)
+				const connectionTimeout = setTimeout(() => {
+					console.error('❌ Таймаут подключения к WebSocket');
+					this.ws.close();
+					reject(new Error('Таймаут подключения'));
+				}, 10000);
+
 				this.ws.onopen = () => {
+					clearTimeout(connectionTimeout);
 					console.log('✅ Подключено к серверу');
 					this.reconnectAttempts = 0;
 					resolve();
 				};
 
 				this.ws.onclose = (event) => {
+					clearTimeout(connectionTimeout);
 					console.log('🔌 Отключено от сервера:', event.code, event.reason);
 					this.attemptReconnect();
 				};
 
 				this.ws.onerror = (error) => {
+					clearTimeout(connectionTimeout);
 					console.error('❌ Ошибка WebSocket:', error);
 					reject(error);
 				};
@@ -577,7 +603,19 @@ class ServerClient {
 			console.log(
 				`🔄 Попытка переподключения ${this.reconnectAttempts}/${WS_CONFIG.MAX_RECONNECT_ATTEMPTS}...`
 			);
-			setTimeout(() => this.connect(), WS_CONFIG.RECONNECT_DELAY);
+			
+			// В Tauri не проверяем интернет — WebSocket работает напрямую
+			if (!this.isTauri && !navigator.onLine) {
+				console.warn('⚠️ Нет подключения к интернету. Переподключение приостановлено.');
+				setTimeout(() => this.attemptReconnect(), 5000);
+				return;
+			}
+			
+			setTimeout(() => {
+				this.connect().catch(e => {
+					console.error('❌ Ошибка переподключения:', e);
+				});
+			}, WS_CONFIG.RECONNECT_DELAY);
 		} else {
 			console.error('❌ Превышено количество попыток переподключения');
 		}
