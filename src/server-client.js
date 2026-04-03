@@ -213,7 +213,10 @@ class ServerClient {
 
 		/** @type {boolean} */
 		this.isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
-		
+
+		// Функции отписки от событий Tauri
+		this._tauriUnlisteners = [];
+
 		// Отладка
 		console.log('🔧 ServerClient init:', {
 			isTauri: this.isTauri,
@@ -222,6 +225,109 @@ class ServerClient {
 			hasDirectInvoke: !!window.__TAURI__?.invoke,
 			tauriKeys: window.__TAURI__ ? Object.keys(window.__TAURI__) : []
 		});
+	}
+
+	// ========================================================================
+	// Нативный WebSocket через Tauri (работает без интернета)
+	// ========================================================================
+
+	/**
+	 * Проверка: используем ли мы нативный WebSocket
+	 * @returns {boolean}
+	 */
+	isTauriWebSocket() {
+		return this.isTauri && window.__TAURI__?.core?.invoke;
+	}
+
+	/**
+	 * Подписка на события Tauri WebSocket
+	 * @private
+	 */
+	_setupTauriListeners() {
+		const { listen } = window.__TAURI__.event;
+
+		// Сообщения от сервера
+		listen('ws_message', (event) => {
+			try {
+				const data = JSON.parse(event.payload);
+				this.handleMessage(data);
+			} catch (e) {
+				console.error('❌ Ошибка парсинга ws_message:', e);
+			}
+		}).then(unlisten => this._tauriUnlisteners.push(unlisten));
+
+		// Успешное подключение
+		listen('ws_connected', () => {
+			console.log('✅ Подключено через Tauri WebSocket');
+			this.reconnectAttempts = 0;
+		}).then(unlisten => this._tauriUnlisteners.push(unlisten));
+
+		// Разрыв соединения
+		listen('ws_disconnected', () => {
+			console.log('🔌 Отключено от сервера (Tauri)');
+			this.attemptReconnect();
+		}).then(unlisten => this._tauriUnlisteners.push(unlisten));
+
+		// Ошибка
+		listen('ws_error', (event) => {
+			console.error('❌ Ошибка WebSocket (Tauri):', event.payload);
+		}).then(unlisten => this._tauriUnlisteners.push(unlisten));
+	}
+
+	/**
+	 * Отписка от событий Tauri
+	 * @private
+	 */
+	_removeTauriListeners() {
+		this._tauriUnlisteners.forEach(unlisten => unlisten());
+		this._tauriUnlisteners = [];
+	}
+
+	/**
+	 * Подключение через нативный WebSocket
+	 * @param {string} wsUrl - WebSocket URL
+	 * @returns {Promise<void>}
+	 */
+	async _connectViaTauri(wsUrl) {
+		this.serverUrl = wsUrl;
+		this.httpUrl = wsToHttpUrl(wsUrl);
+
+		// Подписываемся на события
+		this._setupTauriListeners();
+
+		// Подключаемся через Rust
+		try {
+			await invokeTauri('ws_connect', { url: wsUrl });
+		} catch (e) {
+			const errorMsg = typeof e === 'string' ? e : e.message || String(e);
+			
+			// Вариант 1+2: Обрабатываем ошибки сети
+			if (errorMsg.includes('Нет активного сетевого') || 
+			    errorMsg.includes('Включите Wi-Fi') ||
+			    errorMsg.includes('Сеть недоступна')) {
+				throw new Error(errorMsg);
+			}
+			
+			throw new Error(`Ошибка подключения: ${errorMsg}`);
+		}
+	}
+
+	/**
+	 * Отправка сообщения через нативный WebSocket
+	 * @param {Object} message - Сообщение
+	 * @returns {Promise<void>}
+	 */
+	async _sendViaTauri(message) {
+		await invokeTauri('ws_send', { message: JSON.stringify(message) });
+	}
+
+	/**
+	 * Закрытие нативного WebSocket
+	 * @returns {Promise<void>}
+	 */
+	async _closeTauri() {
+		this._removeTauriListeners();
+		await invokeTauri('ws_close').catch(console.warn);
 	}
 
 	// ========================================================================
@@ -520,24 +626,28 @@ class ServerClient {
 		// Сбрасываем счётчик попыток
 		this.reconnectAttempts = 0;
 
-		// Устанавливаем URL напрямую, без discoverServer()
+		// Устанавливаем URL
 		this.serverUrl = wsUrl;
 		this.httpUrl = wsToHttpUrl(wsUrl);
 
 		console.log('🔧 connectToServer():', {
 			wsUrl,
-			httpUrl: this.httpUrl
+			httpUrl: this.httpUrl,
+			mode: this.isTauriWebSocket() ? 'tauri' : 'browser'
 		});
 
 		// Кэшируем подключенный сервер
 		const ip = extractIpFromWsUrl(wsUrl);
 		if (ip) {
-			const isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
-			cacheServer(ip, 8080, isTauri ? 'mdns' : 'manual');
+			cacheServer(ip, 8080, this.isTauri ? 'mdns' : 'manual');
 		}
 
-		// Подключаемся
-		return this._connectWebSocket(wsUrl);
+		// Выбираем режим подключения
+		if (this.isTauriWebSocket()) {
+			return this._connectViaTauri(wsUrl);
+		} else {
+			return this._connectWebSocket(wsUrl);
+		}
 	}
 
 	/**
@@ -762,7 +872,11 @@ class ServerClient {
 	 * @param {Object} message - Сообщение для отправки
 	 */
 	send(message) {
-		if (this.ws?.readyState === WebSocket.OPEN) {
+		if (this.isTauriWebSocket()) {
+			this._sendViaTauri(message).catch(e => {
+				console.error('❌ Ошибка отправки (Tauri):', e);
+			});
+		} else if (this.ws?.readyState === WebSocket.OPEN) {
 			this.ws.send(JSON.stringify(message));
 		} else {
 			console.error('❌ Нет подключения к серверу');
@@ -797,7 +911,11 @@ class ServerClient {
 			recipient_id: recipientId,
 		};
 
-		if (this.ws?.readyState === WebSocket.OPEN) {
+		if (this.isTauriWebSocket()) {
+			this._sendViaTauri(message).catch(e => {
+				console.error('❌ Ошибка отправки (Tauri):', e);
+			});
+		} else if (this.ws?.readyState === WebSocket.OPEN) {
 			try {
 				this.ws.send(JSON.stringify(message));
 				console.log('✅ Файлы отправлены в WebSocket');
@@ -856,10 +974,14 @@ class ServerClient {
 	 * Отключение от сервера
 	 */
 	disconnect() {
-		if (this.ws) {
+		if (this.isTauriWebSocket()) {
+			this._closeTauri();
+		} else if (this.ws) {
 			this.ws.close();
 			this.ws = null;
 		}
+		this.serverUrl = null;
+		this.httpUrl = null;
 	}
 
 	/**
@@ -867,6 +989,9 @@ class ServerClient {
 	 * @returns {boolean} true если подключено
 	 */
 	isConnected() {
+		if (this.isTauriWebSocket()) {
+			return this.serverUrl !== null;
+		}
 		return this.ws?.readyState === WebSocket.OPEN;
 	}
 
@@ -886,4 +1011,9 @@ export { ServerClient };
 // Экспортируем глобально для обратной совместимости
 if (typeof window !== 'undefined') {
 	window.ServerClient = ServerClient;
+}
+
+// Экспорт для CommonJS (Jest тесты)
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = { ServerClient };
 }
