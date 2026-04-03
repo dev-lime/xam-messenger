@@ -330,6 +330,25 @@ body {
 	color: rgba(255, 255, 255, 0.8);
 }
 
+/* Бейдж непрочитанных сообщений */
+.unread-badge {
+	background: var(--error);
+	color: white;
+	font-size: 12px;
+	font-weight: 600;
+	padding: 2px 8px;
+	border-radius: 32px;
+	min-width: 20px;
+	text-align: center;
+	margin-left: 8px;
+	flex-shrink: 0;
+}
+
+.peer-item.active .unread-badge {
+	background: white;
+	color: var(--error);
+}
+
 /* ============================================================================
    Chat Header (Верхняя панель чата)
    ============================================================================ */

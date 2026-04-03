@@ -35,57 +35,47 @@ pub struct DroppedFile {
     pub name: String,
 }
 
-/// Поиск серверов через mDNS
+/// Поиск серверов через mDNS (асинхронный — не блокирует UI)
 #[tauri::command]
-fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
+async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
     println!("🔍 Запуск поиска mDNS серверов...");
 
-    let daemon = ServiceDaemon::new()
-        .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
+    // Запускаем mDNS поиск в отдельном потоке чтобы не блокировать UI
+    let servers = tokio::task::spawn_blocking(|| {
+        let daemon = ServiceDaemon::new()
+            .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
-    // Ищем сервисы _xam-messenger._tcp.local
-    let receiver = daemon
-        .browse("_xam-messenger._tcp.local.")
-        .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
+        let receiver = daemon
+            .browse("_xam-messenger._tcp.local.")
+            .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
 
-    println!("✅ mDNS поиск запущен, ждём 3 секунды...");
+        println!("✅ mDNS поиск запущен, ждём 3 секунды...");
 
-    // Ждём 3 секунды для получения ответов
-    std::thread::sleep(std::time::Duration::from_secs(3));
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(3);
+        let mut seen_services: HashMap<String, ServerInfo> = HashMap::new();
 
-    // Собираем найденные сервисы
-    let mut seen_services: HashMap<String, ServerInfo> = HashMap::new();
-
-    // Читаем события из receiver с таймаутом
-    loop {
-        match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
-            Ok(event) => {
-                println!("📨 mDNS событие: {:?}", event);
-
-                match event {
-                    // ServiceResolved содержит полную информацию о сервисе
-                    mdns_sd::ServiceEvent::ServiceResolved(info) => {
+        // Читаем события из receiver с таймаутом
+        while start.elapsed() < timeout {
+            match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => {
+                    if let mdns_sd::ServiceEvent::ServiceResolved(info) = event {
                         println!("✅ Найдено: {}", info.get_fullname());
 
-                        // Получаем первый IP адрес
                         let addresses = info.get_addresses();
                         if addresses.is_empty() {
-                            println!("⚠️ Нет IP адресов");
                             continue;
                         }
                         let ip = addresses.iter().next().unwrap().to_string();
                         let port = info.get_port();
-                        let fullname = info.get_fullname().to_string();
                         let hostname = info.get_hostname().to_string();
 
-                        // Парсим TXT записи
                         let mut txt_records: HashMap<String, String> = HashMap::new();
                         for prop in info.get_properties().iter() {
                             let key = prop.key();
                             let val_bytes = prop.val();
                             if let Some(val_bytes) = val_bytes {
                                 let val = String::from_utf8_lossy(val_bytes).to_string();
-                                println!("   📝 {}: {}", key, val);
                                 txt_records.insert(key.to_string(), val);
                             }
                         }
@@ -100,24 +90,21 @@ fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
                             txt_records: if txt_records.is_empty() { None } else { Some(txt_records) },
                         };
 
-                        seen_services.insert(fullname, server_info);
+                        seen_services.insert(info.get_fullname().to_string(), server_info);
                     }
-                    _ => {}
                 }
-            }
-            Err(_) => {
-                // Таймаут - выходим из цикла
-                break;
+                Err(_) => break,
             }
         }
-    }
 
-    println!("📊 Найдено серверов: {}", seen_services.len());
-    let servers = seen_services.into_values().collect();
+        println!("📊 Найдено серверов: {}", seen_services.len());
+        let _ = daemon.stop_browse("_xam-messenger._tcp.local.");
+        println!("🛑 mDNS поиск остановлен");
 
-    // Останавливаем поиск
-    let _ = daemon.stop_browse("_xam-messenger._tcp.local.");
-    println!("🛑 mDNS поиск остановлен");
+        Ok::<Vec<ServerInfo>, String>(seen_services.into_values().collect())
+    })
+    .await
+    .map_err(|e| format!("Task panicked: {}", e))??;
 
     Ok(servers)
 }

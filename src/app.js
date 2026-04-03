@@ -667,6 +667,10 @@ function handleNewMessage(msg) {
 		}
 	} else {
 		renderMessages();
+		// Обновляем бейдж непрочитанных если сообщение не от нас
+		if (!isMine) {
+			updateUnreadBadge(msg.sender_id);
+		}
 	}
 
 	// Обновляем список пользователей
@@ -962,8 +966,15 @@ async function connectToServer() {
 		}, 500);
 	} catch (error) {
 		console.error('❌ Ошибка подключения:', error);
-		elements.serverStatus.innerHTML =
-			'<span style="color: var(--error);">❌ Ошибка подключения<br><small>Проверьте что сервер запущен</small></span>';
+		
+		// Проверяем наличие интернета (только для браузера)
+		if (!serverClient.isTauri && !navigator.onLine) {
+			elements.serverStatus.innerHTML =
+				'<span style="color: var(--error);">❌ Нет подключения к интернету<br><small>Для работы в браузере нужен интернет<br>Или используйте Tauri приложение</small></span>';
+		} else {
+			elements.serverStatus.innerHTML =
+				'<span style="color: var(--error);">❌ Ошибка подключения<br><small>Проверьте что сервер запущен</small></span>';
+		}
 		elements.confirmConnect.disabled = false;
 	}
 }
@@ -1114,6 +1125,29 @@ function renderPeers() {
 }
 
 /**
+ * Обновление бейджа непрочитанных сообщений
+ */
+function updateUnreadBadge(peerId) {
+	const peerElement = document.querySelector(`.peer-item[data-user-id="${peerId}"]`);
+	if (!peerElement) return;
+	
+	const unreadCount = countUnreadMessages(peerId);
+	let badge = peerElement.querySelector('.unread-badge');
+	
+	if (unreadCount > 0) {
+		if (!badge) {
+			badge = document.createElement('span');
+			badge.className = 'unread-badge';
+			const menuBtn = peerElement.querySelector('.peer-menu-btn');
+			peerElement.insertBefore(badge, menuBtn);
+		}
+		badge.textContent = unreadCount;
+	} else if (badge) {
+		badge.remove();
+	}
+}
+
+/**
  * Создание элемента контакта
  */
 function createPeerElement(peer) {
@@ -1125,6 +1159,10 @@ function createPeerElement(peer) {
 	const lastMsg = getLastMessageFromUser(peer.id);
 	const isOnline = state.onlineUsers.has(peer.id);
 	const peerAvatar = peer.avatar || CONFIG.AVATAR_DEFAULT;
+	const unreadCount = countUnreadMessages(peer.id);
+	const unreadBadge = unreadCount > 0 
+		? `<span class="unread-badge">${unreadCount}</span>` 
+		: '';
 
 	item.innerHTML = `
 		<span class="peer-icon">${peerAvatar}</span>
@@ -1134,6 +1172,7 @@ function createPeerElement(peer) {
 				${isOnline ? 'в сети' : 'не в сети'}
 			</div>
 		</div>
+		${unreadBadge}
 		<button class="peer-menu-btn" title="Меню" data-user-id="${peer.id}">
 			<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 				<circle cx="12" cy="12" r="1"/>
@@ -1158,6 +1197,16 @@ function createPeerElement(peer) {
 	});
 
 	return item;
+}
+
+/**
+ * Подсчёт непрочитанных сообщений от контакта
+ */
+function countUnreadMessages(peerId) {
+	return state.messages.filter(
+		m => m.sender_id === peerId && 
+		     m.delivery_status < DELIVERY_STATUS.READ
+	).length;
 }
 
 /**
@@ -1194,6 +1243,9 @@ function selectPeer(userId, userName) {
 
 	// Отправляем READ ACK для всех непрочитанных сообщений
 	markMessagesAsRead(userId);
+	
+	// Сбрасываем бейдж непрочитанных
+	updateUnreadBadge(userId);
 }
 
 /**
