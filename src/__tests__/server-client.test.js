@@ -832,5 +832,223 @@ describe('ServerClient - Краевые случаи', () => {
     });
 });
 
+// ============================================================================
+// Тесты для Tauri WebSocket
+// ============================================================================
+
+describe('ServerClient - Tauri WebSocket', () => {
+    let client;
+    let mockInvoke;
+    let mockListen;
+
+    beforeEach(() => {
+        // Импортируем ServerClient
+        const { ServerClient } = require('../server-client.js');
+
+        // Мок для Tauri API
+        mockInvoke = jest.fn().mockResolvedValue(undefined);
+        mockListen = jest.fn().mockResolvedValue(jest.fn()); // unlisten функция
+
+        global.__TAURI__ = {
+            core: { invoke: mockInvoke },
+            event: { listen: mockListen },
+        };
+
+        // Сбрасываем WebSocket моки
+        class MockWebSocket {
+            constructor(url) {
+                this.url = url;
+                this.readyState = MockWebSocket.OPEN;
+                this.sentMessages = [];
+                setTimeout(() => this.onopen?.(), 0);
+            }
+            send(data) { this.sentMessages.push(data); }
+            close() { this.readyState = MockWebSocket.CLOSED; this.onclose?.(); }
+        }
+        MockWebSocket.OPEN = 1;
+        MockWebSocket.CLOSED = 3;
+        global.WebSocket = MockWebSocket;
+        global.fetch = jest.fn().mockResolvedValue({ json: async () => ({ success: true, data: {} }) });
+
+        client = new ServerClient();
+    });
+
+    afterEach(() => {
+        jest.clearAllMocks();
+        global.__TAURI__ = undefined;
+    });
+
+    describe('isTauriWebSocket()', () => {
+        test('должен возвращать truthy в Tauri', () => {
+            expect(client.isTauriWebSocket()).toBeTruthy();
+        });
+
+        test('должен возвращать false не в Tauri', () => {
+            global.__TAURI__ = undefined;
+            const { ServerClient } = require('../server-client.js');
+            const nonTauriClient = new ServerClient();
+            expect(nonTauriClient.isTauriWebSocket()).toBe(false);
+        });
+    });
+
+    describe('connectToServer() в Tauri режиме', () => {
+        test('должен использовать Tauri WebSocket', async () => {
+            await client.connectToServer('ws://192.168.1.100:8080/ws');
+
+            expect(mockInvoke).toHaveBeenCalledWith('ws_connect', {
+                url: 'ws://192.168.1.100:8080/ws'
+            });
+            expect(client.serverUrl).toBe('ws://192.168.1.100:8080/ws');
+            expect(client.httpUrl).toBe('http://192.168.1.100:8080/api/v1');
+        });
+
+        test('должен подписаться на события Tauri', async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+
+            // 4 события: ws_message, ws_connected, ws_disconnected, ws_error
+            expect(mockListen).toHaveBeenCalledTimes(4);
+            expect(mockListen).toHaveBeenCalledWith('ws_message', expect.any(Function));
+            expect(mockListen).toHaveBeenCalledWith('ws_connected', expect.any(Function));
+            expect(mockListen).toHaveBeenCalledWith('ws_disconnected', expect.any(Function));
+            expect(mockListen).toHaveBeenCalledWith('ws_error', expect.any(Function));
+        });
+    });
+
+    describe('send() в Tauri режиме', () => {
+        beforeEach(async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+        });
+
+        test('должен отправлять сообщения через Tauri', () => {
+            client.sendMessage('Привет!');
+
+            expect(mockInvoke).toHaveBeenCalledWith('ws_send', {
+                message: JSON.stringify({
+                    type: 'message',
+                    text: 'Привет!',
+                    files: [],
+                    recipient_id: null,
+                })
+            });
+        });
+
+        test('должен отправлять ACK через Tauri', () => {
+            client.sendAck('msg-123', 'read');
+
+            expect(mockInvoke).toHaveBeenCalledWith('ws_send', {
+                message: JSON.stringify({
+                    type: 'ack',
+                    message_id: 'msg-123',
+                    status: 'read',
+                })
+            });
+        });
+
+        test('должен запрашивать историю через Tauri', () => {
+            client.getMessages(50, 'msg-100', 'user-2');
+
+            expect(mockInvoke).toHaveBeenCalledWith('ws_send', {
+                message: JSON.stringify({
+                    type: 'get_messages',
+                    limit: 50,
+                    before_id: 'msg-100',
+                    chat_peer_id: 'user-2',
+                })
+            });
+        });
+    });
+
+    describe('disconnect() в Tauri режиме', () => {
+        test('должен закрывать Tauri WebSocket', async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+            client.disconnect();
+
+            expect(mockInvoke).toHaveBeenCalledWith('ws_close', expect.any(Object));
+            expect(client.serverUrl).toBeNull();
+            expect(client.httpUrl).toBeNull();
+        });
+
+        test('должен отписываться от событий', async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+
+            const unlistenMocks = client._tauriUnlisteners;
+            expect(unlistenMocks.length).toBe(4);
+
+            client.disconnect();
+
+            // Проверяем что unlisten функции были вызваны
+            unlistenMocks.forEach(fn => expect(fn).toHaveBeenCalled());
+        });
+    });
+
+    describe('isConnected() в Tauri режиме', () => {
+        test('должен возвращать true после подключения', async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+            expect(client.isConnected()).toBe(true);
+        });
+
+        test('должен возвращать false после отключения', async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+            client.disconnect();
+            expect(client.isConnected()).toBe(false);
+        });
+
+        test('должен возвращать false до подключения', () => {
+            expect(client.isConnected()).toBe(false);
+        });
+    });
+
+    describe('Обработка событий Tauri', () => {
+        test('должен обрабатывать ws_message', async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+
+            // Получаем callback из mockListen
+            const messageCallback = mockListen.mock.calls.find(
+                call => call[0] === 'ws_message'
+            )[1];
+
+            const handler = jest.fn();
+            client.on('message', handler);
+
+            // Симулируем получение сообщения
+            messageCallback({
+                payload: JSON.stringify({
+                    type: 'message',
+                    message: { id: 'msg-1', text: 'Тест' }
+                })
+            });
+
+            expect(handler).toHaveBeenCalledWith({ id: 'msg-1', text: 'Тест' });
+        });
+
+        test('должен сбрасывать reconnectAttempts при ws_connected', async () => {
+            await client.connectToServer('ws://localhost:8080/ws');
+            client.reconnectAttempts = 5;
+
+            const connectedCallback = mockListen.mock.calls.find(
+                call => call[0] === 'ws_connected'
+            )[1];
+
+            connectedCallback();
+
+            expect(client.reconnectAttempts).toBe(0);
+        });
+
+        test('должен вызывать attemptReconnect при ws_disconnected', async () => {
+            client.attemptReconnect = jest.fn();
+
+            await client.connectToServer('ws://localhost:8080/ws');
+
+            const disconnectedCallback = mockListen.mock.calls.find(
+                call => call[0] === 'ws_disconnected'
+            )[1];
+
+            disconnectedCallback();
+
+            expect(client.attemptReconnect).toHaveBeenCalled();
+        });
+    });
+});
+
 // Импортируем app.js для отслеживания покрытия
 require('../app.js');
