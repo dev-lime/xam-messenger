@@ -3,8 +3,9 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 
 /// Пользователь
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -66,4 +67,8 @@ pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub tx: broadcast::Sender<serde_json::Value>,
     pub online_users: Arc<Mutex<HashMap<String, u64>>>,
+    /// Директория для загруженных файлов (для валидации path traversal)
+    pub upload_dir: PathBuf,
+    /// Максимальный размер файла в байтах
+    pub max_file_size: usize,
 }

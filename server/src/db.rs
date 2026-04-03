@@ -1,7 +1,7 @@
 //! Функции для работы с базой данных
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::{ChatMessage, FileData, User};
 

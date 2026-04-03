@@ -1,7 +1,7 @@
 //! Обработчики HTTP запросов для XAM Messenger Server
 
 use actix_multipart::Multipart;
-use actix_web::{web, HttpResponse};
+use actix_web::{HttpResponse, web};
 use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::json;
@@ -9,6 +9,12 @@ use uuid::Uuid;
 
 use crate::db;
 use crate::models::AppState;
+
+/// Максимальная длина имени пользователя
+const MAX_NAME_LENGTH: usize = 50;
+
+/// Максимальная длина имени файла
+const MAX_FILENAME_LENGTH: usize = 255;
 
 /// Запрос регистрации пользователя
 #[derive(Deserialize)]
@@ -22,11 +28,39 @@ fn default_avatar() -> String {
     "👤".to_string()
 }
 
+/// Санитизация имени файла: удаление опасных символов
+fn sanitize_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '_' || *c == '-' || *c == ' ')
+        .take(MAX_FILENAME_LENGTH)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Проверка: находится ли путь внутри разрешённой директории
+fn is_path_safe(base_dir: &std::path::Path, file_path: &std::path::Path) -> bool {
+    if let (Ok(canonical_base), Ok(canonical_file)) =
+        (base_dir.canonicalize(), file_path.canonicalize())
+    {
+        canonical_file.starts_with(&canonical_base)
+    } else {
+        false
+    }
+}
+
 /// Регистрация нового пользователя
 pub async fn register(data: web::Data<AppState>, body: web::Json<RegisterRequest>) -> HttpResponse {
     let name = body.name.trim();
     if name.is_empty() {
         return HttpResponse::BadRequest().json(json!({"success": false, "error": "Empty name"}));
+    }
+    if name.len() > MAX_NAME_LENGTH {
+        return HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": format!("Name too long (max {} characters)", MAX_NAME_LENGTH)
+        }));
     }
 
     let db = data.db.lock().await;
@@ -83,7 +117,7 @@ pub async fn get_messages(
             Ok(result) => result,
             Err(e) => {
                 return HttpResponse::InternalServerError()
-                    .json(json!({"success": false, "error": e.to_string()}))
+                    .json(json!({"success": false, "error": e.to_string()}));
             }
         }
     } else {
@@ -92,7 +126,7 @@ pub async fn get_messages(
             Ok(result) => result,
             Err(e) => {
                 return HttpResponse::InternalServerError()
-                    .json(json!({"success": false, "error": e.to_string()}))
+                    .json(json!({"success": false, "error": e.to_string()}));
             }
         }
     };
@@ -106,14 +140,12 @@ pub async fn get_messages(
     }))
 }
 
-/// Загрузка файла на сервер
+/// Загрузка файла на сервер с проверкой размера и санитизацией имени
 pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> HttpResponse {
-    let upload_dir = match dirs::data_local_dir() {
-        Some(dir) => dir.join("xam-messenger").join("files"),
-        None => ".".into(),
-    };
+    let upload_dir = &data.upload_dir;
+    let max_file_size = data.max_file_size;
 
-    if let Err(e) = std::fs::create_dir_all(&upload_dir) {
+    if let Err(e) = std::fs::create_dir_all(upload_dir) {
         return HttpResponse::InternalServerError().json(json!({
             "success": false,
             "error": format!("Failed to create upload dir: {}", e)
@@ -123,24 +155,41 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
     // Получаем первое поле (файл)
     match payload.try_next().await {
         Ok(Some(mut field)) => {
-            let filename = field
+            let raw_filename = field
                 .content_disposition()
                 .as_ref()
                 .and_then(|cd| cd.get_filename())
                 .unwrap_or("unnamed")
                 .to_string();
 
+            // Санитизация имени файла (#10)
+            let safe_filename = sanitize_filename(&raw_filename);
+            if safe_filename.is_empty() {
+                return HttpResponse::BadRequest().json(json!({
+                    "success": false,
+                    "error": "Invalid filename"
+                }));
+            }
+
             let file_id = Uuid::new_v4().to_string();
-            let filepath = upload_dir.join(format!("{}_{}", file_id, filename));
+            let filepath = upload_dir.join(format!("{}_{}", file_id, safe_filename));
 
             let mut size = 0u64;
             let mut file_bytes = Vec::new();
 
+            // Чтение чанков с проверкой лимита размера (#2)
             while let Some(chunk) = field.try_next().await.ok().flatten() {
                 size += chunk.len() as u64;
+                if size > max_file_size as u64 {
+                    return HttpResponse::PayloadTooLarge().json(json!({
+                        "success": false,
+                        "error": format!("File too large (max {} MB)", max_file_size / 1024 / 1024)
+                    }));
+                }
                 file_bytes.extend_from_slice(&chunk);
             }
 
+            // Сначала сохраняем файл, потом записываем метаданные в БД (#14)
             if let Err(e) = std::fs::write(&filepath, &file_bytes) {
                 return HttpResponse::InternalServerError().json(json!({
                     "success": false,
@@ -148,15 +197,17 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 }));
             }
 
+            // Если запись в БД не удалась — удаляем файл (rollback)
             {
                 let db = data.db.lock().await;
                 if let Err(e) = db::save_file_metadata(
                     &db,
                     &file_id,
-                    &filename,
+                    &safe_filename,
                     filepath.to_string_lossy().as_ref(),
                     size as i64,
                 ) {
+                    let _ = std::fs::remove_file(&filepath);
                     return HttpResponse::InternalServerError().json(json!({
                         "success": false,
                         "error": format!("Failed to save file metadata: {}", e)
@@ -169,7 +220,7 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 "success": true,
                 "data": {
                     "id": file_id,
-                    "name": filename,
+                    "name": safe_filename,
                     "size": size,
                     "path": file_id
                 }
@@ -182,7 +233,7 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
     }
 }
 
-/// Скачивание файла по ID
+/// Скачивание файла по ID с защитой от Path Traversal (#1)
 pub async fn download_file(
     data: web::Data<AppState>,
     query: web::Query<std::collections::HashMap<String, String>>,
@@ -193,7 +244,7 @@ pub async fn download_file(
             return HttpResponse::BadRequest().json(json!({
                 "success": false,
                 "error": "Path parameter is required"
-            }))
+            }));
         }
     };
 
@@ -205,27 +256,38 @@ pub async fn download_file(
             return HttpResponse::NotFound().json(json!({
                 "success": false,
                 "error": "File not found"
-            }))
+            }));
         }
         Err(e) => {
             return HttpResponse::InternalServerError()
-                .json(json!({"success": false, "error": format!("Database error: {}", e)}))
+                .json(json!({"success": false, "error": format!("Database error: {}", e)}));
         }
     };
 
-    if !std::path::Path::new(&filepath).exists() {
+    let file_path = std::path::Path::new(&filepath);
+
+    // Path Traversal защита: проверяем что файл внутри upload_dir
+    if !is_path_safe(&data.upload_dir, file_path) {
+        log::warn!("⚠️ Попытка Path Traversal: {:?}", filepath);
+        return HttpResponse::Forbidden().json(json!({
+            "success": false,
+            "error": "Access denied"
+        }));
+    }
+
+    if !file_path.exists() {
         return HttpResponse::NotFound().json(json!({
             "success": false,
             "error": "File not found on disk"
         }));
     }
 
-    let filename = std::path::Path::new(&filepath)
+    let filename = file_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
 
-    match std::fs::read(&filepath) {
+    match std::fs::read(file_path) {
         Ok(contents) => HttpResponse::Ok()
             .content_type("application/octet-stream")
             .insert_header((

@@ -19,8 +19,9 @@ function createFilesHtml(files) {
         const icon = getFileIcon(file.name);
         const size = formatFileSize(file.size);
         const safeName = escapeHtml(file.name);
+        const safePath = escapeHtml(file.path); // #4 XSS fix: экранируем path
         return `
-			<div class="attached-file-item" data-file-path="${file.path}">
+			<div class="attached-file-item" data-file-path="${safePath}">
 				<span class="file-icon">${icon}</span>
 				<span class="file-name">${safeName}</span>
 				<span class="file-size">${size}</span>
