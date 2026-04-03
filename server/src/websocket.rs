@@ -1,6 +1,6 @@
 //! Обработчики WebSocket соединений
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 use actix_ws::{Message, MessageStream};
 use chrono::Utc;
 use futures_util::{FutureExt, StreamExt};
@@ -89,10 +89,10 @@ async fn handle_register(
 
     *user_id = Some(user.id.clone());
 
-    // Добавляем в онлайн
+    // Добавляем в онлайн (#11: замена unwrap на unwrap_or_default)
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
     state
         .online_users

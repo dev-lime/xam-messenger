@@ -507,12 +507,9 @@ class ServerClient {
 			return servers[0].wsUrl;
 		}
 
-		// Если нет интернета, пробуем подключиться напрямую без HTTP ping
-		if (!navigator.onLine) {
-			console.log('⚠️ Нет интернета, пробуем подключиться напрямую...');
-			console.log('✅ Сервер найден:', servers[0].wsUrl);
-			return servers[0].wsUrl;
-		}
+		// #20: navigator.onLine ненадёжен — всегда пытаемся подключиться
+		// Для LAN-мессенджера интернет не нужен
+		console.log('🔍 Проверяем доступность серверов...');
 
 		// Проверяем доступность первого сервера (приоритетного)
 		for (const server of servers) {
@@ -713,19 +710,17 @@ class ServerClient {
 			console.log(
 				`🔄 Попытка переподключения ${this.reconnectAttempts}/${WS_CONFIG.MAX_RECONNECT_ATTEMPTS}...`
 			);
-			
-			// В Tauri не проверяем интернет — WebSocket работает напрямую
-			if (!this.isTauri && !navigator.onLine) {
-				console.warn('⚠️ Нет подключения к интернету. Переподключение приостановлено.');
-				setTimeout(() => this.attemptReconnect(), 5000);
-				return;
-			}
-			
+
+			// #20: navigator.onLine ненадёжен — всегда пытаемся переподключиться
+			// Для LAN-мессенджера интернет не нужен, достаточно локальной сети
+			// Увеличиваем задержку с каждой попыткой (exponential backoff)
+			const delay = WS_CONFIG.RECONNECT_DELAY * Math.min(this.reconnectAttempts, 5);
+
 			setTimeout(() => {
 				this.connect().catch(e => {
 					console.error('❌ Ошибка переподключения:', e);
 				});
-			}, WS_CONFIG.RECONNECT_DELAY);
+			}, delay);
 		} else {
 			console.error('❌ Превышено количество попыток переподключения');
 		}

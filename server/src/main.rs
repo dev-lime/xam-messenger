@@ -5,10 +5,6 @@
 //! - HTTP API для регистрации, получения пользователей и загрузки файлов
 //! - SQLite для хранения данных
 
-#![allow(clippy::manual_clamp)]
-#![allow(clippy::collapsible_if)]
-#![allow(clippy::needless_return)]
-
 mod config;
 mod db;
 mod handlers;
@@ -16,28 +12,26 @@ mod models;
 mod websocket;
 
 use actix_cors::Cors;
-use actix_web::{middleware, web, App, HttpServer};
+use actix_web::{App, HttpServer, middleware, web};
 use log::{info, warn};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 
 use config::AppConfig;
 use models::AppState;
 use websocket::ws_handler;
 
-/// Получение всех локальных IP адресов
+/// Получение всех локальных IP адресов (#28: if-addrs вместо get_if_addrs)
 fn get_local_ips() -> Vec<String> {
     let mut ips = Vec::new();
 
-    // Получаем список всех сетевых интерфейсов
-    if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
+    if let Ok(interfaces) = if_addrs::get_if_addrs() {
         for iface in interfaces {
-            // Пропускаем loopback и не IPv4 адреса
             if !iface.is_loopback() {
-                if let get_if_addrs::IfAddr::V4(ipv4) = iface.addr {
+                if let if_addrs::IfAddr::V4(ipv4) = iface.addr {
                     ips.push(ipv4.ip.to_string());
                 }
             }
@@ -49,7 +43,6 @@ fn get_local_ips() -> Vec<String> {
 
 #[actix_web::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Загружаем конфигурацию из .env и переменных окружения
     let config = AppConfig::from_env();
 
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
@@ -57,13 +50,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("🚀 XAM Server v1.0.0");
     info!("📡 Хост: {}, Порт: {}", config.host, config.port);
 
-    // Инициализация БД
+    // Инициализация БД (#11: замена unwrap на ?)
     let db_path = &config.db_path;
-    std::fs::create_dir_all(db_path.parent().unwrap())?;
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     let conn = Connection::open(db_path)?;
-
-    // Инициализация схемы БД
     db::init_database(&conn)?;
 
     info!("✅ База данных: {}", db_path.display());
@@ -72,12 +65,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&config.upload_dir)?;
     info!("📁 Директория загрузок: {}", config.upload_dir.display());
 
-    // Получаем и выводим локальные IP адреса
+    // Локальные IP адреса
     let local_ips = get_local_ips();
     if !local_ips.is_empty() {
         info!("📡 Локальные IP адреса:");
         for ip in &local_ips {
-            info!("   └─ http://{}:8080", ip);
+            info!("   └─ http://{}:{}", ip, config.port);
         }
         info!("💡 Используйте эти адреса для подключения клиентов");
     }
@@ -87,11 +80,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut mdns_daemon_opt: Option<ServiceDaemon> = None;
 
     if let Ok(daemon) = mdns_daemon {
-        // Используем первый доступный IP или localhost как fallback
         let service_ip = local_ips.first().map(|s| s.as_str()).unwrap_or("127.0.0.1");
         let instance_name = "XAM Messenger._xam-messenger._tcp.local.".to_string();
 
-        // Создаём TXT записи в правильном формате
         let mut txt_props = HashMap::new();
         txt_props.insert("version".to_string(), "1.0.0".to_string());
         txt_props.insert("protocol".to_string(), "ws".to_string());
@@ -101,7 +92,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             "XAM Messenger",
             instance_name.as_str(),
             service_ip,
-            8080,
+            config.port,
             Some(txt_props),
         ) {
             Ok(info) => match daemon.register(info) {
@@ -125,10 +116,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let broadcast_size = config.broadcast_channel_size;
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(broadcast_size);
     let online_users = Arc::new(Mutex::new(HashMap::new()));
+
+    // Новые поля AppState для валидации файлов
     let state = AppState {
         db,
         tx,
         online_users,
+        upload_dir: config.upload_dir.clone(),
+        max_file_size: config.max_file_size,
     };
 
     info!("🚀 Запуск сервера на {}:{}", config.host, config.port);
@@ -136,9 +131,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let server_config = config.clone();
     let cors_origins = config.cors_origins.clone();
     let server = HttpServer::new(move || {
-        // Настройка CORS из конфигурации
         let cors = if cors_origins == "*" {
-            // Разрешить все origin
             Cors::default()
                 .allow_any_origin()
                 .allow_any_method()
@@ -146,7 +139,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .send_wildcard()
                 .max_age(3600)
         } else {
-            // Использовать список разрешённых origin из конфигурации
             let origins: Arc<str> = cors_origins.clone().into();
             Cors::default()
                 .allowed_origin_fn(move |origin, _req_head| {
@@ -158,18 +150,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .max_age(3600)
         };
 
-        // Настройка Rate Limiting
-        // rate_limit = запросов в минуту, конвертируем в секунды на запрос
-        // При rate_limit=100: 60/100 = 0.6 сек на запрос, но используем целочисленное деление
-        // Поэтому используем формулу: seconds_per_request = 60 / rate_limit (минимум 1)
-        let seconds_per_request = if server_config.rate_limit >= 60 {
-            1
-        } else {
-            60 / server_config.rate_limit.max(1)
-        };
+        // Rate Limiting (#7): корректная формула
+        // rate_limit = запросов в минуту → milliseconds_per_request = 60_000 / rate_limit
+        // При rate_limit=100: 600ms между запросами
+        let milliseconds_per_request = (60_000.0 / server_config.rate_limit as f64) as u64;
 
         let governor_conf = actix_governor::GovernorConfigBuilder::default()
-            .seconds_per_request(seconds_per_request.into())
+            .milliseconds_per_request(milliseconds_per_request)
             .burst_size(server_config.rate_limit)
             .finish()
             .expect("Failed to create GovernorConfig");
@@ -192,17 +179,26 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .route("/api/v1/online", web::get().to(handlers::get_online_users))
     })
     .bind(format!("{}:{}", server_config.host, server_config.port))?
-    .run()
-    .await;
+    .run();
 
-    // Graceful shutdown: отмена регистрации mDNS
-    if let Some(daemon) = mdns_daemon_opt {
+    // Graceful shutdown (#6): обработка Ctrl+C
+    let server_handle = server.handle();
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            info!("📥 Получен сигнал завершения");
+            server_handle.stop(true).await;
+        }
+    });
+
+    server.await?;
+
+    // Отмена регистрации mDNS
+    if let Some(daemon) = mdns_daemon_opt.take() {
         let _ = daemon.shutdown();
         info!("📢 mDNS сервис остановлен");
     }
 
-    server?;
-
+    info!("👋 Сервер остановлен");
     Ok(())
 }
 
@@ -217,7 +213,6 @@ pub async fn create_test_state() -> AppState {
         Connection::open(":memory:").expect("Failed to create in-memory DB"),
     ));
 
-    // Инициализация тестовой БД
     {
         let conn = db.lock().await;
         conn.execute("PRAGMA journal_mode = WAL", []).ok();
@@ -225,7 +220,7 @@ pub async fn create_test_state() -> AppState {
             "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
             [],
         )
-        .unwrap();
+        .expect("Failed to create users table");
         conn.execute(
             "CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
@@ -234,7 +229,7 @@ pub async fn create_test_state() -> AppState {
             )",
             [],
         )
-        .unwrap();
+        .expect("Failed to create messages table");
         conn.execute(
             "CREATE TABLE IF NOT EXISTS files (
                 id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
@@ -242,7 +237,7 @@ pub async fn create_test_state() -> AppState {
             )",
             [],
         )
-        .unwrap();
+        .expect("Failed to create files table");
     }
 
     let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
@@ -252,6 +247,8 @@ pub async fn create_test_state() -> AppState {
         db,
         tx,
         online_users,
+        upload_dir: std::path::PathBuf::from("/tmp/xam-test-files"),
+        max_file_size: 100 * 1024 * 1024,
     }
 }
 
@@ -262,7 +259,7 @@ pub async fn create_test_state() -> AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, web, App};
+    use actix_web::{App, test, web};
     use rusqlite::params;
     use serde_json::json;
 
@@ -291,7 +288,13 @@ mod tests {
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         assert_eq!(body["data"]["name"], "Тестовый Пользователь");
-        assert!(body["data"]["id"].as_str().unwrap().len() > 0);
+        assert!(
+            body["data"]["id"]
+                .as_str()
+                .expect("Expected id string")
+                .len()
+                > 0
+        );
     }
 
     #[actix_rt::test]
@@ -305,7 +308,7 @@ mod tests {
                 "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
                 params!["test-id", "Existing User", "👤"],
             )
-            .unwrap();
+            .expect("Failed to insert test user");
         }
 
         let app = test::init_service(
@@ -352,6 +355,35 @@ mod tests {
         assert_eq!(body["error"], "Empty name");
     }
 
+    #[actix_rt::test]
+    async fn test_register_name_too_long() {
+        let state = create_test_state().await;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/v1/register", web::post().to(handlers::register)),
+        )
+        .await;
+
+        let long_name = "a".repeat(51);
+        let req = test::TestRequest::post()
+            .uri("/api/v1/register")
+            .set_json(json!({ "name": long_name }))
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"]
+                .as_str()
+                .expect("Expected error string")
+                .contains("Name too long")
+        );
+    }
+
     // ============================================
     // ТЕСТЫ ПОЛЬЗОВАТЕЛЕЙ
     // ============================================
@@ -367,12 +399,12 @@ mod tests {
                 "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
                 params!["user1", "Alice", "👩"],
             )
-            .unwrap();
+            .expect("Failed to insert user1");
             conn.execute(
                 "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
                 params!["user2", "Bob", "👨"],
             )
-            .unwrap();
+            .expect("Failed to insert user2");
         }
 
         let app = test::init_service(
@@ -389,7 +421,7 @@ mod tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
-        let users = body["data"].as_array().unwrap();
+        let users = body["data"].as_array().expect("Expected data array");
         assert_eq!(users.len(), 2);
     }
 
@@ -418,7 +450,7 @@ mod tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
-        let online = body["data"].as_array().unwrap();
+        let online = body["data"].as_array().expect("Expected data array");
         assert_eq!(online.len(), 2);
     }
 
@@ -445,7 +477,10 @@ mod tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
-        assert_eq!(body["data"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            body["data"].as_array().expect("Expected data array").len(),
+            0
+        );
     }
 
     #[actix_rt::test]
@@ -468,7 +503,7 @@ mod tests {
                         1
                     ],
                 )
-                .unwrap();
+                .expect("Failed to insert message");
             }
         }
 
@@ -488,7 +523,7 @@ mod tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
-        let messages = body["data"].as_array().unwrap();
+        let messages = body["data"].as_array().expect("Expected data array");
         assert_eq!(messages.len(), 5);
     }
 
@@ -499,35 +534,30 @@ mod tests {
         // Добавляем тестовые сообщения для разных чатов
         {
             let conn = state.db.lock().await;
-            // Личные сообщения между user1 и user2
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params!["msg1", "user1", "User 1", "Hello", 1000, "user2"],
             )
-            .unwrap();
+            .expect("Failed to insert msg1");
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params!["msg2", "user2", "User 2", "Hi", 1001, "user1"],
             )
-            .unwrap();
-
-            // Сообщение от user3 к user4 (другой чат)
+            .expect("Failed to insert msg2");
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params!["msg3", "user3", "User 3", "Other chat", 1002, "user4"],
             )
-            .unwrap();
-
-            // Общее сообщение (без получателя)
+            .expect("Failed to insert msg3");
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params!["msg4", "user5", "User 5", "General message", 1003],
             )
-            .unwrap();
+            .expect("Failed to insert msg4");
         }
 
         let app = test::init_service(
@@ -537,7 +567,6 @@ mod tests {
         )
         .await;
 
-        // Запрашиваем сообщения для чата user1-user2
         let req = test::TestRequest::get()
             .uri("/api/v1/messages?chat_peer_id=user2")
             .to_request();
@@ -547,8 +576,7 @@ mod tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
-        let messages = body["data"].as_array().unwrap();
-        // Должны вернуться: msg1, msg2 (личные) и msg4 (общее), но не msg3
+        let messages = body["data"].as_array().expect("Expected data array");
         assert_eq!(messages.len(), 3);
     }
 

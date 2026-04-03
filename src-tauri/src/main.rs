@@ -158,11 +158,10 @@ fn cache_server(ip: String, port: u16, source: String) -> Result<(), String> {
 // Нативный WebSocket (работает без интернета)
 // ============================================================================
 
-/// Проверка наличия активного сетевого интерфейса
+/// Проверка наличия активного сетевого интерфейса (#28: if-addrs вместо get_if_addrs)
 fn has_network_interface() -> bool {
-    if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
+    if let Ok(interfaces) = if_addrs::get_if_addrs() {
         for iface in interfaces {
-            // Проверяем не-loopback интерфейсы (Wi-Fi, Ethernet)
             if !iface.is_loopback() {
                 return true;
             }
@@ -209,8 +208,16 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
     let (mut write, mut read) = ws_stream.split();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
-    // Сохраняем канал для отправки
-    app.state::<Mutex<WsState>>().lock().unwrap().tx = Some(tx);
+    // #5: Закрываем старый канал перед созданием нового (утечка памяти)
+    {
+        let ws_state = app.state::<Mutex<WsState>>();
+        let mut state = ws_state.lock().unwrap();
+        if let Some(old_tx) = state.tx.take() {
+            drop(old_tx); // Закрываем старый канал — задача отправителя завершится
+            println!("🔌 Старый канал WebSocket закрыт");
+        }
+        state.tx = Some(tx);
+    }
 
     // Задача для отправки сообщений из JS
     tokio::spawn(async move {
