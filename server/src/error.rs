@@ -4,6 +4,10 @@ use actix_web::{HttpResponse, http::StatusCode};
 use serde_json::json;
 
 /// Типы ошибок приложения
+///
+/// NOTE: Некоторые варианты пока не используются в обработчиках,
+/// но оставлены для будущего расширения API.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum AppError {
     /// Ошибка базы данных
@@ -62,6 +66,9 @@ impl From<std::io::Error> for AppError {
     }
 }
 
+/// NOTE: Некоторые методы пока не используются в обработчиках,
+/// но оставлены для будущего расширения API.
+#[allow(dead_code)]
 impl AppError {
     /// Создаёт ошибку валидации
     pub fn validation(msg: impl Into<String>) -> Self {
@@ -108,6 +115,8 @@ impl AppError {
 }
 
 /// Тип результата для операций приложения
+/// NOTE: Оставлен для будущего расширения API.
+#[allow(dead_code)]
 pub type AppResult<T> = Result<T, AppError>;
 
 #[cfg(test)]

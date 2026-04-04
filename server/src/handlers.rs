@@ -8,6 +8,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::db;
+use crate::error::AppError;
 use crate::models::AppState;
 
 /// Максимальная длина имени пользователя
@@ -63,21 +64,37 @@ pub async fn register(data: web::Data<AppState>, body: web::Json<RegisterRequest
         }));
     }
 
-    let db = data.db.lock().await;
-    match db::get_or_create_user(&db, name, &body.avatar) {
+    // PERF-1: Получаем соединение из pool (без async mutex)
+    let conn = match data.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            return AppError::database(format!("Не удалось получить соединение с БД: {}", e))
+                .to_response();
+        }
+    };
+
+    match db::get_or_create_user(&conn, name, &body.avatar) {
         Ok(user) => HttpResponse::Ok().json(json!({"success": true, "data": user})),
-        Err(e) => HttpResponse::InternalServerError()
-            .json(json!({"success": false, "error": e.to_string()})),
+        Err(e) => {
+            // BP-4: Используем AppError для корректной обработки
+            AppError::database(e.to_string()).to_response()
+        }
     }
 }
 
 /// Получение списка всех пользователей
 pub async fn get_users(data: web::Data<AppState>) -> HttpResponse {
-    let db = data.db.lock().await;
-    match db::get_all_users(&db) {
+    let conn = match data.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            return AppError::database(format!("Не удалось получить соединение с БД: {}", e))
+                .to_response();
+        }
+    };
+
+    match db::get_all_users(&conn) {
         Ok(users) => HttpResponse::Ok().json(json!({"success": true, "data": users})),
-        Err(e) => HttpResponse::InternalServerError()
-            .json(json!({"success": false, "error": e.to_string()})),
+        Err(e) => AppError::database(e.to_string()).to_response(),
     }
 }
 
@@ -94,8 +111,6 @@ pub struct MessagesQuery {
     #[serde(default = "default_limit")]
     pub limit: usize,
     pub before_id: Option<String>,
-    /// ID пользователя для фильтрации сообщений конкретного чата
-    /// Если не указан, возвращаются все сообщения (общие)
     pub chat_peer_id: Option<String>,
 }
 
@@ -110,24 +125,23 @@ pub async fn get_messages(
 ) -> HttpResponse {
     let limit = query.limit.clamp(1, 200);
 
-    let db = data.db.lock().await;
-    // Если указан chat_peer_id, используем фильтрацию по чату
+    let conn = match data.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            return AppError::database(format!("Не удалось получить соединение с БД: {}", e))
+                .to_response();
+        }
+    };
+
     let (messages, next_before_id, has_more) = if let Some(chat_peer_id) = &query.chat_peer_id {
-        match db::get_messages_for_chat(&db, limit, query.before_id.as_deref(), chat_peer_id) {
+        match db::get_messages_for_chat(&conn, limit, query.before_id.as_deref(), chat_peer_id) {
             Ok(result) => result,
-            Err(e) => {
-                return HttpResponse::InternalServerError()
-                    .json(json!({"success": false, "error": e.to_string()}));
-            }
+            Err(e) => return AppError::database(e.to_string()).to_response(),
         }
     } else {
-        // Старое поведение: все сообщения без фильтрации
-        match db::get_messages_with_pagination(&db, limit, query.before_id.as_deref()) {
+        match db::get_messages_with_pagination(&conn, limit, query.before_id.as_deref()) {
             Ok(result) => result,
-            Err(e) => {
-                return HttpResponse::InternalServerError()
-                    .json(json!({"success": false, "error": e.to_string()}));
-            }
+            Err(e) => return AppError::database(e.to_string()).to_response(),
         }
     };
 
@@ -153,6 +167,7 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
     }
 
     // Получаем первое поле (файл)
+    // BUG-11 FIX: корректная обработка ошибок multipart
     match payload.try_next().await {
         Ok(Some(mut field)) => {
             let raw_filename = field
@@ -162,7 +177,6 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 .unwrap_or("unnamed")
                 .to_string();
 
-            // Санитизация имени файла (#10)
             let safe_filename = sanitize_filename(&raw_filename);
             if safe_filename.is_empty() {
                 return HttpResponse::BadRequest().json(json!({
@@ -177,8 +191,17 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
             let mut size = 0u64;
             let mut file_bytes = Vec::new();
 
-            // Чтение чанков с проверкой лимита размера (#2)
-            while let Some(chunk) = field.try_next().await.ok().flatten() {
+            // BUG-11 FIX: обрабатываем ошибки чтения поля
+            while let Some(chunk) = match field.try_next().await {
+                Ok(Some(c)) => Some(c),
+                Ok(None) => None,
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(json!({
+                        "success": false,
+                        "error": format!("Failed to read file chunk: {}", e)
+                    }));
+                }
+            } {
                 size += chunk.len() as u64;
                 if size > max_file_size as u64 {
                     return HttpResponse::PayloadTooLarge().json(json!({
@@ -189,7 +212,7 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 file_bytes.extend_from_slice(&chunk);
             }
 
-            // Сначала сохраняем файл, потом записываем метаданные в БД (#14)
+            // Сначала сохраняем файл, потом записываем метаданные в БД
             if let Err(e) = std::fs::write(&filepath, &file_bytes) {
                 return HttpResponse::InternalServerError().json(json!({
                     "success": false,
@@ -198,24 +221,29 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
             }
 
             // Если запись в БД не удалась — удаляем файл (rollback)
-            {
-                let db = data.db.lock().await;
-                if let Err(e) = db::save_file_metadata(
-                    &db,
-                    &file_id,
-                    &safe_filename,
-                    filepath.to_string_lossy().as_ref(),
-                    size as i64,
-                ) {
+            let conn = match data.db.get() {
+                Ok(c) => c,
+                Err(e) => {
                     let _ = std::fs::remove_file(&filepath);
-                    return HttpResponse::InternalServerError().json(json!({
-                        "success": false,
-                        "error": format!("Failed to save file metadata: {}", e)
-                    }));
+                    return AppError::database(format!("Не удалось получить соединение: {}", e))
+                        .to_response();
                 }
+            };
+
+            if let Err(e) = db::save_file_metadata(
+                &conn,
+                &file_id,
+                &safe_filename,
+                filepath.to_string_lossy().as_ref(),
+                size as i64,
+            ) {
+                let _ = std::fs::remove_file(&filepath);
+                return HttpResponse::InternalServerError().json(json!({
+                    "success": false,
+                    "error": format!("Failed to save file metadata: {}", e)
+                }));
             }
 
-            // Возвращаем только ID файла, а не полный путь
             HttpResponse::Ok().json(json!({
                 "success": true,
                 "data": {
@@ -226,14 +254,19 @@ pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> H
                 }
             }))
         }
-        Ok(None) | Err(_) => HttpResponse::BadRequest().json(json!({
+        // BUG-11 FIX: различаем отсутствие файла и ошибку парсинга
+        Ok(None) => HttpResponse::BadRequest().json(json!({
             "success": false,
             "error": "No file uploaded"
+        })),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": format!("Multipart parsing error: {}", e)
         })),
     }
 }
 
-/// Скачивание файла по ID с защитой от Path Traversal (#1)
+/// Скачивание файла по ID с защитой от Path Traversal
 pub async fn download_file(
     data: web::Data<AppState>,
     query: web::Query<std::collections::HashMap<String, String>>,
@@ -248,9 +281,15 @@ pub async fn download_file(
         }
     };
 
-    // Ищем файл в базе данных по ID
-    let db = data.db.lock().await;
-    let filepath = match db::get_file_path(&db, file_id) {
+    let conn = match data.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            return AppError::database(format!("Не удалось получить соединение с БД: {}", e))
+                .to_response();
+        }
+    };
+
+    let filepath = match db::get_file_path(&conn, file_id) {
         Ok(Some(path)) => path,
         Ok(None) => {
             return HttpResponse::NotFound().json(json!({
@@ -258,15 +297,11 @@ pub async fn download_file(
                 "error": "File not found"
             }));
         }
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(json!({"success": false, "error": format!("Database error: {}", e)}));
-        }
+        Err(e) => return AppError::database(e.to_string()).to_response(),
     };
 
     let file_path = std::path::Path::new(&filepath);
 
-    // Path Traversal защита: проверяем что файл внутри upload_dir
     if !is_path_safe(&data.upload_dir, file_path) {
         log::warn!("⚠️ Попытка Path Traversal: {:?}", filepath);
         return HttpResponse::Forbidden().json(json!({

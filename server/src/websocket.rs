@@ -7,10 +7,57 @@ use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use std::panic::AssertUnwindSafe;
 use std::time::SystemTime;
+use tokio::sync::mpsc::unbounded_channel;
 use uuid::Uuid;
 
 use crate::db;
 use crate::models::{AppState, ChatMessage, ClientMsg, User};
+
+/// PERF-3: Отправить сообщение конкретному пользователю через targeted delivery
+async fn send_to_user(state: &AppState, user_id: &str, payload: serde_json::Value) {
+    let mut senders = state.user_senders.lock().await;
+    if let Some(user_senders) = senders.get_mut(user_id) {
+        // Удаляем мёртвые каналы и отправляем живым
+        user_senders.retain(|tx| tx.send(payload.clone()).is_ok());
+        // Если все каналы мёртвые, удаляем запись
+        if user_senders.is_empty() {
+            senders.remove(user_id);
+        }
+    }
+}
+
+/// PERF-3: Отправить сообщение всем КРОМЕ указанного пользователя
+async fn broadcast_except(state: &AppState, except_user_id: &str, payload: serde_json::Value) {
+    let senders = state.user_senders.lock().await;
+    for (uid, user_senders) in senders.iter() {
+        if uid != except_user_id {
+            for tx in user_senders {
+                let _ = tx.send(payload.clone());
+            }
+        }
+    }
+}
+
+/// PERF-3: Отправить сообщение двум пользователям (отправитель + получатель)
+async fn send_to_chat_participants(
+    state: &AppState,
+    sender_id: &str,
+    recipient_id: &Option<String>,
+    payload: serde_json::Value,
+) {
+    // Отправляем отправителю (для ACK обновления статуса)
+    send_to_user(state, sender_id, payload.clone()).await;
+
+    // Если есть получатель — отправляем и ему
+    if let Some(recip_id) = recipient_id {
+        if recip_id != sender_id {
+            send_to_user(state, recip_id, payload).await;
+        }
+    } else {
+        // Общее сообщение — отправляем всем кроме отправителя
+        broadcast_except(state, sender_id, payload).await;
+    }
+}
 
 /// Обработка клиентского сообщения с защитой от паник
 pub async fn handle_client_message(
@@ -21,7 +68,6 @@ pub async fn handle_client_message(
 ) {
     let msg_type = client_msg.msg_type.clone();
 
-    // Используем AssertUnwindSafe для защиты от паник в async контексте
     let future = AssertUnwindSafe(async {
         match client_msg.msg_type.as_str() {
             "register" => handle_register(client_msg, user_id, session, state).await,
@@ -33,7 +79,6 @@ pub async fn handle_client_message(
         }
     });
 
-    // Ловим паники внутри future
     match future.catch_unwind().await {
         Ok(()) => {}
         Err(e) => {
@@ -49,7 +94,6 @@ pub async fn handle_client_message(
                 msg_type,
                 msg
             );
-            // Отправляем сообщение об ошибке клиенту
             let _ = session
                 .text(
                     json!({
@@ -76,20 +120,33 @@ async fn handle_register(
         "👤".to_string()
     };
 
-    let user: User = {
-        let conn = state.db.lock().await;
-        match db::get_or_create_user(&conn, &client_msg.name, &avatar) {
-            Ok(u) => u,
-            Err(e) => {
-                log::error!("Failed to create user: {}", e);
-                return;
-            }
+    // PERF-1: Получаем соединение из pool
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to get DB connection: {}", e);
+            return;
+        }
+    };
+
+    let user: User = match db::get_or_create_user(&conn, &client_msg.name, &avatar) {
+        Ok(u) => u,
+        Err(e) => {
+            log::error!("Failed to create user: {}", e);
+            return;
         }
     };
 
     *user_id = Some(user.id.clone());
 
-    // Добавляем в онлайн (#11: замена unwrap на unwrap_or_default)
+    // PERF-3: Регистрируем sender для targeted delivery
+    let (tx, mut rx) = unbounded_channel::<serde_json::Value>();
+    {
+        let mut senders = state.user_senders.lock().await;
+        senders.entry(user.id.clone()).or_default().push(tx);
+    }
+
+    // Добавляем в онлайн
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
@@ -99,6 +156,26 @@ async fn handle_register(
         .lock()
         .await
         .insert(user.id.clone(), timestamp);
+
+    // PERF-3: Запускаем задачу рассылки для этого пользователя
+    let mut session_clone = session.clone();
+    let user_id_clone = user.id.clone();
+    let state_clone = state.clone();
+    actix_web::rt::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if session_clone.text(msg.to_string()).await.is_err() {
+                // Клиент отключился — удаляем его sender
+                let mut senders = state_clone.user_senders.lock().await;
+                if let Some(user_senders) = senders.get_mut(&user_id_clone) {
+                    user_senders.retain(|tx| !tx.is_closed());
+                    if user_senders.is_empty() {
+                        senders.remove(&user_id_clone);
+                    }
+                }
+                break;
+            }
+        }
+    });
 
     // Отправляем список текущих онлайн пользователей
     let online_list: Vec<String> = state.online_users.lock().await.keys().cloned().collect();
@@ -115,12 +192,17 @@ async fn handle_register(
             .await;
     }
 
-    // Рассылаем остальным что этот пользователь подключился
-    let _ = state.tx.send(json!({
-        "type": "user_online",
-        "user_id": user.id,
-        "online": true
-    }));
+    // PERF-3: Рассылаем остальным что этот пользователь подключился
+    broadcast_except(
+        state,
+        &user.id,
+        json!({
+            "type": "user_online",
+            "user_id": user.id,
+            "online": true
+        }),
+    )
+    .await;
 
     let _ = session
         .text(json!({ "type": "registered", "user": user }).to_string())
@@ -152,20 +234,31 @@ async fn handle_update_profile(
 
     log::info!("👤 Обновление профиля: user={}, avatar={}", uid, new_avatar);
 
-    {
-        let conn = state.db.lock().await;
-        if let Err(e) = db::update_user_avatar(&conn, &uid, &new_avatar) {
-            log::error!("Failed to update avatar: {}", e);
+    // PERF-1: Получаем соединение из pool
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to get DB connection: {}", e);
             return;
         }
+    };
+
+    if let Err(e) = db::update_user_avatar(&conn, &uid, &new_avatar) {
+        log::error!("Failed to update avatar: {}", e);
+        return;
     }
 
-    // Обновляем онлайн пользователей и рассылаем новый аватар
-    let _ = state.tx.send(json!({
-        "type": "user_updated",
-        "user_id": uid,
-        "avatar": new_avatar
-    }));
+    // PERF-3: Рассылаем обновление всем
+    broadcast_except(
+        state,
+        &uid,
+        json!({
+            "type": "user_updated",
+            "user_id": uid,
+            "avatar": new_avatar
+        }),
+    )
+    .await;
 }
 
 /// Обработка сообщения
@@ -195,14 +288,20 @@ async fn handle_message(
         );
     }
 
-    let uname = {
-        let conn = state.db.lock().await;
-        match db::get_user_name(&conn, &uid) {
-            Ok(name) => name,
-            Err(e) => {
-                log::error!("Failed to get user name: {}", e);
-                return;
-            }
+    // PERF-1: Получаем соединение из pool
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to get DB connection: {}", e);
+            return;
+        }
+    };
+
+    let uname = match db::get_user_name(&conn, &uid) {
+        Ok(name) => name,
+        Err(e) => {
+            log::error!("Failed to get user name: {}", e);
+            return;
         }
     };
 
@@ -225,12 +324,9 @@ async fn handle_message(
 
     log::info!("💾 Сохраняем сообщение с {} файлами", message.files.len());
 
-    {
-        let conn = state.db.lock().await;
-        if let Err(e) = db::save_message(&conn, &message) {
-            log::error!("Failed to save message: {}", e);
-            return;
-        }
+    if let Err(e) = db::save_message(&conn, &message) {
+        log::error!("Failed to save message: {}", e);
+        return;
     }
 
     log::info!(
@@ -238,9 +334,10 @@ async fn handle_message(
         message.id,
         message.files.len()
     );
-    let _ = state
-        .tx
-        .send(json!({ "type": "message", "message": message }));
+
+    // PERF-3: Targeted delivery — только отправителю и получателю
+    let payload = json!({ "type": "message", "message": message });
+    send_to_chat_participants(state, &uid, &client_msg.recipient_id, payload).await;
 }
 
 /// Обработка подтверждения прочтения (ACK)
@@ -267,12 +364,18 @@ async fn handle_ack(
         ack_sender_id
     );
 
-    {
-        let conn = state.db.lock().await;
-        if let Err(e) = db::update_message_delivery_status(&conn, &client_msg.message_id, status) {
-            log::error!("Failed to update delivery status: {}", e);
+    // PERF-1: Получаем соединение из pool
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to get DB connection: {}", e);
             return;
         }
+    };
+
+    if let Err(e) = db::update_message_delivery_status(&conn, &client_msg.message_id, status) {
+        log::error!("Failed to update delivery status: {}", e);
+        return;
     }
 
     let ack_msg = json!({
@@ -282,7 +385,9 @@ async fn handle_ack(
         "sender_id": ack_sender_id
     });
     log::info!("📤 Рассылка ACK: {}", ack_msg);
-    let _ = state.tx.send(ack_msg);
+
+    // PERF-3: Отправляем ACK только оригинальному отправителю сообщения
+    send_to_user(state, &ack_sender_id, ack_msg).await;
 }
 
 /// Обработка запроса истории сообщений
@@ -294,7 +399,15 @@ async fn handle_get_messages(
     let limit = client_msg.limit.clamp(1, 200);
     let before_id = &client_msg.before_id;
 
-    let conn = state.db.lock().await;
+    // PERF-1: Получаем соединение из pool
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to get DB connection: {}", e);
+            return;
+        }
+    };
+
     match db::get_messages_with_pagination(&conn, limit, before_id.as_deref()) {
         Ok((messages, next_before_id, has_more)) => {
             let response = json!({
@@ -321,7 +434,6 @@ pub async fn handle_websocket_session(
     state: AppState,
 ) {
     let mut user_id: Option<String> = None;
-    let mut rx = state.tx.subscribe();
     let mut text_fragment_buffer = String::new();
 
     loop {
@@ -333,12 +445,12 @@ pub async fn handle_websocket_session(
 
                         match serde_json::from_str::<ClientMsg>(&text) {
                             Ok(client_msg) => {
-                                log::info!("✅ JSON распарсен успешно, тип: {}", client_msg.msg_type);
+                                log::debug!("✅ JSON распарсен успешно, тип: {}", client_msg.msg_type);
                                 handle_client_message(client_msg, &mut user_id, &mut session, &state).await;
                             }
                             Err(e) => {
                                 log::warn!("⚠️ Ошибка парсинга JSON: {}", e);
-                                log::warn!("📝 Первые 200 символов: {}", text.chars().take(200).collect::<String>());
+                                log::debug!("📝 Первые 200 символов: {}", text.chars().take(200).collect::<String>());
                                 text_fragment_buffer = text.to_string();
                             }
                         }
@@ -357,7 +469,7 @@ pub async fn handle_websocket_session(
 
                         match serde_json::from_str::<ClientMsg>(&text_fragment_buffer) {
                             Ok(client_msg) => {
-                                log::info!("✅ Фрагментированное сообщение собрано успешно (общий размер: {} байт)", text_fragment_buffer.len());
+                                log::debug!("✅ Фрагментированное сообщение собрано успешно (общий размер: {} байт)", text_fragment_buffer.len());
                                 text_fragment_buffer.clear();
                                 handle_client_message(client_msg, &mut user_id, &mut session, &state).await;
                             }
@@ -387,21 +499,6 @@ pub async fn handle_websocket_session(
                     _ => {}
                 }
             }
-            Ok(msg) = rx.recv() => {
-                if let Some(uid) = &user_id {
-                    // Пропускаем сообщения от себя
-                    if msg.get("type").and_then(|v| v.as_str()) == Some("message")
-                        && msg.get("message").and_then(|m| m.get("sender_id").and_then(|v| v.as_str())) == Some(uid) {
-                            continue;
-                        }
-                    // Пропускаем ACK от себя
-                    if msg.get("type").and_then(|v| v.as_str()) == Some("ack")
-                        && msg.get("sender_id").and_then(|v| v.as_str()) == Some(uid) {
-                            continue;
-                        }
-                }
-                let _ = session.text(msg.to_string()).await;
-            }
         }
     }
 }
@@ -409,11 +506,24 @@ pub async fn handle_websocket_session(
 /// Удаление пользователя из списка онлайн
 async fn remove_user_from_online(state: &AppState, user_id: &str) {
     state.online_users.lock().await.remove(user_id);
-    let _ = state.tx.send(json!({
-        "type": "user_online",
-        "user_id": user_id,
-        "online": false
-    }));
+
+    // PERF-3: Удаляем все sender'ы пользователя
+    {
+        let mut senders = state.user_senders.lock().await;
+        senders.remove(user_id);
+    }
+
+    broadcast_except(
+        state,
+        user_id,
+        json!({
+            "type": "user_online",
+            "user_id": user_id,
+            "online": false
+        }),
+    )
+    .await;
+
     log::info!("🔴 Пользователь {} офлайн", user_id);
 }
 

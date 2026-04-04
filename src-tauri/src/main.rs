@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use mdns_sd::ServiceDaemon;
+use flume::RecvTimeoutError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -50,10 +51,14 @@ impl WsState {
     }
 }
 
+// ============================================================================
+// mDNS обнаружение серверов
+// ============================================================================
+
 /// Поиск серверов через mDNS (асинхронный — не блокирует UI)
 #[tauri::command]
 async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
-    println!("🔍 Запуск поиска mDNS серверов...");
+    log::info!("🔍 Запуск поиска mDNS серверов...");
 
     // Запускаем mDNS поиск в отдельном потоке чтобы не блокировать UI
     let servers = tokio::task::spawn_blocking(|| {
@@ -64,18 +69,20 @@ async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
             .browse("_xam-messenger._tcp.local.")
             .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
 
-        println!("✅ mDNS поиск запущен, ждём 3 секунды...");
+        log::info!("✅ mDNS поиск запущен, ждём 3 секунды...");
 
         let start = std::time::Instant::now();
         let timeout = std::time::Duration::from_secs(3);
         let mut seen_services: HashMap<String, ServerInfo> = HashMap::new();
 
-        // Читаем события из receiver с таймаутом
+        // BUG-12 FIX: при таймауте recv_timeout продолжаем цикл,
+        // а не прерываем его. Цикл завершится только когда истечёт
+        // общий 3-секундный timeout (start.elapsed() < timeout).
         while start.elapsed() < timeout {
             match receiver.recv_timeout(std::time::Duration::from_millis(100)) {
                 Ok(event) => {
                     if let mdns_sd::ServiceEvent::ServiceResolved(info) = event {
-                        println!("✅ Найдено: {}", info.get_fullname());
+                        log::info!("✅ Найдено: {}", info.get_fullname());
 
                         let addresses = info.get_addresses();
                         if addresses.is_empty() {
@@ -108,13 +115,15 @@ async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
                         seen_services.insert(info.get_fullname().to_string(), server_info);
                     }
                 }
-                Err(_) => break,
+                // BUG-12 FIX: Timeout — не ошибка, просто продолжаем ждать
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
             }
         }
 
-        println!("📊 Найдено серверов: {}", seen_services.len());
+        log::info!("📊 Найдено серверов: {}", seen_services.len());
         let _ = daemon.stop_browse("_xam-messenger._tcp.local.");
-        println!("🛑 mDNS поиск остановлен");
+        log::info!("🛑 mDNS поиск остановлен");
 
         Ok::<Vec<ServerInfo>, String>(seen_services.into_values().collect())
     })
@@ -137,7 +146,7 @@ fn get_cached_servers() -> Result<Vec<CachedServer>, String> {
 fn cache_server(ip: String, port: u16, source: String) -> Result<(), String> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| format!("SystemTime error: {}", e))?
         .as_secs();
 
     let cached = CachedServer {
@@ -147,9 +156,7 @@ fn cache_server(ip: String, port: u16, source: String) -> Result<(), String> {
         source,
     };
 
-    // В реальной реализации будет запись в localStorage через JS
-    // Здесь просто логируем
-    println!("📦 Кэширование сервера: {:?}", cached);
+    log::info!("📦 Кэширование сервера: {:?}", cached);
 
     Ok(())
 }
@@ -178,7 +185,7 @@ fn is_local_url(url: &str) -> bool {
 /// Подключение к серверу через нативный WebSocket
 #[tauri::command]
 async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
-    println!("🔌 Подключение к {}", url);
+    log::info!("🔌 Подключение к {}", url);
 
     // Вариант 2: Локальные адреса работают всегда (loopback)
     if !is_local_url(&url) {
@@ -191,7 +198,7 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
             );
         }
     } else {
-        println!("✅ Локальный адрес — подключаемся напрямую");
+        log::info!("✅ Локальный адрес — подключаемся напрямую");
     }
 
     let (ws_stream, _) = connect_async(&url)
@@ -211,10 +218,12 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
     // #5: Закрываем старый канал перед созданием нового (утечка памяти)
     {
         let ws_state = app.state::<Mutex<WsState>>();
-        let mut state = ws_state.lock().unwrap();
+        // BUG-5 FIX: вместо .unwrap() обрабатываем отравлённый мьютекс
+        let mut state = ws_state.lock()
+            .map_err(|e| format!("WsState mutex poisoned: {}", e))?;
         if let Some(old_tx) = state.tx.take() {
             drop(old_tx); // Закрываем старый канал — задача отправителя завершится
-            println!("🔌 Старый канал WebSocket закрыт");
+            log::info!("🔌 Старый канал WebSocket закрыт");
         }
         state.tx = Some(tx);
     }
@@ -223,7 +232,7 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if write.send(Message::Text(msg)).await.is_err() {
-                println!("❌ Ошибка отправки WebSocket");
+                log::error!("❌ Ошибка отправки WebSocket");
                 break;
             }
         }
@@ -232,7 +241,7 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
     // Задача для чтения сообщений от сервера
     let app_clone = app.clone();
     tokio::spawn(async move {
-        println!("✅ WebSocket подключён");
+        log::info!("✅ WebSocket подключён");
         app_clone.emit("ws_connected", ()).ok();
 
         while let Some(msg) = read.next().await {
@@ -241,7 +250,7 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
                     app_clone.emit("ws_message", text).ok();
                 }
                 Ok(Message::Close(_)) => {
-                    println!("🔌 WebSocket закрыт сервером");
+                    log::info!("🔌 WebSocket закрыт сервером");
                     app_clone.emit("ws_disconnected", ()).ok();
                     break;
                 }
@@ -249,7 +258,7 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
                     // tungstenite автоматически отвечает на ping
                 }
                 Err(e) => {
-                    println!("❌ Ошибка WebSocket: {}", e);
+                    log::error!("❌ Ошибка WebSocket: {}", e);
                     app_clone.emit("ws_error", e.to_string()).ok();
                     break;
                 }
@@ -265,7 +274,10 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn ws_send(message: String, app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<Mutex<WsState>>();
-    let tx = state.lock().unwrap().tx.clone()
+    // BUG-5 FIX: вместо .unwrap() обрабатываем отравлённый мьютекс
+    let tx = state.lock()
+        .map_err(|e| format!("WsState mutex poisoned: {}", e))?
+        .tx.clone()
         .ok_or("Not connected")?;
     tx.send(message).map_err(|e| e.to_string())
 }
@@ -273,14 +285,22 @@ async fn ws_send(message: String, app: tauri::AppHandle) -> Result<(), String> {
 /// Закрытие WebSocket соединения
 #[tauri::command]
 async fn ws_close(app: tauri::AppHandle) -> Result<(), String> {
-    println!("🔌 Закрытие WebSocket");
+    log::info!("🔌 Закрытие WebSocket");
     let state = app.state::<Mutex<WsState>>();
-    state.lock().unwrap().tx = None;
+    // BUG-5 FIX: вместо .unwrap() обрабатываем отравлённый мьютекс
+    state.lock()
+        .map_err(|e| format!("WsState mutex poisoned: {}", e))?
+        .tx = None;
     app.emit("ws_disconnected", ()).ok();
     Ok(())
 }
 
 fn main() {
+    // BP-1 FIX: инициализируем log через env_logger
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info")
+    ).init();
+
     tauri::Builder::default()
         .manage(Mutex::new(WsState::new()))
         .plugin(tauri_plugin_shell::init())

@@ -1,9 +1,84 @@
 //! Функции для работы с базой данных
+//!
+//! ARCH-1: Все функции работают с `&Connection` (из r2d2 pool).
+//!         Миграции применяются при инициализации pool.
 
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::models::{ChatMessage, FileData, User};
+
+/// ARCH-1: Текущая версия схемы БД
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+/// ARCH-1: Система миграций с версиями.
+/// Каждая миграция — это пара (target_version, sql).
+fn get_migrations() -> Vec<(u32, &'static str)> {
+    vec![(
+        1,
+        "
+            -- Миграция v1: индексы для производительности (PERF-5)
+            CREATE INDEX IF NOT EXISTS idx_messages_timestamp
+                ON messages(timestamp DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_messages_sender
+                ON messages(sender_id);
+            CREATE INDEX IF NOT EXISTS idx_messages_recipient
+                ON messages(recipient_id);
+        ",
+    )]
+}
+
+/// Применить мигра к подключению
+pub fn apply_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // Создаём таблицу версий если нет
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )?;
+
+    // Получаем текущую версию
+    let current_version: u32 = conn
+        .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(0);
+
+    if current_version >= CURRENT_SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    log::info!(
+        "🔄 Миграция БД: v{} → v{}",
+        current_version,
+        CURRENT_SCHEMA_VERSION
+    );
+
+    let migrations = get_migrations();
+    for (target_version, sql) in migrations {
+        if target_version > current_version {
+            log::info!("  Применяем миграцию v{}...", target_version);
+            // Выполняем все SQL в миграции (разделены ;)
+            for stmt in sql.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                conn.execute_batch(stmt)?;
+            }
+        }
+    }
+
+    // Обновляем версию
+    conn.execute("DELETE FROM schema_version", [])?;
+    conn.execute(
+        "INSERT INTO schema_version (version) VALUES (?1)",
+        params![CURRENT_SCHEMA_VERSION],
+    )?;
+
+    log::info!(
+        "✅ Миграция завершена, версия схемы: {}",
+        CURRENT_SCHEMA_VERSION
+    );
+    Ok(())
+}
 
 /// Получение или создание пользователя
 pub fn get_or_create_user(
@@ -66,8 +141,6 @@ pub fn get_messages_with_pagination(
     let query_limit = limit + 1;
 
     let sql = if before_id.is_some() {
-        // Используем пагинацию по ID с подзапросом для корректного порядка
-        // Это избегает проблем с одинаковыми timestamp и SQL-инъекций
         "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
          FROM messages \
          WHERE (timestamp, id) < (SELECT timestamp, id FROM messages WHERE id = ?1) \
@@ -92,46 +165,35 @@ pub fn get_messages_with_pagination(
     .filter_map(|r| r.ok())
     .collect();
 
-    // Проверяем есть ли ещё
     let loaded_count = messages.len();
     let has_more = loaded_count > limit;
 
-    // Если есть ещё, убираем лишнее сообщение (оно нужно только для проверки has_more)
     let next_before_id = if has_more {
         messages.pop().map(|m| m.id)
     } else {
         None
     };
 
-    // Разворачиваем чтобы вернуть в правильном порядке (старые → новые)
     messages.reverse();
 
     Ok((messages, next_before_id, has_more))
 }
 
 /// Получение сообщений для конкретного чата с пагинацией
-/// Возвращает сообщения с участием chat_peer_id (личные + общие)
 pub fn get_messages_for_chat(
     conn: &Connection,
     limit: usize,
     before_id: Option<&str>,
     chat_peer_id: &str,
 ) -> Result<(Vec<ChatMessage>, Option<String>, bool), rusqlite::Error> {
-    // Загружаем на 1 сообщение больше чтобы проверить есть ли ещё
     let query_limit = limit + 1;
 
-    // SQL для фильтрации сообщений конкретного чата:
-    // 1. Личные сообщения где chat_peer_id — отправитель или получатель
-    // 2. Общие сообщения (без recipient_id)
     let sql = if before_id.is_some() {
         "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
          FROM messages \
          WHERE (
-             -- Личные сообщения с участием chat_peer_id
              (sender_id = ?1 OR recipient_id = ?1)
-             OR
-             -- Общие сообщения (без получателя)
-             (recipient_id IS NULL OR recipient_id = '')
+             OR (recipient_id IS NULL OR recipient_id = '')
          )
          AND (timestamp, id) < (SELECT timestamp, id FROM messages WHERE id = ?2) \
          ORDER BY timestamp DESC, id DESC \
@@ -140,11 +202,8 @@ pub fn get_messages_for_chat(
         "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
          FROM messages \
          WHERE (
-             -- Личные сообщения с участием chat_peer_id
              (sender_id = ?1 OR recipient_id = ?1)
-             OR
-             -- Общие сообщения (без получателя)
-             (recipient_id IS NULL OR recipient_id = '')
+             OR (recipient_id IS NULL OR recipient_id = '')
          )
          ORDER BY timestamp DESC, id DESC \
          LIMIT ?2"
@@ -162,18 +221,15 @@ pub fn get_messages_for_chat(
     .filter_map(|r| r.ok())
     .collect();
 
-    // Проверяем есть ли ещё
     let loaded_count = messages.len();
     let has_more = loaded_count > limit;
 
-    // Если есть ещё, убираем лишнее сообщение (оно нужно только для проверки has_more)
     let next_before_id = if has_more {
         messages.pop().map(|m| m.id)
     } else {
         None
     };
 
-    // Разворачиваем чтобы вернуть в правильном порядке (старые → новые)
     messages.reverse();
 
     Ok((messages, next_before_id, has_more))
@@ -279,11 +335,8 @@ pub fn update_user_avatar(
 
 /// Инициализация схемы базы данных
 pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
-    // Включаем WAL mode (может вернуть ошибку если уже включён)
-    let _wal_result: Result<String, rusqlite::Error> =
-        conn.query_row("PRAGMA journal_mode = WAL", [], |row| {
-            row.get::<_, String>(0)
-        });
+    // Включаем WAL mode
+    conn.execute_batch("PRAGMA journal_mode = WAL")?;
 
     // Увеличиваем размер кэша
     conn.execute("PRAGMA cache_size = -5000", [])?;
@@ -301,10 +354,6 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
-    // Миграция: добавляем колонку avatar если её нет
-    conn.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT '👤'", [])
-        .ok();
-
     // Таблица сообщений
     conn.execute(
         "CREATE TABLE IF NOT EXISTS messages (
@@ -314,17 +363,11 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
             text TEXT NOT NULL,
             timestamp INTEGER NOT NULL,
             delivery_status INTEGER DEFAULT 0,
-            recipient_id TEXT
+            recipient_id TEXT,
+            files TEXT DEFAULT '[]'
         )",
         [],
     )?;
-
-    // Миграция: добавляем колонку files
-    conn.execute(
-        "ALTER TABLE messages ADD COLUMN files TEXT DEFAULT '[]'",
-        [],
-    )
-    .ok();
 
     // Таблица файлов
     conn.execute(
@@ -345,6 +388,9 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
         "UPDATE users SET avatar = '👤' WHERE avatar IS NULL OR avatar = ''",
         [],
     )?;
+
+    // ARCH-1: Применяем миграции (индексы и будущие изменения схемы)
+    apply_migrations(conn)?;
 
     Ok(())
 }
