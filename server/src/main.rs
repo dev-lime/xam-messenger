@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use config::AppConfig;
-use models::AppState;
+use models::{AppState, FileUploads};
 use websocket::ws_handler;
 
 /// PERF-1: Создаём r2d2 pool соединений SQLite
@@ -142,6 +142,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // PERF-3: user_senders вместо broadcast канала
     let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
+    let file_uploads: FileUploads = Arc::new(Mutex::new(HashMap::new()));
 
     let state = AppState {
         db: db_pool,
@@ -149,6 +150,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         online_users,
         upload_dir: config.upload_dir.clone(),
         max_file_size: config.max_file_size,
+        file_uploads,
     };
 
     info!("🚀 Запуск сервера на {}:{}", config.host, config.port);
@@ -193,7 +195,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .route("/api/v1/register", web::post().to(handlers::register))
             .route("/api/v1/users", web::get().to(handlers::get_users))
             .route("/api/v1/messages", web::get().to(handlers::get_messages))
-            .route("/api/v1/files", web::post().to(handlers::upload_file))
             .route(
                 "/api/v1/files/download",
                 web::get().to(handlers::download_file),
@@ -246,6 +247,7 @@ pub async fn create_test_state() -> AppState {
     let (_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
     let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
+    let file_uploads: FileUploads = Arc::new(Mutex::new(HashMap::new()));
 
     AppState {
         db: pool,
@@ -253,6 +255,7 @@ pub async fn create_test_state() -> AppState {
         online_users,
         upload_dir: std::path::PathBuf::from("/tmp/xam-test-files"),
         max_file_size: 100 * 1024 * 1024,
+        file_uploads,
     }
 }
 
@@ -565,36 +568,6 @@ mod tests {
         assert_eq!(body["success"], true);
         let messages = body["data"].as_array().expect("Expected data array");
         assert_eq!(messages.len(), 3);
-    }
-
-    #[actix_rt::test]
-    async fn test_upload_file_no_file() {
-        let state = create_test_state().await;
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(state))
-                .route("/api/v1/files", web::post().to(handlers::upload_file)),
-        )
-        .await;
-
-        let req = test::TestRequest::post().uri("/api/v1/files").to_request();
-
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], false);
-        // BUG-11 FIX: теперь различаем отсутствие файла и ошибку multipart
-        assert!(
-            body["error"]
-                .as_str()
-                .expect("Expected error string")
-                .contains("No file")
-                || body["error"]
-                    .as_str()
-                    .expect("Expected error string")
-                    .contains("Multipart")
-        );
     }
 
     #[actix_rt::test]

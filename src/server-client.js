@@ -44,12 +44,17 @@ const MESSAGE_TYPES = {
 	USER_UPDATED: 'user_updated',
 	GET_MESSAGES: 'get_messages',
 	UPDATE_PROFILE: 'update_profile',
+	FILE_START: 'file_start',
+	FILE_END: 'file_end',
+	FILE_ERROR: 'file_error',
 };
 
 const CACHE_CONFIG = {
 	KEY: 'xam_server_cache',
 	TTL: 24 * 60 * 60 * 1000, // 24 часа в миллисекундах
 };
+
+const CHUNK_SIZE = 64 * 1024; // 64KB чанки для передачи файлов
 
 // ============================================================================
 // Вспомогательные функции
@@ -777,6 +782,11 @@ class ServerClient {
 				this.notifyHandlers(MESSAGE_TYPES.USER_ONLINE, data);
 				break;
 
+			case MESSAGE_TYPES.FILE_ERROR:
+				console.error('❌ Ошибка файла:', data.error);
+				this.notifyHandlers(MESSAGE_TYPES.FILE_ERROR, data);
+				break;
+
 			default:
 				console.warn('⚠️ Неизвестный тип сообщения:', type);
 		}
@@ -855,31 +865,76 @@ class ServerClient {
 	}
 
 	/**
-	 * Загрузка файла на сервер
-	 * @param {File} file - Файл для загрузки
-	 * @returns {Promise<Object>} Информация о загруженном файле
-	 * @throws {Error} При ошибке загрузки
+	 * Отправка файла через WebSocket чанками (без ограничения по размеру)
+	 * Протокол: file_start → binary chunks → file_end
+	 * @param {File} file - Файл для отправки
+	 * @param {string|null} recipientId - ID получателя (опционально)
+	 * @param {Function} [onProgress] - Callback прогресса (bytesSent, totalBytes)
+	 * @returns {Promise<Object>} Метаданные файла
 	 */
-	async uploadFile(file) {
-		const formData = new FormData();
-		formData.append('file', file);
+	async sendFile(file, recipientId = null, onProgress = null) {
+		const fileId = crypto.randomUUID();
 
-		const response = await fetch(`${this.httpUrl}/files`, {
-			method: 'POST',
-			body: formData,
+		// Отправляем file_start
+		this.send({
+			type: MESSAGE_TYPES.FILE_START,
+			file_id: fileId,
+			file_name: file.name,
+			file_size: file.size,
+			recipient_id: recipientId,
 		});
 
-		const result = await response.json();
+		// Читаем файл чанками и отправляем
+		const totalBytes = file.size;
+		let bytesSent = 0;
 
-		if (result.success) {
-			return {
-				name: file.name,
-				size: file.size,
-				path: result.data.path,
-			};
-		} else {
-			throw new Error(result.error || 'Failed to upload file');
+		if (totalBytes === 0) {
+			// Пустой файл — сразу file_end
+			this.send({
+				type: MESSAGE_TYPES.FILE_END,
+				file_id: fileId,
+			});
+			return { name: file.name, size: 0, path: fileId };
 		}
+
+		// Используем FileReader для чтения чанков
+		const readChunk = (start, size) => {
+			return new Promise((resolve, reject) => {
+				const blob = file.slice(start, start + size);
+				const reader = new FileReader();
+				reader.onload = () => resolve(new Uint8Array(reader.result));
+				reader.onerror = () => reject(reader.error);
+				reader.readAsArrayBuffer(blob);
+			});
+		};
+
+		for (let offset = 0; offset < totalBytes; offset += CHUNK_SIZE) {
+			const chunkSize = Math.min(CHUNK_SIZE, totalBytes - offset);
+			const chunk = await readChunk(offset, chunkSize);
+
+			if (this.isTauriWebSocket()) {
+				// Tauri: отправляем бинарные данные через нативный WebSocket
+				await invokeTauri('ws_send_binary', { data: Array.from(chunk) });
+			} else if (this.ws?.readyState === WebSocket.OPEN) {
+				// Браузер: отправляем ArrayBuffer напрямую
+				this.ws.send(chunk.buffer);
+			} else {
+				throw new Error('Нет подключения к серверу');
+			}
+
+			bytesSent += chunkSize;
+			if (onProgress) {
+				onProgress(bytesSent, totalBytes);
+			}
+		}
+
+		// Отправляем file_end
+		this.send({
+			type: MESSAGE_TYPES.FILE_END,
+			file_id: fileId,
+		});
+
+		return { name: file.name, size: totalBytes, path: fileId };
 	}
 
 	// ========================================================================
@@ -918,32 +973,27 @@ class ServerClient {
 	}
 
 	/**
-	 * Отправка сообщения с файлами
+	 * Отправка сообщения с файлами через WebSocket чанки
 	 * @param {string} text - Текст сообщения
-	 * @param {Object[]} files - Массив файлов
+	 * @param {File[]} files - Массив File объектов
 	 * @param {string|null} recipientId - ID получателя (опционально)
+	 * @param {Function} [onFileProgress] - Callback прогресса для файлов
 	 */
-	sendMessageWithFiles(text, files, recipientId = null) {
-		const message = {
-			type: MESSAGE_TYPES.MESSAGE,
-			text,
-			files,
-			recipient_id: recipientId,
-		};
-
-		if (this.isTauriWebSocket()) {
-			this._sendViaTauri(message).catch(e => {
-				console.error('❌ Ошибка отправки (Tauri):', e);
-			});
-		} else if (this.ws?.readyState === WebSocket.OPEN) {
+	async sendMessageWithFiles(text, files, recipientId = null, onFileProgress = null) {
+		// Сначала отправляем все файлы
+		const fileResults = [];
+		for (const file of files) {
 			try {
-				this.ws.send(JSON.stringify(message));
-				console.log('✅ Файлы отправлены в WebSocket');
+				const result = await this.sendFile(file, recipientId, onFileProgress);
+				fileResults.push(result);
 			} catch (error) {
-				console.error('❌ Ошибка отправки в WebSocket:', error);
+				console.error('❌ Ошибка отправки файла:', file.name, error);
 			}
-		} else {
-			console.error('❌ WebSocket не готов! readyState=', this.ws?.readyState);
+		}
+
+		// Если есть текст — отправляем отдельным сообщением
+		if (text && text.trim()) {
+			this.sendMessage(text.trim(), recipientId);
 		}
 	}
 

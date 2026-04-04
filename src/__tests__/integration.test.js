@@ -699,7 +699,7 @@ describe('Интеграционные тесты - Краевые случаи'
             }
         });
 
-        test('должен обрабатывать очень длинные имена', async () => {
+        test('должен отклонять очень длинные имена', async () => {
             const longName = 'A'.repeat(1000);
 
             const response = await fetch(`${TEST_SERVER_URL}/api/v1/register`, {
@@ -709,9 +709,9 @@ describe('Интеграционные тесты - Краевые случаи'
             });
             const result = await response.json();
 
-            // Должен обработать без ошибок
-            expect(result.success).toBe(true);
-            expect(result.data.name.length).toBe(1000);
+            // Должен отклонить — имя слишком длинное
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('Name too long');
         });
 
         test('должен обрабатывать Unicode в сообщениях', async () => {

@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use futures_util::{SinkExt, StreamExt};
+use tokio_util::sync::CancellationToken;
 use tauri::{Emitter, Manager};
 
 /// Информация о найденном сервере
@@ -40,14 +41,22 @@ pub struct DroppedFile {
     pub name: String,
 }
 
+/// Тип сообщения для WebSocket
+enum WsOutgoing {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
 /// Состояние WebSocket подключения
 struct WsState {
-    tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    tx: Option<tokio::sync::mpsc::UnboundedSender<WsOutgoing>>,
+    /// CancellationToken для graceful shutdown reader/writer задач
+    shutdown: Option<CancellationToken>,
 }
 
 impl WsState {
     fn new() -> Self {
-        Self { tx: None }
+        Self { tx: None, shutdown: None }
     }
 }
 
@@ -213,27 +222,48 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
         })?;
 
     let (mut write, mut read) = ws_stream.split();
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<WsOutgoing>();
 
-    // #5: Закрываем старый канал перед созданием нового (утечка памяти)
+    // Создаём CancellationToken для graceful shutdown
+    let shutdown_token = CancellationToken::new();
+
     {
         let ws_state = app.state::<Mutex<WsState>>();
-        // BUG-5 FIX: вместо .unwrap() обрабатываем отравлённый мьютекс
         let mut state = ws_state.lock()
             .map_err(|e| format!("WsState mutex poisoned: {}", e))?;
+
+        // Отменяем предыдущий токен если был
+        if let Some(old_token) = state.shutdown.take() {
+            old_token.cancel();
+        }
         if let Some(old_tx) = state.tx.take() {
-            drop(old_tx); // Закрываем старый канал — задача отправителя завершится
-            log::info!("🔌 Старый канал WebSocket закрыт");
+            drop(old_tx);
         }
         state.tx = Some(tx);
+        state.shutdown = Some(shutdown_token.clone());
     }
 
-    // Задача для отправки сообщений из JS
+    let reader_token = shutdown_token.clone();
+    let writer_token = shutdown_token.clone();
+
+    // Задача для отправки сообщений из JS (текст + бинарные)
     tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if write.send(Message::Text(msg)).await.is_err() {
-                log::error!("❌ Ошибка отправки WebSocket");
-                break;
+        loop {
+            tokio::select! {
+                Some(msg) = rx.recv() => {
+                    let result = match msg {
+                        WsOutgoing::Text(t) => write.send(Message::Text(t)).await,
+                        WsOutgoing::Binary(b) => write.send(Message::Binary(b)).await,
+                    };
+                    if result.is_err() {
+                        log::error!("❌ Ошибка отправки WebSocket");
+                        break;
+                    }
+                }
+                _ = writer_token.cancelled() => {
+                    log::info!("🔌 Writer задача завершена (shutdown)");
+                    break;
+                }
             }
         }
     });
@@ -244,25 +274,33 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
         log::info!("✅ WebSocket подключён");
         app_clone.emit("ws_connected", ()).ok();
 
-        while let Some(msg) = read.next().await {
-            match msg {
-                Ok(Message::Text(text)) => {
-                    app_clone.emit("ws_message", text).ok();
+        loop {
+            tokio::select! {
+                Some(msg) = read.next() => {
+                    match msg {
+                        Ok(Message::Text(text)) => {
+                            app_clone.emit("ws_message", text).ok();
+                        }
+                        Ok(Message::Close(_)) => {
+                            log::info!("🔌 WebSocket закрыт сервером");
+                            app_clone.emit("ws_disconnected", ()).ok();
+                            break;
+                        }
+                        Ok(Message::Ping(_)) => {
+                            // tungstenite автоматически отвечает на ping
+                        }
+                        Err(e) => {
+                            log::error!("❌ Ошибка WebSocket: {}", e);
+                            app_clone.emit("ws_error", e.to_string()).ok();
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
-                Ok(Message::Close(_)) => {
-                    log::info!("🔌 WebSocket закрыт сервером");
-                    app_clone.emit("ws_disconnected", ()).ok();
+                _ = reader_token.cancelled() => {
+                    log::info!("🔌 Reader задача завершена (shutdown)");
                     break;
                 }
-                Ok(Message::Ping(_)) => {
-                    // tungstenite автоматически отвечает на ping
-                }
-                Err(e) => {
-                    log::error!("❌ Ошибка WebSocket: {}", e);
-                    app_clone.emit("ws_error", e.to_string()).ok();
-                    break;
-                }
-                _ => {}
             }
         }
     });
@@ -274,12 +312,22 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn ws_send(message: String, app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<Mutex<WsState>>();
-    // BUG-5 FIX: вместо .unwrap() обрабатываем отравлённый мьютекс
     let tx = state.lock()
         .map_err(|e| format!("WsState mutex poisoned: {}", e))?
         .tx.clone()
         .ok_or("Not connected")?;
-    tx.send(message).map_err(|e| e.to_string())
+    tx.send(WsOutgoing::Text(message)).map_err(|e| e.to_string())
+}
+
+/// Отправка бинарных данных через WebSocket (для чанковой передачи файлов)
+#[tauri::command]
+async fn ws_send_binary(data: Vec<u8>, app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Mutex<WsState>>();
+    let tx = state.lock()
+        .map_err(|e| format!("WsState mutex poisoned: {}", e))?
+        .tx.clone()
+        .ok_or("Not connected")?;
+    tx.send(WsOutgoing::Binary(data)).map_err(|e| e.to_string())
 }
 
 /// Закрытие WebSocket соединения
@@ -287,10 +335,16 @@ async fn ws_send(message: String, app: tauri::AppHandle) -> Result<(), String> {
 async fn ws_close(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("🔌 Закрытие WebSocket");
     let state = app.state::<Mutex<WsState>>();
-    // BUG-5 FIX: вместо .unwrap() обрабатываем отравлённый мьютекс
-    state.lock()
-        .map_err(|e| format!("WsState mutex poisoned: {}", e))?
-        .tx = None;
+    let mut guard = state.lock()
+        .map_err(|e| format!("WsState mutex poisoned: {}", e))?;
+
+    // Отменяем token — reader и writer задачи завершатся мгновенно
+    if let Some(token) = guard.shutdown.take() {
+        token.cancel();
+    }
+    guard.tx = None;
+
+    drop(guard);
     app.emit("ws_disconnected", ()).ok();
     Ok(())
 }
@@ -311,6 +365,7 @@ fn main() {
             cache_server,
             ws_connect,
             ws_send,
+            ws_send_binary,
             ws_close,
         ])
         .run(tauri::generate_context!())

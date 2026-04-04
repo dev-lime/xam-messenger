@@ -81,13 +81,23 @@ pub fn apply_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 /// Получение или создание пользователя
+///
+/// FIX: Используем INSERT OR IGNORE для атомарной операции,
+/// что исключает race condition между SELECT и INSERT.
 pub fn get_or_create_user(
     conn: &Connection,
     name: &str,
     avatar: &str,
 ) -> Result<User, rusqlite::Error> {
-    // Пробуем найти существующего пользователя
-    if let Ok(user) = conn.query_row(
+    // Атомарная вставка: если имя уже существует — игнорируем конфликт
+    let user_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT OR IGNORE INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+        params![user_id, name, avatar],
+    )?;
+
+    // Всегда делаем SELECT — либо наш только что вставленный, либо существующий
+    conn.query_row(
         "SELECT id, name, avatar FROM users WHERE name = ?1",
         params![name],
         |row| {
@@ -97,22 +107,7 @@ pub fn get_or_create_user(
                 avatar: row.get(2)?,
             })
         },
-    ) {
-        return Ok(user);
-    }
-
-    // Создаём нового пользователя
-    let user_id = uuid::Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
-        params![user_id, name, avatar],
-    )?;
-
-    Ok(User {
-        id: user_id,
-        name: name.to_string(),
-        avatar: avatar.to_string(),
-    })
+    )
 }
 
 /// Получение всех пользователей
@@ -330,6 +325,15 @@ pub fn update_user_avatar(
     conn.execute(
         "UPDATE users SET avatar = ?1 WHERE id = ?2",
         params![avatar, user_id],
+    )
+}
+
+/// Получение sender_id сообщения по ID (для targeted ACK delivery)
+pub fn get_message_sender(conn: &Connection, message_id: &str) -> Result<String, rusqlite::Error> {
+    conn.query_row(
+        "SELECT sender_id FROM messages WHERE id = ?1",
+        params![message_id],
+        |row| row.get(0),
     )
 }
 

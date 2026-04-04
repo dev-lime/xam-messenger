@@ -1,11 +1,8 @@
 //! Обработчики HTTP запросов для XAM Messenger Server
 
-use actix_multipart::Multipart;
 use actix_web::{HttpResponse, web};
-use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::db;
 use crate::error::AppError;
@@ -13,9 +10,6 @@ use crate::models::AppState;
 
 /// Максимальная длина имени пользователя
 const MAX_NAME_LENGTH: usize = 50;
-
-/// Максимальная длина имени файла
-const MAX_FILENAME_LENGTH: usize = 255;
 
 /// Запрос регистрации пользователя
 #[derive(Deserialize)]
@@ -27,28 +21,6 @@ pub struct RegisterRequest {
 
 fn default_avatar() -> String {
     "👤".to_string()
-}
-
-/// Санитизация имени файла: удаление опасных символов
-fn sanitize_filename(filename: &str) -> String {
-    filename
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '_' || *c == '-' || *c == ' ')
-        .take(MAX_FILENAME_LENGTH)
-        .collect::<String>()
-        .trim()
-        .to_string()
-}
-
-/// Проверка: находится ли путь внутри разрешённой директории
-fn is_path_safe(base_dir: &std::path::Path, file_path: &std::path::Path) -> bool {
-    if let (Ok(canonical_base), Ok(canonical_file)) =
-        (base_dir.canonicalize(), file_path.canonicalize())
-    {
-        canonical_file.starts_with(&canonical_base)
-    } else {
-        false
-    }
 }
 
 /// Регистрация нового пользователя
@@ -154,115 +126,14 @@ pub async fn get_messages(
     }))
 }
 
-/// Загрузка файла на сервер с проверкой размера и санитизацией имени
-pub async fn upload_file(data: web::Data<AppState>, mut payload: Multipart) -> HttpResponse {
-    let upload_dir = &data.upload_dir;
-    let max_file_size = data.max_file_size;
-
-    if let Err(e) = std::fs::create_dir_all(upload_dir) {
-        return HttpResponse::InternalServerError().json(json!({
-            "success": false,
-            "error": format!("Failed to create upload dir: {}", e)
-        }));
-    }
-
-    // Получаем первое поле (файл)
-    // BUG-11 FIX: корректная обработка ошибок multipart
-    match payload.try_next().await {
-        Ok(Some(mut field)) => {
-            let raw_filename = field
-                .content_disposition()
-                .as_ref()
-                .and_then(|cd| cd.get_filename())
-                .unwrap_or("unnamed")
-                .to_string();
-
-            let safe_filename = sanitize_filename(&raw_filename);
-            if safe_filename.is_empty() {
-                return HttpResponse::BadRequest().json(json!({
-                    "success": false,
-                    "error": "Invalid filename"
-                }));
-            }
-
-            let file_id = Uuid::new_v4().to_string();
-            let filepath = upload_dir.join(format!("{}_{}", file_id, safe_filename));
-
-            let mut size = 0u64;
-            let mut file_bytes = Vec::new();
-
-            // BUG-11 FIX: обрабатываем ошибки чтения поля
-            while let Some(chunk) = match field.try_next().await {
-                Ok(Some(c)) => Some(c),
-                Ok(None) => None,
-                Err(e) => {
-                    return HttpResponse::InternalServerError().json(json!({
-                        "success": false,
-                        "error": format!("Failed to read file chunk: {}", e)
-                    }));
-                }
-            } {
-                size += chunk.len() as u64;
-                if size > max_file_size as u64 {
-                    return HttpResponse::PayloadTooLarge().json(json!({
-                        "success": false,
-                        "error": format!("File too large (max {} MB)", max_file_size / 1024 / 1024)
-                    }));
-                }
-                file_bytes.extend_from_slice(&chunk);
-            }
-
-            // Сначала сохраняем файл, потом записываем метаданные в БД
-            if let Err(e) = std::fs::write(&filepath, &file_bytes) {
-                return HttpResponse::InternalServerError().json(json!({
-                    "success": false,
-                    "error": format!("Failed to save file: {}", e)
-                }));
-            }
-
-            // Если запись в БД не удалась — удаляем файл (rollback)
-            let conn = match data.db.get() {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = std::fs::remove_file(&filepath);
-                    return AppError::database(format!("Не удалось получить соединение: {}", e))
-                        .to_response();
-                }
-            };
-
-            if let Err(e) = db::save_file_metadata(
-                &conn,
-                &file_id,
-                &safe_filename,
-                filepath.to_string_lossy().as_ref(),
-                size as i64,
-            ) {
-                let _ = std::fs::remove_file(&filepath);
-                return HttpResponse::InternalServerError().json(json!({
-                    "success": false,
-                    "error": format!("Failed to save file metadata: {}", e)
-                }));
-            }
-
-            HttpResponse::Ok().json(json!({
-                "success": true,
-                "data": {
-                    "id": file_id,
-                    "name": safe_filename,
-                    "size": size,
-                    "path": file_id
-                }
-            }))
-        }
-        // BUG-11 FIX: различаем отсутствие файла и ошибку парсинга
-        Ok(None) => HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "No file uploaded"
-        })),
-        Err(e) => HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": format!("Multipart parsing error: {}", e)
-        })),
+/// Проверка: находится ли путь внутри разрешённой директории
+fn is_path_safe(base_dir: &std::path::Path, file_path: &std::path::Path) -> bool {
+    if let (Ok(canonical_base), Ok(canonical_file)) =
+        (base_dir.canonicalize(), file_path.canonicalize())
+    {
+        canonical_file.starts_with(&canonical_base)
+    } else {
+        false
     }
 }
 

@@ -7,11 +7,13 @@ use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use std::panic::AssertUnwindSafe;
 use std::time::SystemTime;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::unbounded_channel;
 use uuid::Uuid;
 
 use crate::db;
-use crate::models::{AppState, ChatMessage, ClientMsg, User};
+use crate::models::{AppState, ChatMessage, ClientMsg, FileUploadState, User};
 
 /// PERF-3: Отправить сообщение конкретному пользователю через targeted delivery
 async fn send_to_user(state: &AppState, user_id: &str, payload: serde_json::Value) {
@@ -45,18 +47,165 @@ async fn send_to_chat_participants(
     recipient_id: &Option<String>,
     payload: serde_json::Value,
 ) {
-    // Отправляем отправителю (для ACK обновления статуса)
     send_to_user(state, sender_id, payload.clone()).await;
 
-    // Если есть получатель — отправляем и ему
     if let Some(recip_id) = recipient_id {
         if recip_id != sender_id {
             send_to_user(state, recip_id, payload).await;
         }
     } else {
-        // Общее сообщение — отправляем всем кроме отправителя
         broadcast_except(state, sender_id, payload).await;
     }
+}
+
+// ============================================================================
+// WebSocket чанковая передача файлов
+// ============================================================================
+
+/// Обработка file_start — начало загрузки файла
+async fn handle_file_start(
+    client_msg: ClientMsg,
+    user_id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    let file_id = client_msg.file_id.ok_or("file_id is required")?;
+    let file_name = client_msg.file_name.ok_or("file_name is required")?;
+    let file_size = client_msg.file_size.ok_or("file_size is required")?;
+
+    // Проверка размера
+    if file_size > state.max_file_size as u64 {
+        return Err(format!(
+            "File too large (max {} MB)",
+            state.max_file_size / 1024 / 1024
+        ));
+    }
+
+    let sender_name = {
+        let conn = state.db.get().map_err(|e| e.to_string())?;
+        db::get_user_name(&conn, user_id).map_err(|e| e.to_string())?
+    };
+
+    let filepath = state.upload_dir.join(&file_id);
+
+    let upload = FileUploadState {
+        id: file_id.clone(),
+        name: file_name.clone(),
+        size: file_size,
+        sender_id: user_id.to_string(),
+        recipient_id: client_msg.recipient_id.clone(),
+        uploaded_bytes: 0,
+        filepath,
+        sender_name,
+    };
+
+    state.file_uploads.lock().await.insert(file_id, upload);
+    Ok(())
+}
+
+/// Обработка бинарного чанка файла
+async fn handle_file_chunk(file_id: &str, data: &[u8], state: &AppState) -> Result<(), String> {
+    let mut uploads = state.file_uploads.lock().await;
+    let upload = uploads.get_mut(file_id).ok_or("File upload not found")?;
+
+    // Проверка что не превышаем размер
+    if upload.uploaded_bytes + data.len() as u64 > upload.size {
+        return Err("File size mismatch: received more than declared".to_string());
+    }
+
+    // Открываем файл в режиме append (создаём если нет)
+    let mut file = File::options()
+        .create(true)
+        .append(true)
+        .open(&upload.filepath)
+        .await
+        .map_err(|e| format!("Failed to open file for writing: {}", e))?;
+
+    file.write_all(data)
+        .await
+        .map_err(|e| format!("Failed to write file chunk: {}", e))?;
+
+    upload.uploaded_bytes += data.len() as u64;
+    Ok(())
+}
+
+/// Обработка file_end — завершение загрузки, сохранение в БД, рассылка
+async fn handle_file_end(
+    client_msg: ClientMsg,
+    user_id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    let file_id = client_msg.file_id.ok_or("file_id is required")?;
+
+    let upload = {
+        let mut uploads = state.file_uploads.lock().await;
+        uploads.remove(&file_id).ok_or("File upload not found")?
+    };
+
+    // Проверка что весь файл получен
+    if upload.uploaded_bytes != upload.size {
+        // Удаляем неполный файл
+        let _ = tokio::fs::remove_file(&upload.filepath).await;
+        return Err(format!(
+            "File incomplete: {} of {} bytes",
+            upload.uploaded_bytes, upload.size
+        ));
+    }
+
+    // Сохраняем metadata в БД
+    let conn = state.db.get().map_err(|e| e.to_string())?;
+    db::save_file_metadata(
+        &conn,
+        &file_id,
+        &upload.name,
+        upload.filepath.to_string_lossy().as_ref(),
+        upload.size as i64,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Создаём сообщение с файлом
+    let message = ChatMessage {
+        id: Uuid::new_v4().to_string(),
+        sender_id: user_id.to_string(),
+        sender_name: upload.sender_name.clone(),
+        text: format!("📎 {}", upload.name),
+        timestamp: Utc::now().timestamp(),
+        delivery_status: 1,
+        recipient_id: upload.recipient_id.clone(),
+        files: vec![crate::models::FileData {
+            name: upload.name.clone(),
+            size: upload.size,
+            path: file_id.clone(),
+        }],
+    };
+
+    // Сохраняем сообщение
+    db::save_message(&conn, &message).map_err(|e| e.to_string())?;
+
+    // Рассылаем сообщение
+    let payload = json!({ "type": "message", "message": message });
+    send_to_chat_participants(state, user_id, &upload.recipient_id, payload).await;
+
+    log::info!("📁 Файл получен: {} ({} bytes)", upload.name, upload.size);
+
+    Ok(())
+}
+
+/// Отправить ошибку загрузки файла клиенту
+#[allow(dead_code)]
+async fn send_file_error(session: &mut actix_ws::Session, file_id: &str, error: &str) {
+    // Удаляем неполный файл если существует
+    let _ = tokio::fs::remove_file(format!("/tmp/{}", file_id)).await;
+
+    let _ = session
+        .text(
+            json!({
+                "type": "file_error",
+                "file_id": file_id,
+                "error": error
+            })
+            .to_string(),
+        )
+        .await;
 }
 
 /// Обработка клиентского сообщения с защитой от паник
@@ -357,12 +506,6 @@ async fn handle_ack(
 
     let status = if client_msg.status == "read" { 2 } else { 1 };
     let msg_id = client_msg.message_id.clone();
-    log::info!(
-        "📨 ACK {} для {} от {}",
-        client_msg.status,
-        msg_id,
-        ack_sender_id
-    );
 
     // PERF-1: Получаем соединение из pool
     let conn = match state.db.get() {
@@ -372,6 +515,23 @@ async fn handle_ack(
             return;
         }
     };
+
+    // Находим оригинальный sender сообщения чтобы отправить ACK ему
+    let original_sender = match db::get_message_sender(&conn, &msg_id) {
+        Ok(sender) => sender,
+        Err(e) => {
+            log::error!("Failed to get message sender for ACK: {}", e);
+            return;
+        }
+    };
+
+    log::info!(
+        "📨 ACK {} для {} от {} → отправителю {}",
+        client_msg.status,
+        msg_id,
+        ack_sender_id,
+        original_sender
+    );
 
     if let Err(e) = db::update_message_delivery_status(&conn, &client_msg.message_id, status) {
         log::error!("Failed to update delivery status: {}", e);
@@ -384,10 +544,10 @@ async fn handle_ack(
         "status": client_msg.status,
         "sender_id": ack_sender_id
     });
-    log::info!("📤 Рассылка ACK: {}", ack_msg);
+    log::info!("📤 Отправка ACK отправителю: {}", original_sender);
 
-    // PERF-3: Отправляем ACK только оригинальному отправителю сообщения
-    send_to_user(state, &ack_sender_id, ack_msg).await;
+    // PERF-3: Отправляем ACK оригинальному отправителю сообщения
+    send_to_user(state, &original_sender, ack_msg).await;
 }
 
 /// Обработка запроса истории сообщений
@@ -435,6 +595,9 @@ pub async fn handle_websocket_session(
 ) {
     let mut user_id: Option<String> = None;
     let mut text_fragment_buffer = String::new();
+    let mut active_file_id: Option<String> = None;
+    // Track whether continuation frames are text or binary
+    let mut continuation_is_binary = false;
 
     loop {
         tokio::select! {
@@ -446,7 +609,34 @@ pub async fn handle_websocket_session(
                         match serde_json::from_str::<ClientMsg>(&text) {
                             Ok(client_msg) => {
                                 log::debug!("✅ JSON распарсен успешно, тип: {}", client_msg.msg_type);
-                                handle_client_message(client_msg, &mut user_id, &mut session, &state).await;
+
+                                // file_start/file_end управляются здесь (не в handle_client_message)
+                                // потому что они модифицируют active_file_id
+                                match client_msg.msg_type.as_str() {
+                                    "file_start" => {
+                                        if let Some(uid) = &user_id {
+                                            if let Err(e) = handle_file_start(client_msg.clone(), uid, &state).await {
+                                                log::error!("file_start error: {}", e);
+                                                let _ = session.text(json!({"type": "file_error", "error": e}).to_string()).await;
+                                            } else if let Some(fid) = &client_msg.file_id {
+                                                active_file_id = Some(fid.clone());
+                                                continuation_is_binary = true;
+                                            }
+                                        }
+                                    }
+                                    "file_end" => {
+                                        if let Some(uid) = &user_id
+                                            && let Err(e) = handle_file_end(client_msg, uid, &state).await {
+                                                log::error!("file_end error: {}", e);
+                                                let _ = session.text(json!({"type": "file_error", "error": e}).to_string()).await;
+                                            }
+                                        active_file_id = None;
+                                        continuation_is_binary = false;
+                                    }
+                                    _ => {
+                                        handle_client_message(client_msg, &mut user_id, &mut session, &state).await;
+                                    }
+                                }
                             }
                             Err(e) => {
                                 log::warn!("⚠️ Ошибка парсинга JSON: {}", e);
@@ -455,26 +645,44 @@ pub async fn handle_websocket_session(
                             }
                         }
                     }
-                    Ok(Message::Continuation(item)) => {
-                        let bytes = match item {
-                            actix_ws::Item::FirstText(b) | actix_ws::Item::Continue(b) | actix_ws::Item::Last(b) => b,
-                            actix_ws::Item::FirstBinary(_) => {
-                                log::warn!("⚠️ Получены бинарные данные вместо текста");
-                                continue;
+                    // WebSocket чанки файлов: бинарные фреймы = chunks файла
+                    Ok(Message::Binary(data)) => {
+                        if let Some(ref file_id) = active_file_id {
+                            if let Err(e) = handle_file_chunk(file_id, &data, &state).await {
+                                log::error!("❌ Ошибка записи чанка файла {}: {}", file_id, e);
+                                let _ = session.text(
+                                    json!({"type": "file_error", "file_id": file_id, "error": e}).to_string()
+                                ).await;
+                                active_file_id = None;
                             }
+                        } else {
+                            log::warn!("⚠️ Получены бинарные данные без активного file_start");
+                        }
+                    }
+                    Ok(Message::Continuation(item)) => {
+                        let bytes: &[u8] = match &item {
+                            actix_ws::Item::FirstBinary(b)
+                            | actix_ws::Item::Continue(b)
+                            | actix_ws::Item::Last(b)
+                            | actix_ws::Item::FirstText(b) => b.as_ref(),
                         };
-                        let cont_text = String::from_utf8_lossy(&bytes);
-                        log::debug!("📦 Получён continuation frame, размер: {} байт", cont_text.len());
-                        text_fragment_buffer.push_str(&cont_text);
 
-                        match serde_json::from_str::<ClientMsg>(&text_fragment_buffer) {
-                            Ok(client_msg) => {
-                                log::debug!("✅ Фрагментированное сообщение собрано успешно (общий размер: {} байт)", text_fragment_buffer.len());
+                        if continuation_is_binary {
+                            if let Some(ref file_id) = active_file_id
+                                && let Err(e) = handle_file_chunk(file_id, bytes, &state).await {
+                                    log::error!("❌ Ошибка записи чанка файла {}: {}", file_id, e);
+                                    let _ = session.text(
+                                        json!({"type": "file_error", "file_id": file_id, "error": e}).to_string()
+                                    ).await;
+                                    active_file_id = None;
+                                }
+                        } else {
+                            let cont_text = String::from_utf8_lossy(bytes);
+                            text_fragment_buffer.push_str(&cont_text);
+
+                            if let Ok(client_msg) = serde_json::from_str::<ClientMsg>(&text_fragment_buffer) {
                                 text_fragment_buffer.clear();
                                 handle_client_message(client_msg, &mut user_id, &mut session, &state).await;
-                            }
-                            Err(e) => {
-                                log::debug!("⏳ Ждём ещё фрагментов... (текущий размер: {} байт, ошибка: {})", text_fragment_buffer.len(), e);
                             }
                         }
                     }

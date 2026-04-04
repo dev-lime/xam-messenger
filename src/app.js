@@ -999,34 +999,31 @@ async function sendMessage() {
 	// Генерируем локальный ID для отслеживания
 	const localId = `local_${Date.now()}`;
 
-	// Загружаем файлы если есть
-	const filesData = filesToSend.length > 0 ? await uploadFiles(filesToSend) : [];
-
-	// Ждём восстановления WebSocket после HTTP запросов
-	if (filesToSend.length > 0) {
-		await waitForWebSocket();
-	}
-
-	// Формируем сообщение
+	// Формируем локальное сообщение для UI
 	const messageData = {
 		id: localId,
 		sender_id: state.user.id,
 		sender_name: state.user.name,
-		text: text || (filesData.length > 0 ? `📎 Файлов: ${filesData.length}` : ''),
+		text: text || (filesToSend.length > 0 ? `📎 Файлов: ${filesToSend.length}` : ''),
 		timestamp: Date.now() / 1000,
 		delivery_status: DELIVERY_STATUS.SENT,
-		files: filesData,
+		files: filesToSend.map(f => ({ name: f.name, size: f.size, path: '' })),
 		recipient_id: state.currentPeer,
 	};
 
 	console.log('📤 Отправка сообщения:', {
 		id: localId,
 		text,
-		filesCount: filesData.length,
-		files: filesData,
+		filesCount: filesToSend.length,
 	});
 
-	serverClient.sendMessageWithFiles(text, filesData, state.currentPeer);
+	// Отправляем файлы + текст через WebSocket чанки (асинхронно)
+	if (filesToSend.length > 0) {
+		serverClient.sendMessageWithFiles(text, filesToSend, state.currentPeer)
+			.catch(e => console.error('❌ Ошибка отправки файлов:', e));
+	} else if (text) {
+		serverClient.sendMessage(text, state.currentPeer);
+	}
 
 	// Добавляем локально
 	state.messages.push(messageData);
@@ -1040,41 +1037,6 @@ async function sendMessage() {
 
 	// Очистка
 	clearMessageInput();
-}
-
-/**
- * Загрузка файлов на сервер
- */
-async function uploadFiles(files) {
-	const filesData = [];
-	for (const file of files) {
-		try {
-			console.log('📁 Загрузка файла:', file.name);
-			const fileResult = await serverClient.uploadFile(file);
-			if (fileResult) {
-				filesData.push({
-					name: file.name,
-					size: file.size,
-					path: fileResult.path,
-				});
-			}
-		} catch (error) {
-			console.error('❌ Ошибка загрузки файла:', error);
-		}
-	}
-	return filesData;
-}
-
-/**
- * Ожидание готовности WebSocket
- */
-async function waitForWebSocket() {
-	await new Promise((resolve) => setTimeout(resolve, 200));
-
-	if (serverClient.ws?.readyState !== WebSocket.OPEN) {
-		console.log('⚠️ WebSocket закрыт, ждём переподключения...');
-		await new Promise((resolve) => setTimeout(resolve, 1000));
-	}
 }
 
 /**
