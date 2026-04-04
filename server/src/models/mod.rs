@@ -59,28 +59,50 @@ pub struct ClientMsg {
     pub before_id: Option<String>,
     #[serde(default)]
     pub recipient_id: Option<String>,
+    /// Метаданные файла для file_start
+    #[serde(default)]
+    pub file_id: Option<String>,
+    /// Метаданные файла для file_start
+    #[serde(default)]
+    pub file_name: Option<String>,
+    /// Метаданные файла для file_start
+    #[serde(default)]
+    pub file_size: Option<u64>,
     #[serde(default)]
     pub files: Vec<FileData>,
 }
 
 /// PERF-3: Targeted delivery — мапа user_id → список отправителей
-/// Заменяет broadcast::channel для целевой рассылки сообщений
 pub type UserSenders = Arc<Mutex<HashMap<String, Vec<UnboundedSender<serde_json::Value>>>>>;
 
+/// Состояние сборки файла из чанков
+#[allow(dead_code)]
+pub struct FileUploadState {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub sender_id: String,
+    pub recipient_id: Option<String>,
+    pub uploaded_bytes: u64,
+    pub filepath: PathBuf,
+    pub sender_name: String,
+}
+
+/// Контейнер для активных загрузок файлов
+pub type FileUploads = Arc<Mutex<HashMap<String, FileUploadState>>>;
+
 /// Состояние приложения
-///
-/// PERF-1: Используем r2d2 pool вместо Arc<Mutex<Connection>>
-///         для параллельного доступа к БД без сериализации.
-/// PERF-3: Используем user_senders для targeted delivery вместо broadcast канала.
 #[derive(Clone)]
 pub struct AppState {
-    /// PERF-1: Pool соединений SQLite (вместо Mutex<Connection>)
+    /// Pool соединений SQLite
     pub db: Pool<SqliteConnectionManager>,
-    /// PERF-3: Targeted delivery — user_id → Vec<senders>
+    /// Targeted delivery
     pub user_senders: UserSenders,
     pub online_users: Arc<Mutex<HashMap<String, u64>>>,
-    /// Директория для загруженных файлов (для валидации path traversal)
+    /// Директория для загруженных файлов
     pub upload_dir: PathBuf,
-    /// Максимальный размер файла в байтах
+    /// Максимальный размер файла
     pub max_file_size: usize,
+    /// Активные загрузки файлов (chunk assembly)
+    pub file_uploads: FileUploads,
 }
