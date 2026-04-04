@@ -7,6 +7,7 @@
 
 mod config;
 mod db;
+mod error;
 mod handlers;
 mod models;
 mod websocket;
@@ -15,16 +16,49 @@ use actix_cors::Cors;
 use actix_web::{App, HttpServer, middleware, web};
 use log::{info, warn};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use rusqlite::Connection;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::Mutex;
 
 use config::AppConfig;
 use models::AppState;
 use websocket::ws_handler;
 
-/// Получение всех локальных IP адресов (#28: if-addrs вместо get_if_addrs)
+/// PERF-1: Создаём r2d2 pool соединений SQLite
+fn create_db_pool(
+    config: &AppConfig,
+) -> Result<Pool<SqliteConnectionManager>, Box<dyn std::error::Error>> {
+    let db_path = &config.db_path;
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
+        // ARCH-3: PRAGMA применяются при каждом получении соединения
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -5000;",
+        )?;
+        // Инициализируем схему БД (создаёт таблицы если нет)
+        db::init_database(conn)?;
+        Ok(())
+    });
+
+    let pool = Pool::builder()
+        .max_size(16) // 16 соединений — достаточно для LAN мессенджера
+        .build(manager)?;
+
+    // Применяем миграции к одному соединению
+    {
+        let conn = pool.get()?;
+        db::apply_migrations(&conn)?;
+    }
+
+    Ok(pool)
+}
+
+/// Получение всех локальных IP адресов
 fn get_local_ips() -> Vec<String> {
     let mut ips = Vec::new();
 
@@ -50,16 +84,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     info!("🚀 XAM Server v1.0.0");
     info!("📡 Хост: {}, Порт: {}", config.host, config.port);
 
-    // Инициализация БД (#11: замена unwrap на ?)
-    let db_path = &config.db_path;
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let conn = Connection::open(db_path)?;
-    db::init_database(&conn)?;
-
-    info!("✅ База данных: {}", db_path.display());
+    // PERF-1: Инициализация pool БД (вместо Mutex<Connection>)
+    let db_pool = create_db_pool(&config)?;
+    info!("✅ База данных: {}", config.db_path.display());
 
     // Инициализация директории для загрузок
     std::fs::create_dir_all(&config.upload_dir)?;
@@ -112,15 +139,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         warn!("⚠️ mDNS не доступен, будет использоваться только IP-сканирование");
     }
 
-    let db = Arc::new(Mutex::new(conn));
-    let broadcast_size = config.broadcast_channel_size;
-    let (tx, _rx) = broadcast::channel::<serde_json::Value>(broadcast_size);
+    // PERF-3: user_senders вместо broadcast канала
+    let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
 
-    // Новые поля AppState для валидации файлов
     let state = AppState {
-        db,
-        tx,
+        db: db_pool,
+        user_senders,
         online_users,
         upload_dir: config.upload_dir.clone(),
         max_file_size: config.max_file_size,
@@ -150,9 +175,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .max_age(3600)
         };
 
-        // Rate Limiting (#7): корректная формула
-        // rate_limit = запросов в минуту → milliseconds_per_request = 60_000 / rate_limit
-        // При rate_limit=100: 600ms между запросами
         let milliseconds_per_request = (60_000.0 / server_config.rate_limit as f64) as u64;
 
         let governor_conf = actix_governor::GovernorConfigBuilder::default()
@@ -181,7 +203,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     .bind(format!("{}:{}", server_config.host, server_config.port))?
     .run();
 
-    // Graceful shutdown (#6): обработка Ctrl+C
+    // Graceful shutdown
     let server_handle = server.handle();
     tokio::spawn(async move {
         if let Ok(()) = tokio::signal::ctrl_c().await {
@@ -192,7 +214,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     server.await?;
 
-    // Отмена регистрации mDNS
     if let Some(daemon) = mdns_daemon_opt.take() {
         let _ = daemon.shutdown();
         info!("📢 mDNS сервис остановлен");
@@ -206,46 +227,29 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ТЕСТОВ
 // ============================================
 
-/// Создаёт тестовое состояние с временной БД (в памяти)
+/// ARCH-3: Создаёт тестовое состояние с r2d2 pool и PRAGMA
 #[cfg(test)]
 pub async fn create_test_state() -> AppState {
-    let db = Arc::new(Mutex::new(
-        Connection::open(":memory:").expect("Failed to create in-memory DB"),
-    ));
+    let manager = SqliteConnectionManager::file(":memory:").with_init(|conn| {
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -5000;",
+        )?;
+        db::init_database(conn)?;
+        Ok(())
+    });
 
-    {
-        let conn = db.lock().await;
-        conn.execute("PRAGMA journal_mode = WAL", []).ok();
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE, avatar TEXT DEFAULT '👤')",
-            [],
-        )
-        .expect("Failed to create users table");
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS messages (
-                id TEXT PRIMARY KEY, sender_id TEXT, sender_name TEXT,
-                text TEXT, timestamp INTEGER, delivery_status INTEGER DEFAULT 0,
-                recipient_id TEXT, files TEXT DEFAULT '[]'
-            )",
-            [],
-        )
-        .expect("Failed to create messages table");
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS files (
-                id TEXT PRIMARY KEY, name TEXT, path TEXT, size INTEGER,
-                sender_id TEXT, recipient_id TEXT, timestamp INTEGER
-            )",
-            [],
-        )
-        .expect("Failed to create files table");
-    }
+    let pool = Pool::builder()
+        .max_size(4)
+        .build(manager)
+        .expect("Failed to create test DB pool");
 
-    let (tx, _rx) = broadcast::channel::<serde_json::Value>(1000);
+    let (_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+    let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
 
     AppState {
-        db,
-        tx,
+        db: pool,
+        user_senders,
         online_users,
         upload_dir: std::path::PathBuf::from("/tmp/xam-test-files"),
         max_file_size: 100 * 1024 * 1024,
@@ -262,10 +266,6 @@ mod tests {
     use actix_web::{App, test, web};
     use rusqlite::params;
     use serde_json::json;
-
-    // ============================================
-    // ТЕСТЫ РЕГИСТРАЦИИ ПОЛЬЗОВАТЕЛЕЙ
-    // ============================================
 
     #[actix_rt::test]
     async fn test_register_new_user() {
@@ -301,9 +301,8 @@ mod tests {
     async fn test_register_existing_user() {
         let state = create_test_state().await;
 
-        // Создаём пользователя
         {
-            let conn = state.db.lock().await;
+            let conn = state.db.get().expect("Failed to get connection");
             conn.execute(
                 "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
                 params!["test-id", "Existing User", "👤"],
@@ -384,17 +383,12 @@ mod tests {
         );
     }
 
-    // ============================================
-    // ТЕСТЫ ПОЛЬЗОВАТЕЛЕЙ
-    // ============================================
-
     #[actix_rt::test]
     async fn test_get_users() {
         let state = create_test_state().await;
 
-        // Добавляем тестовых пользователей
         {
-            let conn = state.db.lock().await;
+            let conn = state.db.get().expect("Failed to get connection");
             conn.execute(
                 "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
                 params!["user1", "Alice", "👩"],
@@ -429,7 +423,6 @@ mod tests {
     async fn test_get_online_users() {
         let state = create_test_state().await;
 
-        // Добавляем пользователя в онлайн
         {
             let mut online = state.online_users.lock().await;
             online.insert("user1".to_string(), 12345);
@@ -453,10 +446,6 @@ mod tests {
         let online = body["data"].as_array().expect("Expected data array");
         assert_eq!(online.len(), 2);
     }
-
-    // ============================================
-    // ТЕСТЫ СООБЩЕНИЙ
-    // ============================================
 
     #[actix_rt::test]
     async fn test_get_messages_empty() {
@@ -487,9 +476,8 @@ mod tests {
     async fn test_get_messages_with_limit() {
         let state = create_test_state().await;
 
-        // Добавляем тестовые сообщения
         {
-            let conn = state.db.lock().await;
+            let conn = state.db.get().expect("Failed to get connection");
             for i in 0..10 {
                 conn.execute(
                     "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status) \
@@ -531,9 +519,8 @@ mod tests {
     async fn test_get_messages_for_chat() {
         let state = create_test_state().await;
 
-        // Добавляем тестовые сообщения для разных чатов
         {
-            let conn = state.db.lock().await;
+            let conn = state.db.get().expect("Failed to get connection");
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -580,10 +567,6 @@ mod tests {
         assert_eq!(messages.len(), 3);
     }
 
-    // ============================================
-    // ТЕСТЫ ФАЙЛОВ
-    // ============================================
-
     #[actix_rt::test]
     async fn test_upload_file_no_file() {
         let state = create_test_state().await;
@@ -601,7 +584,17 @@ mod tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], false);
-        assert_eq!(body["error"], "No file uploaded");
+        // BUG-11 FIX: теперь различаем отсутствие файла и ошибку multipart
+        assert!(
+            body["error"]
+                .as_str()
+                .expect("Expected error string")
+                .contains("No file")
+                || body["error"]
+                    .as_str()
+                    .expect("Expected error string")
+                    .contains("Multipart")
+        );
     }
 
     #[actix_rt::test]

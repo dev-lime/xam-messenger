@@ -75,18 +75,26 @@ async function invokeTauri(cmd, args = {}) {
 // Делаем функцию доступной глобально для app.js
 window.invokeTauri = invokeTauri;
 
+const SCAN_CONFIG = {
+	PORT: 8080,
+	IP_START_MIN: 1,
+	IP_START_MAX: 10,
+	IP_END_MIN: 100,
+	IP_END_MAX: 110,
+};
+
 /**
  * Генерирует список серверов для сканирования локальной сети
- * @returns {string[]} Список WebSocket URL
+ * BP-7 FIX: используем SCAN_CONFIG.PORT вместо захардкоженного 8080
  */
 function generateLocalNetworkServers() {
 	const servers = [];
 	SUBNETS.forEach((subnet) => {
-		for (let i = 1; i <= 10; i++) {
-			servers.push(`ws://${subnet}${i}:8080/ws`);
+		for (let i = SCAN_CONFIG.IP_START_MIN; i <= SCAN_CONFIG.IP_START_MAX; i++) {
+			servers.push(`ws://${subnet}${i}:${SCAN_CONFIG.PORT}/ws`);
 		}
-		for (let i = 100; i <= 110; i++) {
-			servers.push(`ws://${subnet}${i}:8080/ws`);
+		for (let i = SCAN_CONFIG.IP_END_MIN; i <= SCAN_CONFIG.IP_END_MAX; i++) {
+			servers.push(`ws://${subnet}${i}:${SCAN_CONFIG.PORT}/ws`);
 		}
 	});
 	return servers;
@@ -167,14 +175,17 @@ async function pingServer(httpUrl, timeout = 3000) {
 	try {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), timeout);
-		
-		const response = await fetch(`${httpUrl}/users`, {
-			method: 'GET',
-			signal: controller.signal,
-		});
-		
-		clearTimeout(timer);
-		return response.ok;
+
+		try {
+			const response = await fetch(`${httpUrl}/users`, {
+				method: 'GET',
+				signal: controller.signal,
+			});
+			return response.ok;
+		} finally {
+			// BUG-6 FIX: гарантированно очищаем таймер
+			clearTimeout(timer);
+		}
 	} catch (e) {
 		return false;
 	}
@@ -426,7 +437,7 @@ class ServerClient {
 					const ip = extractIpFromWsUrl(url);
 					found.push({
 						ip,
-						port: 8080,
+						port: SCAN_CONFIG.PORT,
 						wsUrl: url,
 						httpUrl,
 						source: 'scan',
@@ -572,7 +583,7 @@ class ServerClient {
 		const ip = extractIpFromWsUrl(url);
 		if (ip) {
 			const isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
-			cacheServer(ip, 8080, isTauri ? 'mdns' : 'manual');
+			cacheServer(ip, SCAN_CONFIG.PORT, isTauri ? 'mdns' : 'manual');
 		}
 
 		console.log('🔌 Подключение к', url);
@@ -636,7 +647,7 @@ class ServerClient {
 		// Кэшируем подключенный сервер
 		const ip = extractIpFromWsUrl(wsUrl);
 		if (ip) {
-			cacheServer(ip, 8080, this.isTauri ? 'mdns' : 'manual');
+			cacheServer(ip, SCAN_CONFIG.PORT, this.isTauri ? 'mdns' : 'manual');
 		}
 
 		// Выбираем режим подключения
@@ -807,6 +818,20 @@ class ServerClient {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ name, avatar }),
 		});
+
+		// BUG-9 FIX: проверяем HTTP статус перед парсингом JSON
+		if (!response.ok) {
+			let errorMsg = `Registration failed (HTTP ${response.status})`;
+			try {
+				const errorBody = await response.json();
+				if (errorBody.error) {
+					errorMsg = errorBody.error;
+				}
+			} catch {
+				// Если тело не JSON — используем статус по умолчанию
+			}
+			throw new Error(errorMsg);
+		}
 
 		const result = await response.json();
 
