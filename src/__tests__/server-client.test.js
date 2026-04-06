@@ -73,7 +73,7 @@ class TestServerClient {
         }
     }
 
-    async register(name) {
+    async register(name, avatar = '👤') {
         const mockResponse = {
             success: true,
             data: { id: 'test-user-id', name: name }
@@ -85,13 +85,13 @@ class TestServerClient {
         const response = await fetch(`${this.httpUrl}/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name }),
+            body: JSON.stringify({ name, avatar }),
         });
 
         const result = await response.json();
         if (result.success) {
             this.user = result.data;
-            this.send({ type: 'register', name });
+            this.send({ type: 'register', name, avatar });
             return result.data;
         }
         throw new Error(result.error);
@@ -106,13 +106,34 @@ class TestServerClient {
         });
     }
 
-    sendMessageWithFiles(text, files, recipientId = null) {
+    async sendMessageWithFiles(text, files, recipientId = null) {
+        // Асинхронная версия как в реальном ServerClient
+        for (const file of files) {
+            try {
+                await this.sendFile(file, recipientId);
+            } catch (error) {
+                console.error('❌ Ошибка отправки файла:', file.name, error);
+            }
+        }
+        if (text && text.trim()) {
+            this.sendMessage(text.trim(), recipientId);
+        }
+    }
+
+    async sendFile(file, recipientId = null) {
+        // Простая реализация для тестов
         this.send({
-            type: 'message',
-            text,
-            files,
+            type: 'file_start',
+            file_id: 'test-file-id',
+            file_name: file.name,
+            file_size: file.size,
             recipient_id: recipientId,
         });
+        this.send({
+            type: 'file_end',
+            file_id: 'test-file-id',
+        });
+        return { name: file.name, size: file.size, path: 'test-file-id' };
     }
 
     sendAck(messageId, status = 'read') {
@@ -123,7 +144,7 @@ class TestServerClient {
         });
     }
 
-    getMessages(limit = 100, beforeId = null, chatPeerId = null) {
+    getMessages(limit = 50, beforeId = null, chatPeerId = null) {
         this.send({
             type: 'get_messages',
             limit: Math.max(1, Math.min(200, limit)),
@@ -142,11 +163,23 @@ class TestServerClient {
         case 'ack':
         case 'messages':
         case 'user_online':
+        case 'file_error':
             this.messageHandlers
                 .filter(h => h.event === data.type)
                 .forEach(h => h.handler(data));
             break;
         }
+    }
+
+    // Конвертация Uint8Array в base64 (копия из server-client.js)
+    _uint8ToBase64(bytes) {
+        const CHUNK = 0x8000;
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+            const sub = bytes.subarray(i, i + CHUNK);
+            binary += String.fromCharCode.apply(null, sub);
+        }
+        return btoa(binary);
     }
 
     async getUsers() {
@@ -300,14 +333,14 @@ describe('ServerClient', () => {
             }));
         });
 
-        test('должен использовать лимит по умолчанию 100', async () => {
+        test('должен использовать лимит по умолчанию 50', async () => {
             await client.connect('ws://localhost:8080/ws');
 
             client.getMessages();
 
             expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
                 type: 'get_messages',
-                limit: 100,
+                limit: 50,
                 before_id: null,
                 chat_peer_id: null,
             }));
@@ -342,7 +375,7 @@ describe('ServerClient', () => {
                 expect.objectContaining({
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: 'Артём' }),
+                    body: JSON.stringify({ name: 'Артём', avatar: '👤' }),
                 })
             );
         });
@@ -358,7 +391,7 @@ describe('ServerClient', () => {
             await client.register('Артём');
 
             expect(client.ws.sentMessages[0]).toBe(
-                JSON.stringify({ type: 'register', name: 'Артём' })
+                JSON.stringify({ type: 'register', name: 'Артём', avatar: '👤' })
             );
         });
 
@@ -499,24 +532,32 @@ describe('ServerClient', () => {
     });
 
     describe('Отправка сообщений с файлами', () => {
-        test('должен отправлять сообщение с файлами', async () => {
+        test('должен отправлять файл через file_start/file_end', async () => {
             await client.connect('ws://localhost:8080/ws');
 
             const files = [
                 { name: 'test.txt', size: 1024, path: '/files/test.txt' }
             ];
 
-            client.sendMessageWithFiles('Сообщение с файлом', files);
+            await client.sendMessageWithFiles('Сообщение с файлом', files);
 
-            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
-                type: 'message',
-                text: 'Сообщение с файлом',
-                files,
-                recipient_id: null,
-            }));
+            // file_start должен быть первым
+            const startMsg = JSON.parse(client.ws.sentMessages[0]);
+            expect(startMsg.type).toBe('file_start');
+            expect(startMsg.file_name).toBe('test.txt');
+            expect(startMsg.file_size).toBe(1024);
+
+            // file_end должен быть вторым
+            const endMsg = JSON.parse(client.ws.sentMessages[1]);
+            expect(endMsg.type).toBe('file_end');
+
+            // Текст должен быть отправлен третьим
+            const textMsg = JSON.parse(client.ws.sentMessages[2]);
+            expect(textMsg.type).toBe('message');
+            expect(textMsg.text).toBe('Сообщение с файлом');
         });
 
-        test('должен отправлять сообщение с несколькими файлами', async () => {
+        test('должен отправлять несколько файлов с получателем', async () => {
             await client.connect('ws://localhost:8080/ws');
 
             const files = [
@@ -524,14 +565,14 @@ describe('ServerClient', () => {
                 { name: 'test2.pdf', size: 2048, path: '/files/test2.pdf' }
             ];
 
-            client.sendMessageWithFiles('Сообщение с файлами', files, 'user-123');
+            await client.sendMessageWithFiles('Сообщение с файлами', files, 'user-123');
 
-            expect(client.ws.sentMessages[0]).toBe(JSON.stringify({
-                type: 'message',
-                text: 'Сообщение с файлами',
-                files,
-                recipient_id: 'user-123',
-            }));
+            // Должно быть: file_start, file_end, file_start, file_end, message
+            expect(client.ws.sentMessages.length).toBe(5);
+
+            const firstStart = JSON.parse(client.ws.sentMessages[0]);
+            expect(firstStart.type).toBe('file_start');
+            expect(firstStart.recipient_id).toBe('user-123');
         });
     });
 
@@ -584,17 +625,6 @@ describe('ServerClient', () => {
             expect(sentData.chat_peer_id).toBe('user-456');
         });
 
-        test('должен использовать лимит по умолчанию 100', async () => {
-            await client.connect('ws://localhost:8080/ws');
-
-            client.getMessages();
-
-            const sentData = JSON.parse(client.ws.sentMessages[0]);
-            expect(sentData.limit).toBe(100);
-            expect(sentData.before_id).toBeNull();
-            expect(sentData.chat_peer_id).toBeNull();
-        });
-
         test('должен ограничивать минимальный лимит значением 1', async () => {
             await client.connect('ws://localhost:8080/ws');
 
@@ -611,18 +641,6 @@ describe('ServerClient', () => {
 
             const sentData = JSON.parse(client.ws.sentMessages[0]);
             expect(sentData.limit).toBe(200);
-        });
-
-        test('должен запрашивать сообщения с null before_id для первой загрузки', async () => {
-            await client.connect('ws://localhost:8080/ws');
-
-            client.getMessages(50, null);
-
-            const sentData = JSON.parse(client.ws.sentMessages[0]);
-            expect(sentData.type).toBe('get_messages');
-            expect(sentData.limit).toBe(50);
-            expect(sentData.before_id).toBeNull();
-            expect(sentData.chat_peer_id).toBeNull();
         });
     });
 
@@ -1046,6 +1064,136 @@ describe('ServerClient - Tauri WebSocket', () => {
             disconnectedCallback();
 
             expect(client.attemptReconnect).toHaveBeenCalled();
+        });
+    });
+});
+
+// ============================================================================
+// Тесты для новых функций: sendFile, _uint8ToBase64, FILE_START/FILE_END
+// ============================================================================
+
+describe('ServerClient - Чанковая передача файлов (sendFile)', () => {
+    let client;
+
+    beforeEach(() => {
+        client = new TestServerClient();
+        client.httpUrl = 'http://localhost:8080/api/v1';
+        client.serverUrl = 'ws://localhost:8080/ws';
+    });
+
+    afterEach(() => {
+        client.disconnect();
+    });
+
+    describe('_uint8ToBase64', () => {
+        test('должен конвертировать маленький Uint8Array в base64', () => {
+            const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+            const result = client._uint8ToBase64(bytes);
+            expect(result).toBe('SGVsbG8=');
+        });
+
+        test('должен конвертировать пустой Uint8Array', () => {
+            const bytes = new Uint8Array([]);
+            const result = client._uint8ToBase64(bytes);
+            expect(result).toBe('');
+        });
+
+        test('должен конвертировать большой Uint8Array без переполнения стека', () => {
+            // 64KB чанк
+            const bytes = new Uint8Array(64 * 1024);
+            for (let i = 0; i < bytes.length; i++) {
+                bytes[i] = i % 256;
+            }
+            const result = client._uint8ToBase64(bytes);
+            // Base64 увеличивает размер на ~33%
+            expect(result.length).toBeGreaterThan(64 * 1024);
+            expect(result).toMatch(/^[A-Za-z0-9+/]*={0,2}$/);
+        });
+    });
+
+    describe('FILE_START / FILE_END протокол', () => {
+        test('должен отправлять FILE_START с метаданными', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.send({
+                type: 'file_start',
+                file_id: 'test-file-id',
+                file_name: 'test.txt',
+                file_size: 1024,
+                recipient_id: 'user-2',
+            });
+
+            const sentData = JSON.parse(client.ws.sentMessages[client.ws.sentMessages.length - 1]);
+            expect(sentData.type).toBe('file_start');
+            expect(sentData.file_id).toBe('test-file-id');
+            expect(sentData.file_name).toBe('test.txt');
+            expect(sentData.file_size).toBe(1024);
+            expect(sentData.recipient_id).toBe('user-2');
+        });
+
+        test('должен отправлять FILE_END с file_id', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.send({
+                type: 'file_end',
+                file_id: 'test-file-id',
+            });
+
+            const sentData = JSON.parse(client.ws.sentMessages[client.ws.sentMessages.length - 1]);
+            expect(sentData.type).toBe('file_end');
+            expect(sentData.file_id).toBe('test-file-id');
+        });
+    });
+
+    describe('FILE_ERROR обработка', () => {
+        test('должен уведомлять обработчиков о FILE_ERROR', () => {
+            const handler = jest.fn();
+            client.on('file_error', handler);
+
+            const errorData = {
+                type: 'file_error',
+                file_id: 'test-file-id',
+                error: 'File too large',
+            };
+
+            client.handleMessage(errorData);
+
+            expect(handler).toHaveBeenCalledWith(errorData);
+        });
+    });
+
+    describe('sendMessageWithFiles async', () => {
+        test('должен отправлять файлы и текст', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            // Мок sendFile
+            client.sendFile = jest.fn().mockResolvedValue({ name: 'test.txt', size: 100, path: 'file-id' });
+
+            await client.sendMessageWithFiles('Текст', [{ name: 'test.txt', size: 100 }]);
+
+            expect(client.sendFile).toHaveBeenCalled();
+            // Текст должен быть отправлен
+            expect(client.ws.sentMessages.length).toBeGreaterThan(0);
+        });
+
+        test('должен отправлять только текст если файлов нет', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            await client.sendMessageWithFiles('Только текст', []);
+
+            const textMsg = client.ws.sentMessages.find(
+                m => JSON.parse(m).type === 'message' && JSON.parse(m).text === 'Только текст'
+            );
+            expect(textMsg).toBeDefined();
+        });
+
+        test('должен обрабатывать ошибку отправки файла', async () => {
+            await client.connect('ws://localhost:8080/ws');
+
+            client.sendFile = jest.fn().mockRejectedValue(new Error('Network error'));
+
+            await expect(client.sendMessageWithFiles('Текст', [{ name: 'fail.txt', size: 0 }]))
+                .resolves.not.toThrow();
         });
     });
 });

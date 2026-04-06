@@ -865,6 +865,22 @@ class ServerClient {
 	}
 
 	/**
+	 * Конвертация Uint8Array в base64 (без переполнения стека)
+	 * @param {Uint8Array} bytes
+	 * @returns {string}
+	 */
+	_uint8ToBase64(bytes) {
+		// Разбиваем на чанки чтобы не переполнить стек вызовов
+		const CHUNK = 0x8000; // 32KB
+		let binary = '';
+		for (let i = 0; i < bytes.length; i += CHUNK) {
+			const sub = bytes.subarray(i, i + CHUNK);
+			binary += String.fromCharCode.apply(null, sub);
+		}
+		return btoa(binary);
+	}
+
+	/**
 	 * Отправка файла через WebSocket чанками (без ограничения по размеру)
 	 * Протокол: file_start → binary chunks → file_end
 	 * @param {File} file - Файл для отправки
@@ -913,8 +929,9 @@ class ServerClient {
 			const chunk = await readChunk(offset, chunkSize);
 
 			if (this.isTauriWebSocket()) {
-				// Tauri: отправляем бинарные данные через нативный WebSocket
-				await invokeTauri('ws_send_binary', { data: Array.from(chunk) });
+				// Tauri: кодируем в base64 и отправляем строкой (эффективнее чем Array.from)
+				const b64 = this._uint8ToBase64(chunk);
+				await invokeTauri('ws_send_binary', { dataB64: b64 });
 			} else if (this.ws?.readyState === WebSocket.OPEN) {
 				// Браузер: отправляем ArrayBuffer напрямую
 				this.ws.send(chunk.buffer);
@@ -1085,5 +1102,14 @@ if (typeof window !== 'undefined') {
 
 // Экспорт для CommonJS (Jest тесты)
 if (typeof module !== 'undefined' && module.exports) {
-	module.exports = { ServerClient };
+	module.exports = {
+		ServerClient,
+		// Standalone функции для тестирования
+		generateLocalNetworkServers,
+		wsToHttpUrl,
+		extractIpFromWsUrl,
+		pingServer,
+		cacheServer,
+		getCachedServers,
+	};
 }

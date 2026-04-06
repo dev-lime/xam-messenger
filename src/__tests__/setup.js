@@ -70,6 +70,7 @@ window.WebSocket = MockWebSocket;
 // Mock для fetch
 const mockFetch = jest.fn();
 window.fetch = mockFetch;
+global.fetch = mockFetch;
 
 // Глобальные функции для работы с файлами
 window.openFile = jest.fn();

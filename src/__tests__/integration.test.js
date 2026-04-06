@@ -674,8 +674,6 @@ describe('Интеграционные тесты - XAM Messenger', () => {
 });
 
 describe('Интеграционные тесты - Краевые случаи', () => {
-    const TEST_SERVER_URL = 'http://localhost:8080';
-
     describe('Валидация данных', () => {
         test('должен обрабатывать специальные символы в имени', async () => {
             const specialNames = [
@@ -746,8 +744,9 @@ describe('Интеграционные тесты - Краевые случаи'
 
             ws.close();
 
-            // Тест проходит если не было ошибок
-            expect(true).toBe(true);
+            // Проверяем что пользователь был зарегистрирован и сообщения были отправлены без ошибок
+            expect(registeredUser.name).toBe('UnicodeUser');
+            expect(ws.readyState).toBe(WebSocketClient.OPEN);
         });
 
         test('должен обрабатывать пустые сообщения', async () => {
@@ -763,8 +762,11 @@ describe('Интеграционные тесты - Краевые случаи'
                 text: '',
             }));
 
+            await new Promise(r => setTimeout(r, 100));
+
+            // Проверяем что соединение всё ещё открыто
+            expect(ws.readyState).toBe(WebSocketClient.OPEN);
             ws.close();
-            expect(true).toBe(true);
         });
     });
 
@@ -803,8 +805,9 @@ describe('Интеграционные тесты - Краевые случаи'
                 }));
             }
 
+            // Проверяем что соединение всё ещё открыто после массовой отправки
+            expect(ws.readyState).toBe(WebSocketClient.OPEN);
             ws.close();
-            expect(true).toBe(true);
         });
     });
 
