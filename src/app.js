@@ -57,7 +57,6 @@ const elements = {
 	userNameInput: document.getElementById('userNameInput'),
 	serverStatus: document.getElementById('serverStatus'),
 	confirmConnect: document.getElementById('confirmConnect'),
-	selectServerBtn: document.getElementById('selectServerBtn'),
 	cancelSettings: document.getElementById('cancelSettings'),
 	saveSettings: document.getElementById('saveSettings'),
 	settingsNameInput: document.getElementById('settingsNameInput'),
@@ -70,6 +69,8 @@ const elements = {
 	confirmManualServer: document.getElementById('confirmManualServer'),
 	cancelServerSelector: document.getElementById('cancelServerSelector'),
 	refreshServersBtn: document.getElementById('refreshServersBtn'),
+	changeServerBtn: document.getElementById('changeServerBtn'),
+	selectedServerInfo: document.getElementById('selectedServerInfo'),
 };
 
 // ============================================================================
@@ -79,6 +80,7 @@ const elements = {
 const state = {
 	connected: false,
 	serverUrl: null,
+	selectedServer: null, // Выбранный сервер (объект с wsUrl, httpUrl, ip, port)
 	user: null,
 	messages: [],
 	peers: [],
@@ -189,10 +191,9 @@ async function init() {
 		elements.profileMenuAvatar.textContent = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
 	}
 
-	// Показываем диалог подключения
+	// Сначала показываем выбор сервера
 	setTimeout(() => {
-		elements.connectDialog.showModal();
-		elements.userNameInput.focus();
+		openServerSelector();
 	}, 300);
 }
 
@@ -202,7 +203,7 @@ async function init() {
 
 /**
  * Обнаружение серверов и авто-подключение
- * @returns {Promise<boolean>} true если успешно подключено
+ * @returns {Promise<boolean>} true если серверы найдены
  */
 async function discoverAndConnect() {
 	if (state.isDiscovering) return false;
@@ -218,28 +219,12 @@ async function discoverAndConnect() {
 		if (servers.length === 0) {
 			updateServerStatus('❌ Серверы не найдены', 'error');
 			state.isDiscovering = false;
-			// Блокируем кнопку "Войти", показываем кнопку выбора сервера
-			if (elements.confirmConnect) {
-				elements.confirmConnect.disabled = true;
-			}
-			if (elements.selectServerBtn) {
-				elements.selectServerBtn.style.display = 'block';
-			}
 			return false;
 		}
 
 		// Показываем количество найденных серверов
 		updateServerStatus(`✅ Найдено серверов: ${servers.length}`, 'success');
-		
-		// Разблокируем кнопку "Войти"
-		if (elements.confirmConnect) {
-			elements.confirmConnect.disabled = false;
-		}
-		// Скрываем кнопку выбора сервера (он найден)
-		if (elements.selectServerBtn) {
-			elements.selectServerBtn.style.display = 'none';
-		}
-		
+
 		state.isDiscovering = false;
 		return true;
 
@@ -247,10 +232,6 @@ async function discoverAndConnect() {
 		console.error('❌ Ошибка обнаружения серверов:', error);
 		updateServerStatus('❌ Ошибка подключения', 'error');
 		state.isDiscovering = false;
-		// Показываем кнопку выбора сервера при ошибке
-		if (elements.selectServerBtn) {
-			elements.selectServerBtn.style.display = 'block';
-		}
 		return false;
 	}
 }
@@ -260,15 +241,17 @@ async function discoverAndConnect() {
  */
 function updateServerStatus(message, type = 'info') {
 	if (!elements.serverStatus) return;
-	
+
 	const colors = {
 		info: 'var(--text-secondary)',
 		success: 'var(--success)',
 		warning: 'var(--warning)',
 		error: 'var(--error)',
 	};
-	
-	elements.serverStatus.innerHTML = `<span style="color: ${colors[type]};">${message}</span>`;
+
+	elements.serverStatus.innerHTML = `<span id="selectedServerInfo" style="color: ${colors[type]};">${message}</span>`;
+	// Обновляем ссылку на элемент
+	elements.selectedServerInfo = document.getElementById('selectedServerInfo');
 }
 
 /**
@@ -389,47 +372,52 @@ function getSourceName(source) {
  */
 window.connectToSelectedServer = async (wsUrl) => {
 	if (!wsUrl) return;
-	
+
 	try {
-		// Закрываем диалог
+		// Находим сервер в списке для получения httpUrl
+		const server = state.discoveredServers.find(s => s.wsUrl === wsUrl);
+
+		// Сохраняем выбранный сервер
+		state.selectedServer = server || { wsUrl, httpUrl: wsUrl.replace('ws://', 'http://').replace('/ws', '') };
+
+		// Закрываем диалог выбора сервера
 		if (elements.serverSelectorDialog) {
 			elements.serverSelectorDialog.close();
 		}
-		
-		// Если уже подключены, отключаемся
-		if (serverClient.isConnected()) {
-			serverClient.disconnect();
-		}
-		
-		// Подключаемся
-		await serverClient.connectToServer(wsUrl);
-		
-		// Регистрируем пользователя если имя введено
-		const name = elements.userNameInput?.value.trim() || userSettings?.name;
-		const avatar = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
-		
-		if (name) {
-			const user = await serverClient.register(name, avatar);
-			state.user = user;
-			state.connected = true;
-			
-			updateUserProfile(user.name, 'В сети');
-			updateStatusDisplay(true, 'В сети');
-			
-			await loadPeers();
-			setTimeout(renderPeers, 500);
-			
-			// Закрываем диалог подключения
-			if (elements.connectDialog) {
-				elements.connectDialog.close();
-			}
-		}
+
+		// Обновляем информацию о выбранном сервере в диалоге логина
+		updateSelectedServerInfo(state.selectedServer);
+
+		// Показываем диалог ввода имени
+		elements.connectDialog.showModal();
+		elements.userNameInput.value = userSettings?.name || '';
+		elements.userNameInput.focus();
+		updateConnectButton();
 
 	} catch (error) {
-		console.error('❌ Ошибка подключения к серверу:', error);
-		alert(`Не удалось подключиться: ${error.message}`);
+		console.error('❌ Ошибка выбора сервера:', error);
+		alert(`Не удалось выбрать сервер: ${error.message}`);
 	}
 };
+
+/**
+ * Обновление информации о выбранном сервере в диалоге логина
+ */
+function updateSelectedServerInfo(server) {
+	if (!elements.selectedServerInfo) return;
+	const address = server.ip ? `${server.ip}:${server.port}` : server.wsUrl;
+	elements.selectedServerInfo.textContent = `📡 ${address}`;
+	elements.selectedServerInfo.style.color = 'var(--success)';
+}
+
+/**
+ * Обновление состояния кнопки подключения
+ */
+function updateConnectButton() {
+	if (elements.confirmConnect) {
+		elements.confirmConnect.disabled = !elements.userNameInput?.value.trim() || !state.selectedServer;
+	}
+}
 
 /**
  * Подключение к серверу по ручному адресу
@@ -450,11 +438,12 @@ async function connectToManualServer() {
 		}
 
 		// Парсим URL для извлечения host:port
-		let ip, port;
+		let ip, port, httpUrl;
 		try {
 			const parsed = new URL(wsUrl);
 			ip = parsed.hostname;
 			port = parsed.port ? parseInt(parsed.port) : 8080;
+			httpUrl = `http://${ip}:${port}`;
 
 			// Если нет пути /ws, добавляем
 			if (!parsed.pathname.endsWith('/ws')) {
@@ -466,18 +455,34 @@ async function connectToManualServer() {
 			if (match) {
 				ip = match[1];
 				port = match[2] ? parseInt(match[2]) : 8080;
+				httpUrl = `http://${ip}:${port}`;
 			} else {
 				throw new Error('Неверный формат адреса');
 			}
 		}
 
-		await connectToSelectedServer(wsUrl);
+		// Сохраняем выбранный сервер
+		state.selectedServer = { wsUrl, httpUrl, ip, port, source: 'manual' };
 
 		// Кэшируем как ручной сервер
 		if (window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke) {
 			invokeTauri('cache_server', { ip, port, source: 'manual' }).catch(console.warn);
 		}
-		
+
+		// Закрываем диалог выбора сервера
+		if (elements.serverSelectorDialog) {
+			elements.serverSelectorDialog.close();
+		}
+
+		// Обновляем информацию о выбранном сервере
+		updateSelectedServerInfo(state.selectedServer);
+
+		// Показываем диалог ввода имени
+		elements.connectDialog.showModal();
+		elements.userNameInput.value = userSettings?.name || '';
+		elements.userNameInput.focus();
+		updateConnectButton();
+
 	} catch (error) {
 		console.error('❌ Ошибка подключения:', error);
 		alert(`Не удалось подключиться: ${error.message}`);
@@ -913,9 +918,6 @@ function handleConnectionLost(data) {
 	console.error('💔 Соединение потеряно после', data.attempts, 'попыток');
 	state.connected = false;
 	updateStatusDisplay(false, '❌ Соединение потеряно');
-	elements.serverStatus.innerHTML =
-		'<span style="color: var(--error);">❌ Соединение потеряно<br><small>Перезагрузите страницу для переподключения</small></span>';
-	elements.confirmConnect.disabled = false;
 }
 
 /**
@@ -942,7 +944,7 @@ function handleUserUpdated(data) {
 
 /**
  * Подключение к серверу и регистрация
- * Использует авто-обнаружение серверов
+ * Использует уже выбранный сервер
  */
 async function connectToServer() {
 	const name = elements.userNameInput.value.trim();
@@ -953,24 +955,23 @@ async function connectToServer() {
 		return;
 	}
 
+	if (!state.selectedServer) {
+		alert('Сначала выберите сервер');
+		return;
+	}
+
 	try {
 		elements.serverStatus.innerHTML =
 			'<span style="color: var(--warning);">🔌 Подключение...</span>';
 		elements.confirmConnect.disabled = true;
 
-		// Автоматическое обнаружение (mDNS → кэш → сканирование)
-		const connected = await discoverAndConnect();
-		if (!connected) {
-			throw new Error('Не удалось подключиться к серверу');
-		}
-
-		// Подключаемся к первому найденному серверу
-		const selectedServer = state.discoveredServers[0];
-		await serverClient.connectToServer(selectedServer.wsUrl);
+		// Подключаемся к выбранному серверу
+		await serverClient.connectToServer(state.selectedServer.wsUrl);
 
 		const user = await serverClient.register(name, avatar);
 		state.user = user;
 		state.connected = true;
+		state.serverUrl = state.selectedServer.wsUrl;
 
 		updateUserProfile(user.name, 'В сети');
 		updateStatusDisplay(true, 'В сети');
@@ -997,15 +998,8 @@ async function connectToServer() {
 		}, 500);
 	} catch (error) {
 		console.error('❌ Ошибка подключения:', error);
-		
-		// Проверяем наличие интернета (только для браузера)
-		if (!serverClient.isTauri && !navigator.onLine) {
-			elements.serverStatus.innerHTML =
-				'<span style="color: var(--error);">❌ Нет подключения к интернету<br><small>Для работы в браузере нужен интернет<br>Или используйте Tauri приложение</small></span>';
-		} else {
-			elements.serverStatus.innerHTML =
-				'<span style="color: var(--error);">❌ Ошибка подключения<br><small>Проверьте что сервер запущен</small></span>';
-		}
+		elements.serverStatus.innerHTML =
+			'<span style="color: var(--error);">❌ Ошибка подключения<br><small>Проверьте что сервер запущен</small></span>';
 		elements.confirmConnect.disabled = false;
 	}
 }
@@ -1104,6 +1098,12 @@ function renderPeers() {
 	if (!elements.peersList) return;
 
 	elements.peersList.innerHTML = '';
+
+	if (!state.connected) {
+		elements.peersList.innerHTML =
+			'<p style="padding: 20px; color: var(--text-tertiary); text-align: center;">Не подключены</p>';
+		return;
+	}
 
 	if (state.peers.length === 0) {
 		elements.peersList.innerHTML =
@@ -1723,19 +1723,21 @@ function updateSendButton() {
  * Настройка событий
  */
 function setupEventListeners() {
-	// Новый UI: клик по статусу открывает диалог подключения
+	// Новый UI: клик по статусу открывает диалог выбора сервера
 	if (elements.connectionStatus) {
 		elements.connectionStatus.addEventListener('click', () => {
-			elements.connectDialog.showModal();
-			elements.userNameInput.focus();
+			if (!state.connected) {
+				openServerSelector();
+			}
 		});
 	}
-	
+
 	// Старый UI (для обратной совместимости)
 	if (elements.status) {
 		elements.status.addEventListener('click', () => {
-			elements.connectDialog.showModal();
-			elements.userNameInput.focus();
+			if (!state.connected) {
+				openServerSelector();
+			}
 		});
 	}
 
@@ -1746,12 +1748,12 @@ function setupEventListeners() {
 	});
 
 	elements.userNameInput.addEventListener('input', () => {
-		elements.confirmConnect.disabled = elements.userNameInput.value.trim().length === 0;
+		updateConnectButton();
 	});
 
-	// Кнопка выбора сервера вручную
-	if (elements.selectServerBtn) {
-		elements.selectServerBtn.addEventListener('click', () => {
+	// Кнопка смены сервера
+	if (elements.changeServerBtn) {
+		elements.changeServerBtn.addEventListener('click', () => {
 			elements.connectDialog.close();
 			openServerSelector();
 		});
@@ -1823,6 +1825,22 @@ function setupEventListeners() {
 	
 	if (elements.menuChangeServer) {
 		elements.menuChangeServer.addEventListener('click', () => {
+			// Если подключены — отключаемся и сбрасываем состояние
+			if (state.connected) {
+				serverClient.disconnect();
+				state.connected = false;
+				state.user = null;
+				state.selectedServer = null;
+				state.peers = [];
+				state.messages = [];
+				state.filteredMessages = [];
+				state.currentPeer = null;
+				updateStatusDisplay(false, 'Не в сети');
+				updateProfileMenuName('', CONFIG.AVATAR_DEFAULT);
+				if (elements.userAvatar) {
+					elements.userAvatar.textContent = CONFIG.AVATAR_DEFAULT;
+				}
+			}
 			openServerSelector();
 			closeProfileMenu();
 		});
