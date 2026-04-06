@@ -584,7 +584,7 @@ mod tests {
         .await;
 
         let req = test::TestRequest::get()
-            .uri("/api/v1/files/download?path=/nonexistent")
+            .uri("/api/v1/files/download?file_id=nonexistent")
             .to_request();
 
         let resp = test::call_service(&app, req).await;
