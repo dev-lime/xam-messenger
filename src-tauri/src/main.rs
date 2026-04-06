@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use futures_util::{SinkExt, StreamExt};
 use tokio_util::sync::CancellationToken;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use tauri::{Emitter, Manager};
 
 /// Информация о найденном сервере
@@ -320,8 +321,12 @@ async fn ws_send(message: String, app: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Отправка бинарных данных через WebSocket (для чанковой передачи файлов)
+/// Принимает base64-строку — декодирует и отправляет как binary frame
 #[tauri::command]
-async fn ws_send_binary(data: Vec<u8>, app: tauri::AppHandle) -> Result<(), String> {
+async fn ws_send_binary(data_b64: String, app: tauri::AppHandle) -> Result<(), String> {
+    let data = BASE64.decode(&data_b64)
+        .map_err(|e| format!("Invalid base64 data: {}", e))?;
+
     let state = app.state::<Mutex<WsState>>();
     let tx = state.lock()
         .map_err(|e| format!("WsState mutex poisoned: {}", e))?

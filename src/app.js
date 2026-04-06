@@ -7,6 +7,7 @@
 
 import {
 	escapeHtml,
+	escapeJsString,
 	formatFileSize,
 	getFileIcon,
 	CONFIG,
@@ -1479,13 +1480,13 @@ function createFilesHtml(files) {
 				 data-filename="${escapeHtml(f.name)}"
 				 data-filesize="${f.size}"
 				 data-filepath="${escapeHtml(f.path || '')}"
-				 onclick="openFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')">
+				 onclick="openFile('${escapeJsString(f.path || '')}', '${escapeJsString(f.name)}')">
 				<span class="file-icon">${getFileIcon(f.name)}</span>
 				<span class="file-info">
 					<span class="file-name-row">
 						<span class="file-name">${escapeHtml(f.name)}</span>
 						<button class="file-download-btn"
-								onclick="event.stopPropagation(); downloadFile('${escapeHtml(f.path || '')}', '${escapeHtml(f.name)}')"
+								onclick="event.stopPropagation(); downloadFile('${escapeJsString(f.path || '')}', '${escapeJsString(f.name)}')"
 								title="Скачать файл">
 							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
 								<path d="M12 5v14M5 12l7 7 7-7"/>

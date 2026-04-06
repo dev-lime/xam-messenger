@@ -17,6 +17,22 @@ export function escapeHtml(text) {
 }
 
 /**
+ * Экранирование строки для безопасного использования в JS-контексте
+ * (внутри onclick, onchange и т.д.)
+ * XSS FIX: экранирует одинарные кавычки которые могут разбить '...'
+ * @param {string} text - Текст для экранирования
+ * @returns {string} Экранированный текст
+ */
+export function escapeJsString(text) {
+    return text
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, '\\x27')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+/**
  * Форматирование размера файла
  * @param {number} bytes - Размер в байтах
  * @returns {string} Отформатированный размер
