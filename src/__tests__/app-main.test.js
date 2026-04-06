@@ -104,7 +104,7 @@ describe('connectToServer', () => {
     });
 });
 
-describe('discoverAndConnect', () => {
+describe('discoverServers', () => {
     test('должен показывать количество найденных серверов', async () => {
         mockServerClient.discoverAllServers.mockResolvedValue([
             { ip: '192.168.1.100', wsUrl: 'ws://...' },

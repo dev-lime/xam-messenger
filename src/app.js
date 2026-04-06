@@ -202,10 +202,10 @@ async function init() {
 // ============================================================================
 
 /**
- * Обнаружение серверов и авто-подключение
+ * Обнаружение серверов
  * @returns {Promise<boolean>} true если серверы найдены
  */
-async function discoverAndConnect() {
+async function discoverServers() {
 	if (state.isDiscovering) return false;
 
 	state.isDiscovering = true;
@@ -2027,7 +2027,7 @@ export {
 	loadUserSettings,
 	saveUserSettings,
 	connectToServer,
-	discoverAndConnect,
+	discoverServers,
 	openServerSelector,
 	refreshServerList,
 	handleNewMessage,
@@ -2055,7 +2055,7 @@ if (typeof module !== 'undefined' && module.exports) {
 		loadUserSettings,
 		saveUserSettings,
 		connectToServer,
-		discoverAndConnect,
+		discoverServers,
 		openServerSelector,
 		refreshServerList,
 		handleNewMessage,

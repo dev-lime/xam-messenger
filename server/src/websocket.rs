@@ -16,6 +16,30 @@ use uuid::Uuid;
 use crate::db;
 use crate::models::{AppState, ChatMessage, ClientMsg, FileUploadState, User};
 
+/// Получить лимит имени из env
+fn max_name_length() -> usize {
+    std::env::var("MAX_NAME_LENGTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50)
+}
+
+/// Получить лимит текста из env
+fn max_message_length() -> usize {
+    std::env::var("MAX_MESSAGE_LENGTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000)
+}
+
+/// Получить лимит имени файла из env
+fn max_file_name_length() -> usize {
+    std::env::var("MAX_FILE_NAME_LENGTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(255)
+}
+
 /// PERF-3: Отправить сообщение конкретному пользователю через targeted delivery
 async fn send_to_user(state: &AppState, user_id: &str, payload: serde_json::Value) {
     let mut senders = state.user_senders.lock().await;
@@ -76,6 +100,20 @@ async fn handle_file_start(
     // Защита от Path Traversal: file_id должен быть UUID
     if Uuid::parse_str(&file_id).is_err() {
         return Err("Invalid file_id format: must be a valid UUID".to_string());
+    }
+
+    // FIX S7: Валидация имени файла
+    if file_name.is_empty() {
+        return Err("File name cannot be empty".to_string());
+    }
+    if file_name.len() > max_file_name_length() {
+        return Err(format!(
+            "File name too long (max {} characters)",
+            max_file_name_length()
+        ));
+    }
+    if file_name.contains('/') || file_name.contains('\\') {
+        return Err("Invalid file name: path separators not allowed".to_string());
     }
 
     // Проверка размера
@@ -258,6 +296,33 @@ async fn handle_register(
     session: &mut actix_ws::Session,
     state: &AppState,
 ) {
+    // FIX S2: Валидация имени (совпадает с handlers.rs)
+    let name = client_msg.name.trim().to_string();
+    if name.is_empty() {
+        log::warn!("⚠️ Пустое имя при регистрации через WebSocket");
+        let _ = session
+            .text(json!({ "type": "error", "error": "Empty name" }).to_string())
+            .await;
+        return;
+    }
+    if name.len() > max_name_length() {
+        log::warn!(
+            "⚠️ Имя слишком длинное: {} символов (макс. {})",
+            name.len(),
+            max_name_length()
+        );
+        let _ = session
+            .text(
+                json!({
+                    "type": "error",
+                    "error": format!("Name too long (max {} characters)", max_name_length())
+                })
+                .to_string(),
+            )
+            .await;
+        return;
+    }
+
     let avatar = if !client_msg.text.is_empty() {
         client_msg.text.clone()
     } else {
@@ -273,7 +338,7 @@ async fn handle_register(
         }
     };
 
-    let user: User = match db::get_or_create_user(&conn, &client_msg.name, &avatar) {
+    let user: User = match db::get_or_create_user(&conn, &name, &avatar) {
         Ok(u) => u,
         Err(e) => {
             log::error!("Failed to create user: {}", e);
@@ -420,17 +485,21 @@ async fn handle_message(
         }
     };
 
-    log::info!("📩 Raw message: {:?}", client_msg);
-    log::info!("📩 Files received: {} items", client_msg.files.len());
-    for (i, f) in client_msg.files.iter().enumerate() {
-        log::info!(
-            "  File {}: name={}, size={}, path={}",
-            i,
-            f.name,
-            f.size,
-            f.path
+    // FIX S1: Валидация длины текста (защита от DoS)
+    if client_msg.text.len() > max_message_length() {
+        log::warn!(
+            "⚠️ Сообщение слишком длинное: {} символов (макс. {})",
+            client_msg.text.len(),
+            max_message_length()
         );
+        return;
     }
+
+    log::info!(
+        "📩 Получено сообщение: text_len={}, files={}",
+        client_msg.text.len(),
+        client_msg.files.len()
+    );
 
     // PERF-1: Получаем соединение из pool
     let conn = match state.db.get() {
@@ -448,12 +517,6 @@ async fn handle_message(
             return;
         }
     };
-
-    log::info!(
-        "📩 Получено сообщение: text={}, files={}",
-        client_msg.text,
-        client_msg.files.len()
-    );
 
     let message = ChatMessage {
         id: Uuid::new_v4().to_string(),
@@ -563,7 +626,14 @@ async fn handle_get_messages(
         }
     };
 
-    match db::get_messages_with_pagination(&conn, limit, before_id.as_deref()) {
+    // FIX S4/B6: Используем chat_peer_id для фильтрации по чату
+    let result = if let Some(ref chat_peer_id) = client_msg.recipient_id {
+        db::get_messages_for_chat(&conn, limit, before_id.as_deref(), chat_peer_id)
+    } else {
+        db::get_messages_with_pagination(&conn, limit, before_id.as_deref())
+    };
+
+    match result {
         Ok((messages, next_before_id, has_more)) => {
             let response = json!({
                 "type": "messages",
