@@ -8,9 +8,6 @@ use crate::db;
 use crate::error::AppError;
 use crate::models::AppState;
 
-/// Максимальная длина имени пользователя
-const MAX_NAME_LENGTH: usize = 50;
-
 /// Запрос регистрации пользователя
 #[derive(Deserialize)]
 pub struct RegisterRequest {
@@ -25,14 +22,19 @@ fn default_avatar() -> String {
 
 /// Регистрация нового пользователя
 pub async fn register(data: web::Data<AppState>, body: web::Json<RegisterRequest>) -> HttpResponse {
+    let max_name = std::env::var("MAX_NAME_LENGTH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+
     let name = body.name.trim();
     if name.is_empty() {
         return HttpResponse::BadRequest().json(json!({"success": false, "error": "Empty name"}));
     }
-    if name.len() > MAX_NAME_LENGTH {
+    if name.len() > max_name {
         return HttpResponse::BadRequest().json(json!({
             "success": false,
-            "error": format!("Name too long (max {} characters)", MAX_NAME_LENGTH)
+            "error": format!("Name too long (max {} characters)", max_name)
         }));
     }
 

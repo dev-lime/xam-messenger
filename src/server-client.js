@@ -221,6 +221,9 @@ class ServerClient {
 		/** @type {number} */
 		this.reconnectAttempts = 0;
 
+		/** @type {number|null} ID таймера переподключения */
+		this.reconnectTimer = null;
+
 		/** @type {string|null} */
 		this.serverUrl = null;
 
@@ -711,7 +714,8 @@ class ServerClient {
 			// Подключаемся к ТОМУ ЖЕ серверу, не запуская обнаружение заново
 			const targetUrl = this.serverUrl;
 
-			setTimeout(() => {
+			this.reconnectTimer = setTimeout(() => {
+				this.reconnectTimer = null;
 				if (this.isTauriWebSocket()) {
 					// В Tauri-режиме используем нативный WebSocket
 					this._connectViaTauri(targetUrl).catch(e => {
@@ -774,6 +778,10 @@ class ServerClient {
 			case MESSAGE_TYPES.FILE_ERROR:
 				console.error('❌ Ошибка файла:', data.error);
 				this.notifyHandlers(MESSAGE_TYPES.FILE_ERROR, data);
+				break;
+
+			case MESSAGE_TYPES.USER_UPDATED:
+				this.notifyHandlers(MESSAGE_TYPES.USER_UPDATED, data);
 				break;
 
 			default:
@@ -1050,6 +1058,11 @@ class ServerClient {
 	 * Отключение от сервера
 	 */
 	disconnect() {
+		// FIX B4: Очищаем запланированный таймер переподключения
+		if (this.reconnectTimer !== null) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
 		if (this.isTauriWebSocket()) {
 			this._closeTauri();
 		} else if (this.ws) {
