@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -105,4 +106,6 @@ pub struct AppState {
     pub max_file_size: usize,
     /// Активные загрузки файлов (chunk assembly)
     pub file_uploads: FileUploads,
+    /// Счётчик WebSocket подключений (для лимита)
+    pub ws_connections: Arc<AtomicUsize>,
 }

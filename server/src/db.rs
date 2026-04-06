@@ -288,11 +288,21 @@ pub fn save_file_metadata(
     name: &str,
     path: &str,
     size: i64,
+    sender_id: &str,
+    recipient_id: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO files (id, name, path, size, sender_id, recipient_id, timestamp) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![id, name, path, size, "", "", Utc::now().timestamp()],
+        params![
+            id,
+            name,
+            path,
+            size,
+            sender_id,
+            recipient_id,
+            Utc::now().timestamp()
+        ],
     )?;
     Ok(())
 }

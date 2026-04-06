@@ -176,6 +176,7 @@ async function init() {
 	serverClient.on('messages', handleMessages);
 	serverClient.on('user_online', handleUserOnline);
 	serverClient.on('user_updated', handleUserUpdated);
+	serverClient.on('connection_lost', handleConnectionLost);
 
 	loadUserSettings();
 	setupEventListeners();
@@ -435,34 +436,44 @@ window.connectToSelectedServer = async (wsUrl) => {
  */
 async function connectToManualServer() {
 	const address = elements.manualServerInput?.value.trim();
-	
+
 	if (!address) {
 		alert('Введите адрес сервера');
 		return;
 	}
-	
+
 	try {
 		// Формируем WebSocket URL
 		let wsUrl = address;
-		if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('http://')) {
+		if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
 			wsUrl = `ws://${address}`;
 		}
-		if (!wsUrl.includes('/ws')) {
-			// Упрощаем: просто добавляем порт и путь
-			const parts = address.split(':');
-			if (parts.length === 1) {
-				wsUrl = `ws://${parts[0]}:8080/ws`;
+
+		// Парсим URL для извлечения host:port
+		let ip, port;
+		try {
+			const parsed = new URL(wsUrl);
+			ip = parsed.hostname;
+			port = parsed.port ? parseInt(parsed.port) : 8080;
+
+			// Если нет пути /ws, добавляем
+			if (!parsed.pathname.endsWith('/ws')) {
+				wsUrl = `ws://${ip}:${port}/ws`;
+			}
+		} catch {
+			// Fallback для невалидных URL
+			const match = wsUrl.match(/^wss?:\/\/([^:]+):?(\d*)/);
+			if (match) {
+				ip = match[1];
+				port = match[2] ? parseInt(match[2]) : 8080;
 			} else {
-				wsUrl = `ws://${parts[0]}:${parts[1]}/ws`;
+				throw new Error('Неверный формат адреса');
 			}
 		}
-		
+
 		await connectToSelectedServer(wsUrl);
-		
+
 		// Кэшируем как ручной сервер
-		const parts = address.split(':');
-		const ip = parts[0];
-		const port = parseInt(parts[1]) || 8080;
 		if (window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke) {
 			invokeTauri('cache_server', { ip, port, source: 'manual' }).catch(console.warn);
 		}
@@ -578,18 +589,16 @@ function openPeerMenu(event, peerId, peerName) {
 
 	// Показываем меню
 	menu.classList.add('open');
-
-	// Закрываем при клике вне
-	const closeMenu = (e) => {
-		if (!menu.contains(e.target)) {
-			closePeerMenu(peerId);
-			document.removeEventListener('click', closeMenu);
-		}
-	};
-	setTimeout(() => {
-		document.addEventListener('click', closeMenu);
-	}, 100);
 }
+
+// Единый обработчик закрытия меню при клике вне — добавляется один раз
+document.addEventListener('click', (e) => {
+	const openMenu = document.querySelector('.peer-context-menu.open');
+	if (openMenu && !openMenu.contains(e.target)) {
+		const peerId = openMenu.dataset.userId;
+		closePeerMenu(peerId);
+	}
+});
 
 /**
  * Закрытие меню контакта
@@ -628,26 +637,29 @@ function handleNewMessage(msg) {
 			return;
 		}
 		// Если локальное сообщение не найдено, но это наше — возможно оно уже добавлено
-		// Проверяем есть ли сообщение с таким же sender_id и timestamp (±1 сек)
+		// Проверяем есть ли сообщение с таким же sender_id, текстом и timestamp (±2 сек)
 		const duplicateIndex = state.messages.findIndex(
-			(m) => m.sender_id === msg.sender_id && 
+			(m) => m.sender_id === msg.sender_id &&
+				   m.text === msg.text &&
 				   m.files?.length === msg.files?.length &&
 				   Math.abs(m.timestamp - msg.timestamp) < 2
 		);
 		if (duplicateIndex !== -1) {
-			console.log('⚠️ Найден дубликат по timestamp, заменяем:', msg.id);
+			console.log('⚠️ Найден дубликат по timestamp+text, заменяем:', msg.id);
 			msg.delivery_status = state.messages[duplicateIndex].delivery_status;
 			state.messages[duplicateIndex] = msg;
-			
+
+			// Заменяем в filteredMessages тоже — по тексту, не по произвольному local_
 			const filteredIndex = state.filteredMessages.findIndex(
-				(m) => m.sender_id === msg.sender_id && 
+				(m) => m.sender_id === msg.sender_id &&
+					   m.text === msg.text &&
 					   m.files?.length === msg.files?.length &&
 					   Math.abs(m.timestamp - msg.timestamp) < 2
 			);
 			if (filteredIndex !== -1) {
 				state.filteredMessages[filteredIndex] = msg;
 			}
-			
+
 			renderMessages(!!state.currentPeer);
 			return;
 		}
@@ -700,7 +712,13 @@ function updateMessageWithReal(msg, localIndex) {
 	msg.delivery_status = state.messages[localIndex].delivery_status;
 	state.messages[localIndex] = msg;
 
-	const filteredIndex = state.filteredMessages.findIndex((m) => m.id.startsWith('local_'));
+	// Заменяем конкретное локальное сообщение в filteredMessages (по тексту и sender)
+	const localMsg = msg; // real message already has correct text/sender
+	const filteredIndex = state.filteredMessages.findIndex(
+		(m) => m.id.startsWith('local_') &&
+			   m.text === localMsg.text &&
+			   m.sender_id === localMsg.sender_id
+	);
 	if (filteredIndex !== -1) {
 		state.filteredMessages[filteredIndex] = msg;
 	}
@@ -832,7 +850,7 @@ function handleMessages(data) {
 	// Фильтруем для текущего чата
 	if (state.currentPeer) {
 		filterMessagesForCurrentPeer();
-		renderMessages(true);
+		renderMessages(true, !!beforeId);
 
 		// Если в текущем чате нет сообщений, продолжаем загрузку
 		if (beforeId && state.filteredMessages.length === 0 && state.hasMoreMessages && nextBeforeId) {
@@ -886,6 +904,18 @@ function handleUserOnline(data) {
 		state.onlineUsers.delete(data.user_id);
 	}
 	renderPeers();
+}
+
+/**
+ * Обработка полной потери соединения (после всех попыток reconnect)
+ */
+function handleConnectionLost(data) {
+	console.error('💔 Соединение потеряно после', data.attempts, 'попыток');
+	state.connected = false;
+	updateStatusDisplay(false, '❌ Соединение потеряно');
+	elements.serverStatus.innerHTML =
+		'<span style="color: var(--error);">❌ Соединение потеряно<br><small>Перезагрузите страницу для переподключения</small></span>';
+	elements.confirmConnect.disabled = false;
 }
 
 /**
@@ -1299,7 +1329,16 @@ function updateLoadMoreButton() {
 /**
  * Рендеринг сообщений
  */
-function renderMessages(useFiltered = false) {
+function renderMessages(useFiltered = false, preserveScroll = false) {
+	const scrollContainer = elements.chatScrollContainer || elements.messagesContainer;
+	let oldScrollHeight, oldScrollTop;
+
+	// Сохраняем позицию скролла если нужно
+	if (preserveScroll) {
+		oldScrollHeight = scrollContainer.scrollHeight;
+		oldScrollTop = scrollContainer.scrollTop;
+	}
+
 	elements.messages.innerHTML = '';
 
 	// Если нет выбранного чата, показываем пустое состояние
@@ -1336,7 +1375,13 @@ function renderMessages(useFiltered = false) {
 		elements.messages.appendChild(messageEl);
 	});
 
-	scrollToBottom();
+	// Восстанавливаем позицию скролла или прокручиваем вниз
+	if (preserveScroll && oldScrollHeight !== undefined) {
+		const newScrollHeight = scrollContainer.scrollHeight;
+		scrollContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+	} else {
+		scrollToBottom();
+	}
 }
 
 /**
@@ -1604,7 +1649,7 @@ window.openFile = async (filepath, filename) => {
 		// Используем реальный URL сервера вместо localhost
 		const fileUrl = filepath.startsWith('http')
 			? filepath
-			: `${serverClient.httpUrl}/files/download?path=${encodeURIComponent(filepath)}`;
+			: `${serverClient.httpUrl}/files/download?file_id=${encodeURIComponent(filepath)}`;
 
 		const response = await fetch(fileUrl);
 		if (!response.ok) {
@@ -1641,7 +1686,7 @@ window.downloadFile = async (filepath, filename) => {
 		// Используем реальный URL сервера вместо localhost
 		const fileUrl = filepath.startsWith('http')
 			? filepath
-			: `${serverClient.httpUrl}/files/download?path=${encodeURIComponent(filepath)}`;
+			: `${serverClient.httpUrl}/files/download?file_id=${encodeURIComponent(filepath)}`;
 
 		const response = await fetch(fileUrl);
 		if (!response.ok) {
@@ -1827,7 +1872,10 @@ function handleFileSelect(e) {
 			alert(`Файл "${file.name}" слишком большой (макс. 100MB)`);
 			return;
 		}
-		attachedFiles.push(file);
+		// Не добавляем дубликаты
+		if (!attachedFiles.some(f => f.name === file.name && f.size === file.size)) {
+			attachedFiles.push(file);
+		}
 	});
 	elements.fileInput.value = '';
 	renderAttachedFiles();

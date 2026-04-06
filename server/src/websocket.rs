@@ -6,6 +6,7 @@ use chrono::Utc;
 use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use std::panic::AssertUnwindSafe;
+use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -72,6 +73,11 @@ async fn handle_file_start(
     let file_name = client_msg.file_name.ok_or("file_name is required")?;
     let file_size = client_msg.file_size.ok_or("file_size is required")?;
 
+    // Защита от Path Traversal: file_id должен быть UUID
+    if Uuid::parse_str(&file_id).is_err() {
+        return Err("Invalid file_id format: must be a valid UUID".to_string());
+    }
+
     // Проверка размера
     if file_size > state.max_file_size as u64 {
         return Err(format!(
@@ -86,6 +92,11 @@ async fn handle_file_start(
     };
 
     let filepath = state.upload_dir.join(&file_id);
+
+    // Дополнительно проверяем что путь внутри upload_dir
+    if !filepath.starts_with(&state.upload_dir) {
+        return Err("Invalid file path".to_string());
+    }
 
     let upload = FileUploadState {
         id: file_id.clone(),
@@ -159,6 +170,8 @@ async fn handle_file_end(
         &upload.name,
         upload.filepath.to_string_lossy().as_ref(),
         upload.size as i64,
+        &upload.sender_id,
+        upload.recipient_id.as_deref().unwrap_or(""),
     )
     .map_err(|e| e.to_string())?;
 
@@ -188,24 +201,6 @@ async fn handle_file_end(
     log::info!("📁 Файл получен: {} ({} bytes)", upload.name, upload.size);
 
     Ok(())
-}
-
-/// Отправить ошибку загрузки файла клиенту
-#[allow(dead_code)]
-async fn send_file_error(session: &mut actix_ws::Session, file_id: &str, error: &str) {
-    // Удаляем неполный файл если существует
-    let _ = tokio::fs::remove_file(format!("/tmp/{}", file_id)).await;
-
-    let _ = session
-        .text(
-            json!({
-                "type": "file_error",
-                "file_id": file_id,
-                "error": error
-            })
-            .to_string(),
-        )
-        .await;
 }
 
 /// Обработка клиентского сообщения с защитой от паник
@@ -741,8 +736,29 @@ pub async fn ws_handler(
     stream: web::Payload,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
     let state = data.get_ref().clone();
-    actix_web::rt::spawn(handle_websocket_session(session, msg_stream, state));
+
+    // Лимит подключений (защита от DoS)
+    const MAX_CONNECTIONS: usize = 100;
+    let current = state.ws_connections.load(Ordering::Relaxed);
+    if current >= MAX_CONNECTIONS {
+        log::warn!(
+            "⚠️ Превышен лимит подключений: {}/{}",
+            current,
+            MAX_CONNECTIONS
+        );
+        return Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "success": false,
+            "error": "Server is at capacity. Too many connections."
+        })));
+    }
+    state.ws_connections.fetch_add(1, Ordering::Relaxed);
+
+    let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
+    let state_spawn = state.clone();
+    actix_web::rt::spawn(async move {
+        handle_websocket_session(session, msg_stream, state_spawn).await;
+        state.ws_connections.fetch_sub(1, Ordering::Relaxed);
+    });
     Ok(response)
 }
