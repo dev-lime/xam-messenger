@@ -70,7 +70,7 @@ server/src/
 ├── handlers.rs    # HTTP обработчики
 ├── websocket.rs   # WebSocket обработчик
 ├── db.rs          # Работа с базой данных
-├── models.rs      # Модели данных
+├── models/        # Модели данных (директория)
 └── error.rs       # Типы ошибок
 ```
 
