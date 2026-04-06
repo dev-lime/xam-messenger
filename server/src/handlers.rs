@@ -142,12 +142,12 @@ pub async fn download_file(
     data: web::Data<AppState>,
     query: web::Query<std::collections::HashMap<String, String>>,
 ) -> HttpResponse {
-    let file_id = match query.get("path") {
+    let file_id = match query.get("file_id") {
         Some(p) => p,
         None => {
             return HttpResponse::BadRequest().json(json!({
                 "success": false,
-                "error": "Path parameter is required"
+                "error": "file_id parameter is required"
             }));
         }
     };

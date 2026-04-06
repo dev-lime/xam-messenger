@@ -26,10 +26,13 @@ const SUBNETS = [
 	'192.168.0.',
 	'192.168.88.',
 	'192.168.2.',
+	'192.168.3.',
 	'192.168.10.',
+	'192.168.31.',
 	'10.0.0.',
 	'10.0.1.',
 	'10.0.2.',
+	'10.0.3.',
 	'172.16.0.',
 	'172.16.1.',
 ];
@@ -111,7 +114,7 @@ function generateLocalNetworkServers() {
  * @returns {string} HTTP API URL
  */
 function wsToHttpUrl(wsUrl) {
-	return wsUrl.replace('ws://', 'http://').replace('/ws', '/api/v1');
+	return wsUrl.replace('ws://', 'http://').replace(/\/ws$/, '/api/v1');
 }
 
 /**
@@ -540,33 +543,6 @@ class ServerClient {
 	}
 
 	/**
-	 * Попытка подключения к конкретному серверу
-	 * @param {string} url - WebSocket URL
-	 * @param {number} timeout - Таймаут в мс
-	 * @returns {Promise<boolean>} true если сервер доступен
-	 */
-	async tryConnect(url, timeout = WS_CONFIG.CONNECTION_TIMEOUT) {
-		return new Promise((resolve) => {
-			const ws = new WebSocket(url);
-			const timer = setTimeout(() => {
-				ws.close();
-				resolve(false);
-			}, timeout);
-
-			ws.onopen = () => {
-				clearTimeout(timer);
-				ws.close();
-				resolve(true);
-			};
-
-			ws.onerror = () => {
-				clearTimeout(timer);
-				resolve(false);
-			};
-		});
-	}
-
-	/**
 	 * Подключение к серверу
 	 * @param {string|null} serverUrl - URL сервера (опционально)
 	 * @returns {Promise<void>}
@@ -732,13 +708,26 @@ class ServerClient {
 			// Увеличиваем задержку с каждой попыткой (exponential backoff)
 			const delay = WS_CONFIG.RECONNECT_DELAY * Math.min(this.reconnectAttempts, 5);
 
+			// Подключаемся к ТОМУ ЖЕ серверу, не запуская обнаружение заново
+			const targetUrl = this.serverUrl;
+
 			setTimeout(() => {
-				this.connect().catch(e => {
-					console.error('❌ Ошибка переподключения:', e);
-				});
+				if (this.isTauriWebSocket()) {
+					// В Tauri-режиме используем нативный WebSocket
+					this._connectViaTauri(targetUrl).catch(e => {
+						console.error('❌ Ошибка переподключения (Tauri):', e);
+						this.attemptReconnect();
+					});
+				} else {
+					this.connect(targetUrl).catch(e => {
+						console.error('❌ Ошибка переподключения:', e);
+					});
+				}
 			}, delay);
 		} else {
 			console.error('❌ Превышено количество попыток переподключения');
+			// Уведомляем UI о полной потере соединения
+			this.notifyHandlers('connection_lost', { attempts: this.reconnectAttempts });
 		}
 	}
 
@@ -872,12 +861,12 @@ class ServerClient {
 	_uint8ToBase64(bytes) {
 		// Разбиваем на чанки чтобы не переполнить стек вызовов
 		const CHUNK = 0x8000; // 32KB
-		let binary = '';
+		const chunks = [];
 		for (let i = 0; i < bytes.length; i += CHUNK) {
 			const sub = bytes.subarray(i, i + CHUNK);
-			binary += String.fromCharCode.apply(null, sub);
+			chunks.push(String.fromCharCode.apply(null, sub));
 		}
-		return btoa(binary);
+		return btoa(chunks.join(''));
 	}
 
 	/**
@@ -1069,6 +1058,7 @@ class ServerClient {
 		}
 		this.serverUrl = null;
 		this.httpUrl = null;
+		this.reconnectAttempts = 0;
 	}
 
 	/**

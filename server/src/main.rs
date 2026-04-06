@@ -143,6 +143,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
     let file_uploads: FileUploads = Arc::new(Mutex::new(HashMap::new()));
+    let ws_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let state = AppState {
         db: db_pool,
@@ -151,6 +152,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         upload_dir: config.upload_dir.clone(),
         max_file_size: config.max_file_size,
         file_uploads,
+        ws_connections,
     };
 
     info!("🚀 Запуск сервера на {}:{}", config.host, config.port);
@@ -248,6 +250,7 @@ pub async fn create_test_state() -> AppState {
     let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
     let file_uploads: FileUploads = Arc::new(Mutex::new(HashMap::new()));
+    let ws_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     AppState {
         db: pool,
@@ -256,6 +259,7 @@ pub async fn create_test_state() -> AppState {
         upload_dir: std::path::PathBuf::from("/tmp/xam-test-files"),
         max_file_size: 100 * 1024 * 1024,
         file_uploads,
+        ws_connections,
     }
 }
 

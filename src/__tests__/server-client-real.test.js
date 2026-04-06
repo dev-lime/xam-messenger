@@ -41,8 +41,8 @@ describe('Standalone функции', () => {
     describe('generateLocalNetworkServers', () => {
         test('генерирует серверы для всех подсетей', () => {
             const servers = generateLocalNetworkServers();
-            // 10 подсетей × 21 IP = 210
-            expect(servers.length).toBe(210);
+            // 13 подсетей × 21 IP = 273
+            expect(servers.length).toBe(273);
         });
 
         test('первый сервер из первой подсети', () => {
