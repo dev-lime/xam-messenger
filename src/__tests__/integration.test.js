@@ -720,7 +720,7 @@ describe('Интеграционные тесты - Краевые случаи'
                 setTimeout(() => reject(new Error('Timeout')), 5000);
             });
 
-            await new Promise((resolve) => {
+            const registeredUser = await new Promise((resolve) => {
                 ws.onmessage = (event) => {
                     const data = JSON.parse(event.data);
                     if (data.type === 'registered') resolve(data.user);
@@ -742,11 +742,10 @@ describe('Интеграционные тесты - Краевые случаи'
                 }));
             }
 
-            ws.close();
-
             // Проверяем что пользователь был зарегистрирован и сообщения были отправлены без ошибок
             expect(registeredUser.name).toBe('UnicodeUser');
             expect(ws.readyState).toBe(WebSocketClient.OPEN);
+            ws.close();
         });
 
         test('должен обрабатывать пустые сообщения', async () => {
