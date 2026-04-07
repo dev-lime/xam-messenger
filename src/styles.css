@@ -536,31 +536,16 @@ body {
 	cursor: pointer;
 	transition: background var(--transition-normal);
 	position: relative;
+	overflow: hidden;
+	user-select: none;
 }
 
 .connection-status:hover {
 	background: var(--bg-tertiary);
 }
 
-.connection-status::after {
-	content: 'Нажмите для подключения';
-	position: absolute;
-	bottom: calc(100% + 8px);
-	left: 50%;
-	transform: translateX(-50%);
-	background: var(--text-primary);
-	color: var(--bg-primary);
-	padding: 4px 8px;
-	border-radius: var(--border-radius-sm);
-	font-size: 11px;
-	white-space: nowrap;
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity var(--transition-normal);
-}
-
-.connection-status:hover::after {
-	opacity: 1;
+.connection-status.pinging {
+	background: var(--bg-tertiary);
 }
 
 .status-indicator {
@@ -569,6 +554,7 @@ body {
 	border-radius: 50%;
 	background: var(--text-tertiary);
 	transition: background var(--transition-normal);
+	flex-shrink: 0;
 }
 
 .status-indicator.online {
@@ -583,6 +569,35 @@ body {
 	font-size: 13px;
 	font-weight: 500;
 	color: var(--text-primary);
+	transition: opacity var(--transition-normal), transform var(--transition-normal);
+}
+
+.status-latency {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--success);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.2s ease-out;
+	white-space: nowrap;
+}
+
+.status-latency.visible {
+	opacity: 1;
+}
+
+.status-latency.hiding {
+	opacity: 0;
+	transition: opacity 0.4s ease-in;
+}
+
+.connection-status.pinging .status-text,
+.connection-status.pinging .status-indicator {
+	opacity: 0;
 }
 
 /* Правая часть шапки */
