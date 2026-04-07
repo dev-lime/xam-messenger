@@ -260,9 +260,7 @@ body {
 	position: absolute;
 	top: 100%;
 	right: 0;
-	background: rgba(255, 255, 255, 0.85);
-	backdrop-filter: blur(20px);
-	-webkit-backdrop-filter: blur(20px);
+	background: var(--bg-primary);
 	border: 1px solid var(--border);
 	border-radius: var(--border-radius-md);
 	box-shadow: 0 8px 24px var(--shadow-lg);
@@ -272,6 +270,14 @@ body {
 	flex-direction: column;
 	overflow: hidden;
 	margin-top: 4px;
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.peer-context-menu {
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+	}
 }
 
 .peer-context-menu.open {
@@ -419,9 +425,7 @@ body {
 	position: absolute;
 	top: -2dvh;
 	left: -2dvh;
-	background: rgba(255, 255, 255, 0.85);
-	backdrop-filter: blur(20px);
-	-webkit-backdrop-filter: blur(20px);
+	background: var(--bg-primary);
 	border: 1px solid var(--border);
 	border-radius: var(--border-radius-md);
 	box-shadow: 0 8px 24px var(--shadow-lg);
@@ -439,6 +443,14 @@ body {
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.profile-context-menu {
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+	}
 }
 
 .profile-context-menu.open {
@@ -869,9 +881,7 @@ body {
 	gap: 12px;
 	padding: 16px 20px;
 	border-top: 1px solid var(--border);
-	background: transparent;
-	backdrop-filter: blur(20px);
-	-webkit-backdrop-filter: blur(20px);
+	background: var(--bg-primary);
 	align-items: center;
 	flex-shrink: 0;
 	transition: all var(--transition-normal);
@@ -881,6 +891,14 @@ body {
 	right: 20px;
 	z-index: 10;
 	border-radius: var(--border-radius-lg);
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.input-area {
+		background: transparent;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+	}
 }
 
 .input-area.no-border {
@@ -998,9 +1016,7 @@ body {
 	flex-wrap: nowrap;
 	gap: 8px;
 	padding: 8px 20px;
-	background: transparent;
-	backdrop-filter: blur(20px);
-	-webkit-backdrop-filter: blur(20px);
+	background: var(--bg-primary);
 	border-top: 1px solid var(--border);
 	border-bottom: 1px solid var(--border);
 	overflow-x: auto;
@@ -1013,6 +1029,14 @@ body {
 	right: 20px;
 	z-index: 9;
 	border-radius: var(--border-radius-lg);
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.attached-files {
+		background: transparent;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+	}
 }
 
 .attached-files:not(:empty) {
@@ -1096,15 +1120,26 @@ body {
 	top: 50%;
 	left: 50%;
 	transform: translate(-50%, -50%);
-	background: rgba(255, 255, 255, 0.85);
-	backdrop-filter: blur(20px);
-	-webkit-backdrop-filter: blur(20px);
+	background: var(--bg-primary);
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.dialog {
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+	}
 }
 
 .dialog::backdrop {
 	background: var(--overlay);
-	backdrop-filter: blur(5px);
-	-webkit-backdrop-filter: blur(5px);
+}
+
+@supports (backdrop-filter: blur(5px)) or (-webkit-backdrop-filter: blur(5px)) {
+	.dialog::backdrop {
+		backdrop-filter: blur(5px);
+		-webkit-backdrop-filter: blur(5px);
+	}
 }
 
 .dialog-header {
