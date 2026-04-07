@@ -27,6 +27,7 @@ const elements = {
 	statusIndicator: document.getElementById('statusIndicator'),
 	statusText: document.getElementById('statusText'),
 	connectionStatus: document.getElementById('connectionStatus'),
+	statusLatency: document.getElementById('statusLatency'),
 	userName: document.getElementById('userName'),
 	userAddress: document.getElementById('userAddress'),
 	userAvatar: document.getElementById('userAvatar'),
@@ -539,6 +540,64 @@ function updateConnectionStatus(connected, statusText) {
 	if (elements.statusText) {
 		elements.statusText.textContent = statusText || (connected ? 'В сети' : 'Не в сети');
 	}
+}
+
+/**
+ * Показывает задержку до сервера при клике на статус
+ */
+async function showServerLatency() {
+	if (!state.connected || !state.selectedServer) return;
+
+	const latencyElement = elements.statusLatency;
+	const connectionStatus = elements.connectionStatus;
+
+	// Предотвращаем повторный клик во время анимации
+	if (connectionStatus.classList.contains('pinging')) return;
+
+	// Добавляем класс pinging для скрытия основного текста
+	connectionStatus.classList.add('pinging');
+
+	// Показываем "измерение..."
+	latencyElement.textContent = '⏳ ...';
+	latencyElement.className = 'status-latency visible';
+
+	const startTime = performance.now();
+
+	try {
+		// Делаем ping серверу
+		const httpUrl = state.selectedServer?.httpUrl || serverClient?.httpUrl;
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 3000);
+
+		try {
+			await fetch(`${httpUrl}/users`, {
+				method: 'GET',
+				signal: controller.signal,
+			});
+			clearTimeout(timer);
+
+			const latency = Math.round(performance.now() - startTime);
+			latencyElement.textContent = `⏱ ${latency} мс`;
+		} catch {
+			latencyElement.textContent = '❌ Нет ответа';
+		} finally {
+			clearTimeout(timer);
+		}
+	} catch (error) {
+		latencyElement.textContent = '❌ Ошибка';
+	}
+
+	// Скрываем через 2 секунды
+	setTimeout(() => {
+		latencyElement.classList.remove('visible');
+		latencyElement.classList.add('hiding');
+
+		// Убираем класс pinging после завершения анимации
+		setTimeout(() => {
+			connectionStatus.classList.remove('pinging');
+			latencyElement.className = 'status-latency';
+		}, 400);
+	}, 2000);
 }
 
 /**
@@ -1225,7 +1284,7 @@ function selectPeer(userId, userName) {
 		item.classList.toggle('active', item.dataset.userId === userId);
 	});
 
-	updateStatusDisplay(true, `Чат с ${userName}`);
+	updateStatusDisplay(true, 'В сети');
 
 	// Фильтруем уже загруженные сообщения для этого чата
 	filterMessagesForCurrentPeer();
@@ -1723,10 +1782,12 @@ function updateSendButton() {
  * Настройка событий
  */
 function setupEventListeners() {
-	// Новый UI: клик по статусу открывает диалог выбора сервера
+	// Новый UI: клик по статусу показывает задержку до сервера
 	if (elements.connectionStatus) {
 		elements.connectionStatus.addEventListener('click', () => {
-			if (!state.connected) {
+			if (state.connected) {
+				showServerLatency();
+			} else {
 				openServerSelector();
 			}
 		});
