@@ -246,7 +246,8 @@ export const test = base.extend<{ users: UsersFixture }>({
 			findUserIdByName,
 
 			getLastMineMessageStatus: async (page: Page) => {
-				const mineMessages = page.locator('.message.mine .message-status');
+				// BUG-12 FIX: app.js использует .read-status, не .message-status
+				const mineMessages = page.locator('.message.mine .read-status');
 				const count = await mineMessages.count();
 				if (count === 0) return '';
 				const last = mineMessages.nth(count - 1);
@@ -256,7 +257,8 @@ export const test = base.extend<{ users: UsersFixture }>({
 			waitForMessageStatus: async (page: Page, statusText: string, timeout = 10000) => {
 				await page.waitForFunction(
 					(status) => {
-						const statuses = document.querySelectorAll('.message.mine .message-status');
+						// BUG-12 FIX: app.js использует .read-status, не .message-status
+						const statuses = document.querySelectorAll('.message.mine .read-status');
 						if (statuses.length === 0) return false;
 						const last = statuses[statuses.length - 1];
 						return last.textContent?.includes(status);
