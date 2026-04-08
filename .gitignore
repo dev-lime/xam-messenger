@@ -32,5 +32,8 @@ npm-debug.log*
 test-results/
 .jest/
 
+# Tests
+e2e-report/
+
 # Qwen
 .qwen/
