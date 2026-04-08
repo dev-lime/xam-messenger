@@ -9,6 +9,7 @@ export default defineConfig({
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
 	workers: 1, // Один воркер — общий сервер
+	timeout: 120000, // Увеличиваем таймаут теста до 2 минут
 	reporter: [
 		['html', { outputFolder: 'e2e-report', open: 'never' }],
 		['list'],

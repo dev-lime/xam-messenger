@@ -97,7 +97,14 @@ const SCAN_CONFIG = {
  */
 function generateLocalNetworkServers() {
 	const servers = [];
+	
+	// FIX: Пропускаем localhost при сканировании чтобы не находить serve LiveReload
+	const isTestEnv = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+	
 	SUBNETS.forEach((subnet) => {
+		// Пропускаем подсети начинающиеся с 127. (localhost)
+		if (subnet.startsWith('127.')) return;
+		
 		for (let i = SCAN_CONFIG.IP_START_MIN; i <= SCAN_CONFIG.IP_START_MAX; i++) {
 			servers.push(`ws://${subnet}${i}:${SCAN_CONFIG.PORT}/ws`);
 		}
@@ -185,11 +192,28 @@ async function pingServer(httpUrl, timeout = 3000) {
 		const timer = setTimeout(() => controller.abort(), timeout);
 
 		try {
-			const response = await fetch(`${httpUrl}/users`, {
+			const response = await fetch(`${httpUrl}/api/v1/users`, {
 				method: 'GET',
 				signal: controller.signal,
 			});
-			return response.ok;
+			
+			// FIX: Проверяем что это действительно XAM сервер
+			// XAM сервер возвращёт JSON с полем success или data
+			if (!response.ok) return false;
+			
+			// Проверяем Content-Type — должен быть JSON
+			const contentType = response.headers.get('content-type');
+			if (!contentType || !contentType.includes('application/json')) {
+				return false; // Это не JSON, скорее всего HTML от serve
+			}
+			
+			// Пробуем распарсить JSON
+			try {
+				const data = await response.json();
+				return data && (data.success !== undefined || data.data !== undefined);
+			} catch {
+				return false; // Не JSON
+			}
 		} finally {
 			// BUG-6 FIX: гарантированно очищаем таймер
 			clearTimeout(timer);
@@ -820,6 +844,8 @@ class ServerClient {
 	 * @throws {Error} При ошибке регистрации
 	 */
 	async register(name, avatar = '👤') {
+		console.log('📝 register():', { name, avatar, httpUrl: this.httpUrl });
+		
 		const response = await fetch(`${this.httpUrl}/register`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
