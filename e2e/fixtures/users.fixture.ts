@@ -188,6 +188,10 @@ export const test = base.extend<{ users: UsersFixture }>({
 				const userA = await fixture.createUser(nameA);
 				const userB = await fixture.createUser(nameB);
 
+				// Даём время WebSocket сообщениям дойти
+				await userA.page.waitForTimeout(1000);
+				await userB.page.waitForTimeout(1000);
+
 				// Ждём пока каждый увидит другого в списке
 				await fixture.waitForPeerInList(userA.page, nameB);
 				await fixture.waitForPeerInList(userB.page, nameA);

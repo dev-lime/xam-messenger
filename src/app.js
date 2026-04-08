@@ -967,7 +967,13 @@ function handleUserOnline(data) {
 	} else {
 		state.onlineUsers.delete(data.user_id);
 	}
-	renderPeers();
+	// BUG-11 FIX: при изменении онлайн-статуса обновляем список peers с сервера
+	// т.к. мог появиться новый пользователь которого нет в state.peers
+	if (state.connected) {
+		loadPeers();
+	} else {
+		renderPeers();
+	}
 }
 
 /**
