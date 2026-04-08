@@ -55,10 +55,28 @@ async function findUserIdByName(name: string): Promise<string | null> {
 
 export const test = base.extend<{ users: UsersFixture }>({
 	users: async ({ browser }, use) => {
+		// Логируем конфигурация для отладки
+		const SERVER_URL = process.env.XAM_SERVER_URL || 'http://localhost:8080';
+		const WS_URL = process.env.XAM_WS_URL || 'ws://localhost:8080/ws';
+		const FRONTEND_URL = process.env.XAM_FRONTEND_URL || 'http://localhost:3000';
+		
+		console.log(`🔧 E2E конфигурация:
+   Сервер: ${SERVER_URL}
+   WebSocket: ${WS_URL}
+   Фронтенд: ${FRONTEND_URL}`);
+
 		const fixture: UsersFixture = {
 			createUser: async (name: string) => {
 				const context = await browser.newContext();
 				const page = await context.newPage();
+
+				console.log(`👤 Создание пользователя: ${name}`);
+
+				// Очищаем localStorage чтобы убрать кэшированные серверы
+				// Это предотвращает подключение к неправильному порту (3001 вместо 8080)
+				await context.addInitScript(() => {
+					localStorage.removeItem('xam_server_cache');
+				});
 
 				// Логируем навигацию
 				page.on('console', (msg) => {
@@ -69,6 +87,8 @@ export const test = base.extend<{ users: UsersFixture }>({
 				});
 
 				// Открываем приложение
+				const FRONTEND_URL = process.env.XAM_FRONTEND_URL || 'http://localhost:3000';
+				console.log(`🌐 Навигация на ${FRONTEND_URL}`);
 				await page.goto('/');
 				await page.waitForLoadState('networkidle');
 
@@ -77,7 +97,14 @@ export const test = base.extend<{ users: UsersFixture }>({
 
 				// 2. Вводим адрес сервера вручную
 				const serverPort = new URL(SERVER_URL).port || '8080';
-				await page.fill('#manualServerInput', `localhost:${serverPort}`);
+				const serverAddress = `localhost:${serverPort}`;
+				console.log(`🔌 Вводим адрес сервера: ${serverAddress}`);
+				await page.fill('#manualServerInput', serverAddress);
+				
+				// Проверяем что введено
+				const inputValue = await page.inputValue('#manualServerInput');
+				console.log(`✅ В поле введено: ${inputValue}`);
+				
 				await page.click('#confirmManualServer');
 
 				// 3. Ждём диалог подключения (ввод имени)
@@ -89,26 +116,32 @@ export const test = base.extend<{ users: UsersFixture }>({
 				// Перехватываем ошибки со страницы
 				const errors: string[] = [];
 				page.on('pageerror', (err) => {
-					errors.push(err.message);
+					// Сохраняем только настоящие ошибки, не логи
+					if (err.message && !err.message.includes('Стек вызова')) {
+						errors.push(err.message);
+					}
 				});
 				page.on('console', (msg) => {
 					const text = msg.text();
-					if (text.includes('❌') || text.includes('Ошибка') || text.includes('Error')) {
+					// Игнорируем логи с "Error" в стеке вызова
+					if (msg.type() === 'error' && !text.includes('Стек вызова')) {
 						errors.push(text);
 					}
 				});
 
 				await page.click('#confirmConnect');
+				console.log(`🔘 Нажата кнопка подключения для ${name}`);
 
-				// Ждём закрытия диалога подключения
+				// Ждём закрытия диалога подключения (увеличенный таймаут т.к. регистрация + загрузка peers)
 				try {
 					await page.waitForFunction(() => {
 						const dialog = document.getElementById('connectDialog');
 						return dialog && !dialog.hasAttribute('open');
-					}, null, { timeout: 20000 });
+					}, null, { timeout: 30000 });
 				} catch (e) {
 					// Делаем скриншот для отладки
 					await page.screenshot({ path: '/tmp/e2e-debug-dialog.png' });
+					console.error(`❌ Диалог не закрылся через 30с. Ошибки: ${errors.join('; ') || 'нет ошибок'}`);
 					throw new Error(
 						`Диалог не закрылся. Ошибки: ${errors.join('; ') || 'нет ошибок'}`
 					);

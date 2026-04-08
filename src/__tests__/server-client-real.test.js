@@ -19,6 +19,9 @@ const mockFetchResponse = (data, ok = true) => {
     return Promise.resolve({
         ok,
         status: ok ? 200 : 500,
+        headers: {
+            get: (name) => name === 'content-type' ? 'application/json' : null,
+        },
         json: () => Promise.resolve(data),
     });
 };
@@ -95,7 +98,7 @@ describe('Standalone функции', () => {
         });
 
         test('возвращает true при ok response', async () => {
-            fetch.mockResolvedValueOnce(mockFetchResponse({}));
+            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true }));
             const p = pingServer('http://localhost/api');
             expect(await p).toBe(true);
         });
@@ -111,7 +114,7 @@ describe('Standalone функции', () => {
         });
 
         test('очищает таймер при успехе (BUG-6 FIX)', async () => {
-            fetch.mockResolvedValueOnce(mockFetchResponse({}));
+            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true }));
             const spy = jest.spyOn(global, 'clearTimeout');
             await pingServer('http://localhost/api');
             expect(spy).toHaveBeenCalled();
@@ -458,7 +461,7 @@ describe('ServerClient (реальный класс)', () => {
 
     describe('checkServerAvailability', () => {
         test('возвращает true при ok', async () => {
-            fetch.mockResolvedValueOnce(mockFetchResponse({}));
+            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true }));
             const result = await client.checkServerAvailability('http://localhost/api');
             expect(result).toBe(true);
         });

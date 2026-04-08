@@ -1,16 +1,16 @@
 /**
  * Global setup для E2E тестов
- * Запускает статический HTTP сервер для фронтенда.
- * Rust сервер предполагается уже запущенным (или запускается отдельно).
+ * Запускает Rust сервер и статический HTTP сервер для фронтенда.
  */
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
-import * as fs from 'fs';
 
+const SERVER_PORT = process.env.XAM_SERVER_PORT || '8080';
 const FRONTEND_PORT = process.env.XAM_FRONTEND_PORT || '3000';
-const SRC_DIR = path.resolve(__dirname, '../src');
+const SERVER_DIR = path.resolve(__dirname, '../server');
 
 interface ServerContext {
+	serverProcess: ChildProcess | null;
 	frontendProcess: ChildProcess | null;
 }
 
@@ -30,27 +30,45 @@ async function waitForServer(url: string, timeout = 30000): Promise<boolean> {
 
 export default async function globalSetup(): Promise<ServerContext> {
 	const context: ServerContext = {
+		serverProcess: null,
 		frontendProcess: null,
 	};
 
-	// Проверяем что сервер уже запущен
-	const serverUrl = process.env.XAM_SERVER_URL || 'http://localhost:8080';
-	try {
-		const res = await fetch(`${serverUrl}/api/v1/users`, { signal: AbortSignal.timeout(3000) });
-		if (!res.ok) {
-			console.warn(`⚠️  Сервер ${serverUrl} не отвечает. Запустите сервер перед тестами.`);
-		} else {
-			console.log('✅ Сервер доступен');
+	// Запускаем Rust сервер
+	console.log(`🚀 Запуск Rust сервера на порту ${SERVER_PORT}...`);
+	context.serverProcess = spawn(
+		'cargo',
+		['run', '--manifest-path', path.join(SERVER_DIR, 'Cargo.toml')],
+		{
+			cwd: SERVER_DIR,
+			env: { ...process.env, XAM_PORT: SERVER_PORT },
+			stdio: ['pipe', 'pipe', 'pipe'],
 		}
-	} catch {
-		console.warn(`⚠️  Сервер ${serverUrl} недоступен. Запустите сервер перед тестами.`);
+	);
+
+	// Логируем вывод сервера для отладки
+	context.serverProcess.stdout?.on('data', (data) => {
+		const text = data.toString().trim();
+		if (text) console.log(`[SERVER] ${text}`);
+	});
+	context.serverProcess.stderr?.on('data', (data) => {
+		const text = data.toString().trim();
+		if (text) console.error(`[SERVER ERROR] ${text}`);
+	});
+
+	// Ждём пока сервер запустится
+	const serverUrl = `http://localhost:${SERVER_PORT}`;
+	const serverReady = await waitForServer(`${serverUrl}/api/v1/users`);
+	if (!serverReady) {
+		throw new Error(`Rust сервер не запустился на порту ${SERVER_PORT}`);
 	}
+	console.log('✅ Rust сервер готов');
 
 	// Запускаем static HTTP сервер для фронтенда
-	console.log(`🌐 Запуск фронтенд-сервера на порту ${FRONTEND_PORT}...`);
+	console.log(`🌐 Запуск фронтенд-сервера на порту ${FRONTEND_PORT} из директории src/...`);
 	context.frontendProcess = spawn(
 		'npx',
-		['serve', 'src', '-l', FRONTEND_PORT, '-s', '--no-clipboard'],
+		['serve', 'src', '-l', FRONTEND_PORT, '-s', '--no-clipboard'],  // -s = single page app
 		{
 			cwd: path.resolve(__dirname, '..'),
 			stdio: ['pipe', 'pipe', 'pipe'],
@@ -63,8 +81,9 @@ export default async function globalSetup(): Promise<ServerContext> {
 	}
 	console.log('✅ Фронтенд готов');
 
+	// Устанавливаем环境变量 для тестов
 	process.env.XAM_SERVER_URL = serverUrl;
-	process.env.XAM_WS_URL = `${serverUrl.replace('http', 'ws')}/ws`;
+	process.env.XAM_WS_URL = `ws://localhost:${SERVER_PORT}/ws`;
 	process.env.XAM_FRONTEND_URL = `http://localhost:${FRONTEND_PORT}`;
 
 	return context;
