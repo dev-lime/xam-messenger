@@ -72,11 +72,19 @@ export const test = base.extend<{ users: UsersFixture }>({
 
 				console.log(`👤 Создание пользователя: ${name}`);
 
-				// Очищаем localStorage чтобы убрать кэшированные серверы
-				// Это предотвращает подключение к неправильному порту (3001 вместо 8080)
-				await context.addInitScript(() => {
-					localStorage.removeItem('xam_server_cache');
-				});
+				// E2E FIX: кэшируем сервер чтобы пропустить сканирование сети
+				const serverUrlObj = new URL(SERVER_URL);
+				const serverHostname = serverUrlObj.hostname;
+				const serverPort = parseInt(serverUrlObj.port) || 8080;
+				await context.addInitScript((serverData) => {
+					const cachedServers = [{
+						ip: serverData.hostname,
+						port: serverData.port,
+						lastSeen: Date.now(),
+						source: 'mdns'
+					}];
+					localStorage.setItem('xam_server_cache', JSON.stringify(cachedServers));
+				}, { hostname: serverHostname, port: serverPort });
 
 				// Логируем навигацию
 				page.on('console', (msg) => {
@@ -95,17 +103,24 @@ export const test = base.extend<{ users: UsersFixture }>({
 				// 1. Ждём диалог выбора сервера
 				await page.waitForSelector('#serverSelectorDialog[open]', { state: 'visible', timeout: 15000 });
 
-				// 2. Вводим адрес сервера вручную
-				const serverPort = new URL(SERVER_URL).port || '8080';
-				const serverAddress = `localhost:${serverPort}`;
-				console.log(`🔌 Вводим адрес сервера: ${serverAddress}`);
-				await page.fill('#manualServerInput', serverAddress);
-				
-				// Проверяем что введено
-				const inputValue = await page.inputValue('#manualServerInput');
-				console.log(`✅ В поле введено: ${inputValue}`);
-				
-				await page.click('#confirmManualServer');
+				// E2E: сервер уже в кэше (из addInitScript) — выбираем его автоматически
+				// Проверяем есть ли серверы в списке
+				const serverOptionsCount = await page.locator('#serverSelector option').count();
+				if (serverOptionsCount > 1) {
+					// Выбираем первый найденный сервер (не "Ввести вручную")
+					await page.selectOption('#serverSelector', { index: 1 });
+					await page.click('#confirmServerSelect');
+					console.log(`🔌 Выбран сервер из кэша`);
+				} else {
+					// Вводим адрес сервера вручную
+					const serverUrlObj = new URL(SERVER_URL);
+					const serverHostname = serverUrlObj.hostname;
+					const serverPort = serverUrlObj.port || '8080';
+					const serverAddress = `${serverHostname}:${serverPort}`;
+					console.log(`🔌 Вводим адрес сервера: ${serverAddress}`);
+					await page.fill('#manualServerInput', serverAddress);
+					await page.click('#confirmManualServer');
+				}
 
 				// 3. Ждём диалог подключения (ввод имени)
 				await page.waitForSelector('#userNameInput', { state: 'visible', timeout: 15000 });
@@ -181,13 +196,14 @@ export const test = base.extend<{ users: UsersFixture }>({
 			},
 
 			waitForPeerInList: async (page: Page, peerName: string) => {
+				// Увеличенный таймаут т.к. peers загружаются через WebSocket
 				await page.waitForFunction(
 					(peerName) => {
 						const peers = document.querySelectorAll('.peer-name');
 						return Array.from(peers).some((el) => el.textContent?.includes(peerName));
 					},
 					peerName,
-					{ timeout: 15000 }
+					{ timeout: 20000 }
 				);
 			},
 

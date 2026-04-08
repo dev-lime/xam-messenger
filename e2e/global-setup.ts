@@ -28,11 +28,24 @@ async function waitForServer(url: string, timeout = 30000): Promise<boolean> {
 	return false;
 }
 
+/**
+ * Извлекает локальный IP из вывода сервера
+ * Сервер логирует: └─ http://172.19.203.221:8080
+ */
+function extractServerIp(output: string): string | null {
+	// Ищем паттерн http://<ip>:<port>
+	const match = output.match(/└─ http:\/\/([^:]+):/);
+	return match ? match[1] : null;
+}
+
 export default async function globalSetup(): Promise<ServerContext> {
 	const context: ServerContext = {
 		serverProcess: null,
 		frontendProcess: null,
 	};
+
+	// Буфер для хранения вывода сервера (чтобы извлечь IP)
+	let serverOutput = '';
 
 	// Запускаем Rust сервер
 	console.log(`🚀 Запуск Rust сервера на порту ${SERVER_PORT}...`);
@@ -41,7 +54,7 @@ export default async function globalSetup(): Promise<ServerContext> {
 		['run', '--manifest-path', path.join(SERVER_DIR, 'Cargo.toml')],
 		{
 			cwd: SERVER_DIR,
-			env: { ...process.env, XAM_PORT: SERVER_PORT },
+			env: { ...process.env, XAM_PORT: SERVER_PORT, XAM_SKIP_RATE_LIMIT: '1' },
 			stdio: ['pipe', 'pipe', 'pipe'],
 		}
 	);
@@ -49,20 +62,35 @@ export default async function globalSetup(): Promise<ServerContext> {
 	// Логируем вывод сервера для отладки
 	context.serverProcess.stdout?.on('data', (data) => {
 		const text = data.toString().trim();
-		if (text) console.log(`[SERVER] ${text}`);
+		if (text) {
+			console.log(`[SERVER] ${text}`);
+			serverOutput += text;
+		}
 	});
 	context.serverProcess.stderr?.on('data', (data) => {
 		const text = data.toString().trim();
-		if (text) console.error(`[SERVER ERROR] ${text}`);
+		if (text) {
+			console.error(`[SERVER ERROR] ${text}`);
+			serverOutput += text;
+		}
 	});
 
 	// Ждём пока сервер запустится
-	const serverUrl = `http://localhost:${SERVER_PORT}`;
-	const serverReady = await waitForServer(`${serverUrl}/api/v1/users`);
+	// Сначала пробуем через localhost (для проверки готовности)
+	const localhostUrl = `http://localhost:${SERVER_PORT}`;
+	const serverReady = await waitForServer(`${localhostUrl}/api/v1/users`);
 	if (!serverReady) {
 		throw new Error(`Rust сервер не запустился на порту ${SERVER_PORT}`);
 	}
 	console.log('✅ Rust сервер готов');
+
+	// Для Playwright Chromium используем localhost — это работает надёжнее
+	const useIp = 'localhost';
+	const serverUrl = `http://${useIp}:${SERVER_PORT}`;
+	const wsUrl = `ws://${useIp}:${SERVER_PORT}/ws`;
+
+	console.log(`📡 IP сервера: ${useIp}`);
+	console.log(`🔗 HTTP: ${serverUrl}, WS: ${wsUrl}`);
 
 	// Запускаем static HTTP сервер для фронтенда
 	console.log(`🌐 Запуск фронтенд-сервера на порту ${FRONTEND_PORT} из директории src/...`);
@@ -81,9 +109,10 @@ export default async function globalSetup(): Promise<ServerContext> {
 	}
 	console.log('✅ Фронтенд готов');
 
-	// Устанавливаем环境变量 для тестов
+	// Устанавливаем переменные окружения для тестов
+	// Используем реальный IP сервера вместо localhost
 	process.env.XAM_SERVER_URL = serverUrl;
-	process.env.XAM_WS_URL = `ws://localhost:${SERVER_PORT}/ws`;
+	process.env.XAM_WS_URL = wsUrl;
 	process.env.XAM_FRONTEND_URL = `http://localhost:${FRONTEND_PORT}`;
 
 	return context;
