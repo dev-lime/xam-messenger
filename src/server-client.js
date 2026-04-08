@@ -845,35 +845,51 @@ class ServerClient {
 	 */
 	async register(name, avatar = '👤') {
 		console.log('📝 register():', { name, avatar, httpUrl: this.httpUrl });
-		
-		const response = await fetch(`${this.httpUrl}/register`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, avatar }),
-		});
 
-		// BUG-9 FIX: проверяем HTTP статус перед парсингом JSON
-		if (!response.ok) {
-			let errorMsg = `Registration failed (HTTP ${response.status})`;
-			try {
-				const errorBody = await response.json();
-				if (errorBody.error) {
-					errorMsg = errorBody.error;
+		const controller = new AbortController();
+		const timer = setTimeout(() => {
+			controller.abort(new Error('Registration request timed out (30s)'));
+		}, 30000); // 30 секунд
+
+		try {
+			const body = JSON.stringify({ name, avatar });
+			console.log('📤 Отправляю fetch:', `${this.httpUrl}/register`, body);
+
+			const response = await fetch(`${this.httpUrl}/register`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body,
+				signal: controller.signal,
+			});
+
+			console.log('📥 Ответ от сервера:', response.status);
+
+			// BUG-9 FIX: проверяем HTTP статус перед парсингом JSON
+			if (!response.ok) {
+				let errorMsg = `Registration failed (HTTP ${response.status})`;
+				try {
+					const errorBody = await response.json();
+					if (errorBody.error) {
+						errorMsg = errorBody.error;
+					}
+				} catch {
+					// Если тело не JSON — используем статус по умолчанию
 				}
-			} catch {
-				// Если тело не JSON — используем статус по умолчанию
+				throw new Error(errorMsg);
 			}
-			throw new Error(errorMsg);
-		}
 
-		const result = await response.json();
+			const result = await response.json();
+			console.log('✅ Результат регистрации:', result);
 
-		if (result.success) {
-			this.user = result.data;
-			this.send({ type: MESSAGE_TYPES.REGISTER, name, avatar });
-			return result.data;
-		} else {
-			throw new Error(result.error || 'Registration failed');
+			if (result.success) {
+				this.user = result.data;
+				this.send({ type: MESSAGE_TYPES.REGISTER, name, avatar });
+				return result.data;
+			} else {
+				throw new Error(result.error || 'Registration failed');
+			}
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 
@@ -882,9 +898,18 @@ class ServerClient {
 	 * @returns {Promise<Object[]>} Список пользователей
 	 */
 	async getUsers() {
-		const response = await fetch(`${this.httpUrl}/users`);
-		const result = await response.json();
-		return result.data || [];
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), 10000);
+
+		try {
+			const response = await fetch(`${this.httpUrl}/users`, {
+				signal: controller.signal,
+			});
+			const result = await response.json();
+			return result.data || [];
+		} finally {
+			clearTimeout(timer);
+		}
 	}
 
 	/**

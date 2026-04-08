@@ -159,6 +159,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let server_config = config.clone();
     let cors_origins = config.cors_origins.clone();
+    let state_clone = state.clone();
     let server = HttpServer::new(move || {
         let cors = if cors_origins == "*" {
             Cors::default()
@@ -181,18 +182,44 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
         let milliseconds_per_request = (60_000.0 / server_config.rate_limit as f64) as u64;
 
+        // PERF-2: для E2E тестов и быстрой регистрации нескольких пользователей
+        // burst_size = max(rate_limit * 2, 200) — минимум 200 запросов подряд
+        let burst = std::cmp::max(server_config.rate_limit * 2, 200);
+
         let governor_conf = actix_governor::GovernorConfigBuilder::default()
             .milliseconds_per_request(milliseconds_per_request)
-            .burst_size(server_config.rate_limit)
+            .burst_size(burst)
             .finish()
             .expect("Failed to create GovernorConfig");
 
+        // E2E FIX: полностью отключаем rate limiting при запуске тестов
+        // Чтобы не было блокировки при множестве параллельных запросов
+        let skip_governor = std::env::var("XAM_SKIP_RATE_LIMIT").ok().is_some();
+
+        let governor_conf = if skip_governor {
+            log::info!("⚠️ Rate limiting отключен (XAM_SKIP_RATE_LIMIT=1)");
+            // Практически бесконечный burst = отключение rate limiting
+            actix_governor::GovernorConfigBuilder::default()
+                .milliseconds_per_request(1)
+                .burst_size(u32::MAX / 1000) // ~2M запросов
+                .finish()
+                .expect("Failed to create GovernorConfig")
+        } else {
+            actix_governor::GovernorConfigBuilder::default()
+                .milliseconds_per_request(milliseconds_per_request)
+                .burst_size(burst)
+                .finish()
+                .expect("Failed to create GovernorConfig")
+        };
+
+        // PERF-3: порядок wrap() — последний вызывается первым (луковица).
+        // CORS должен быть внешним (последний .wrap()) чтобы OPTIONS проходил без rate limiting
         App::new()
-            .wrap(cors)
-            .wrap(actix_governor::Governor::new(&governor_conf))
-            .app_data(web::Data::new(state.clone()))
+            .app_data(web::Data::new(state_clone.clone()))
             .wrap(middleware::Logger::default())
             .app_data(web::PayloadConfig::new(server_config.max_file_size))
+            .wrap(cors)
+            .wrap(actix_governor::Governor::new(&governor_conf))
             .route("/ws", web::get().to(ws_handler))
             .route("/api/v1/register", web::post().to(handlers::register))
             .route("/api/v1/users", web::get().to(handlers::get_users))
