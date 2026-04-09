@@ -82,6 +82,8 @@ export const CONFIG = {
         USER_SETTINGS: 'xam-user-settings',
         LAST_MESSAGE_ID: 'xam-last-message-id',
         HAS_MORE: 'xam-has-more',
+        SESSION_USER: 'xam-session-user',
+        SESSION_SERVER: 'xam-session-server',
     },
 };
 

@@ -195,10 +195,39 @@ async function init() {
 		elements.profileMenuAvatar.textContent = userSettings?.avatar || CONFIG.AVATAR_DEFAULT;
 	}
 
-	// Сначала показываем выбор сервера
-	setTimeout(() => {
-		openServerSelector();
-	}, 300);
+	// Проверяем сохранённую сессию для восстановления
+	const savedUser = localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_USER);
+	const savedServer = localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
+
+	if (savedUser && savedServer) {
+		try {
+			const user = JSON.parse(savedUser);
+			const server = JSON.parse(savedServer);
+
+			// Восстанавливаем сессию — пропускаем диалоги, сразу подключаемся
+			state.selectedServer = server;
+			elements.userNameInput.value = user.name;
+
+			// Показываем статус подключения
+			if (elements.serverStatus) {
+				elements.serverStatus.innerHTML =
+					'<span style="color: var(--warning);">🔄 Восстановление сессии...</span>';
+			}
+
+			await connectToServer();
+		} catch (e) {
+			console.warn('⚠️ Не удалось восстановить сессию:', e);
+			// Сессия битая — начинаем сначала
+			setTimeout(() => {
+				openServerSelector();
+			}, 300);
+		}
+	} else {
+		// Нет сохранённой сессии — начинаем с выбора сервера
+		setTimeout(() => {
+			openServerSelector();
+		}, 300);
+	}
 }
 
 // ============================================================================
@@ -992,6 +1021,9 @@ function handleConnectionLost(data) {
 	console.error('💔 Соединение потеряно после', data.attempts, 'попыток');
 	state.connected = false;
 	updateStatusDisplay(false, '❌ Соединение потеряно');
+	// Очищаем сохранённую сессию
+	localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_USER);
+	localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
 }
 
 /**
@@ -1046,6 +1078,10 @@ async function connectToServer() {
 		state.user = user;
 		state.connected = true;
 		state.serverUrl = state.selectedServer.wsUrl;
+
+		// Сохраняем сессию для восстановления при перезагрузке
+		localStorage.setItem(CONFIG.STORAGE_KEYS.SESSION_USER, JSON.stringify(state.user));
+		localStorage.setItem(CONFIG.STORAGE_KEYS.SESSION_SERVER, JSON.stringify(state.selectedServer));
 
 		updateUserProfile(user.name, 'В сети');
 		updateStatusDisplay(true, 'В сети');
@@ -1899,8 +1935,20 @@ function setupEventListeners() {
 	
 	if (elements.menuLogout) {
 		elements.menuLogout.addEventListener('click', () => {
-			// TODO: Реализовать выход
-			console.log('Выход...');
+			if (state.connected) {
+				serverClient.disconnect();
+			}
+			state.connected = false;
+			state.user = null;
+			state.selectedServer = null;
+			state.peers = [];
+			state.messages = [];
+			state.filteredMessages = [];
+			state.currentPeer = null;
+			updateStatusDisplay(false, 'Не в сети');
+			// Очищаем сохранённую сессию
+			localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_USER);
+			localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
 			closeProfileMenu();
 		});
 	}
@@ -1922,6 +1970,9 @@ function setupEventListeners() {
 				if (elements.userAvatar) {
 					elements.userAvatar.textContent = CONFIG.AVATAR_DEFAULT;
 				}
+				// Очищаем сохранённую сессию
+				localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_USER);
+				localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
 			}
 			openServerSelector();
 			closeProfileMenu();
