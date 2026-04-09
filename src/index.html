@@ -197,6 +197,70 @@
         </div>
     </dialog>
 
+    <!-- Диалог настроек приложения -->
+    <dialog id="appSettingsDialog" class="dialog">
+        <div class="dialog-header">
+            <h3>Настройки</h3>
+            <button class="dialog-close" id="closeAppSettings" type="button">×</button>
+        </div>
+        <div class="dialog-content">
+            <!-- Уведомления -->
+            <div class="settings-section">
+                <h4>Уведомления</h4>
+                <label class="setting-toggle">
+                    <span>Звуковые уведомления</span>
+                    <input type="checkbox" id="settingSound" checked>
+                </label>
+                <label class="setting-toggle">
+                    <span>Всплывающие уведомления</span>
+                    <input type="checkbox" id="settingDesktopNotifications">
+                </label>
+            </div>
+
+            <!-- Внешний вид -->
+            <div class="settings-section">
+                <h4>Внешний вид</h4>
+                <div class="form-group">
+                    <label>Размер шрифта: <span id="fontSizeValue">14px</span></label>
+                    <input type="range" id="settingFontSize" min="12" max="20" value="14">
+                </div>
+                <label class="setting-toggle">
+                    <span>Показывать пользовательские аватары</span>
+                    <input type="checkbox" id="settingAvatars" checked>
+                </label>
+                <label class="setting-toggle">
+                    <span>Показывать время сообщений</span>
+                    <input type="checkbox" id="settingTimestamps" checked>
+                </label>
+                <div class="form-group" style="margin-top: 12px;">
+                    <label>Тема оформления</label>
+                    <select id="settingTheme">
+                        <option value="light" selected>Светлая</option>
+                        <option value="dark">Тёмная</option>
+                        <option value="system">Системная</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Данные -->
+            <div class="settings-section">
+                <h4>Данные</h4>
+                <label class="setting-toggle">
+                    <span>Автозагрузка файлов</span>
+                    <input type="checkbox" id="settingAutoDownload" checked>
+                </label>
+                <div style="display: flex; gap: 8px; margin-top: 12px;">
+                    <button class="btn" id="clearCacheBtn">Очистить кэш</button>
+                    <button class="btn" id="exportDataBtn">Экспорт данных</button>
+                </div>
+            </div>
+        </div>
+        <div class="dialog-actions">
+            <button class="btn" id="resetAppSettings">Сбросить</button>
+            <button class="btn btn-primary" id="saveAppSettings">Готово</button>
+        </div>
+    </dialog>
+
     <!-- Клиент -->
     <script type="module" src="server-client.js"></script>
     <script type="module" src="app.js"></script>
