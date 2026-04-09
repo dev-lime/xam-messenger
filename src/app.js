@@ -101,6 +101,9 @@ let attachedFiles = [];
 let serverClient = null;
 let userSettings = { name: '', avatar: CONFIG.AVATAR_DEFAULT };
 
+// Debounce таймер для loadPeers (защита от лавины запросов при user_online событиях)
+let loadPeersTimer = null;
+
 // ============================================================================
 // Утилиты
 // ============================================================================
@@ -1144,16 +1147,22 @@ function clearMessageInput() {
 // ============================================================================
 
 /**
- * Загрузка списка контактов
+ * Загрузка списка контактов (debounce 2с для защиты от лавины запросов)
  */
-async function loadPeers() {
-	try {
-		const users = await serverClient.getUsers();
-		state.peers = users.filter((u) => u.id !== state.user?.id);
-		renderPeers();
-	} catch (error) {
-		console.error('❌ Загрузка пользователей:', error);
+function loadPeers() {
+	if (loadPeersTimer !== null) {
+		clearTimeout(loadPeersTimer);
 	}
+	loadPeersTimer = setTimeout(async () => {
+		loadPeersTimer = null;
+		try {
+			const users = await serverClient.getUsers();
+			state.peers = users.filter((u) => u.id !== state.user?.id);
+			renderPeers();
+		} catch (error) {
+			console.error('❌ Загрузка пользователей:', error);
+		}
+	}, 2000);
 }
 
 /**

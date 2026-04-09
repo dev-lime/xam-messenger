@@ -192,7 +192,7 @@ async function pingServer(httpUrl, timeout = 3000) {
 		const timer = setTimeout(() => controller.abort(), timeout);
 
 		try {
-			const response = await fetch(`${httpUrl}/api/v1/users`, {
+			const response = await fetch(`${httpUrl}/users`, {
 				method: 'GET',
 				signal: controller.signal,
 			});
@@ -426,7 +426,7 @@ class ServerClient {
 			ip: s.ip,
 			port: s.port,
 			wsUrl: `ws://${s.ip}:${s.port}/ws`,
-			httpUrl: `http://${s.ip}:${s.port}/api`,
+			httpUrl: `http://${s.ip}:${s.port}/api/v1`,
 			source: s.source,
 		}));
 		

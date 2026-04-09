@@ -51,27 +51,6 @@ export async function waitForElementsCount(
 }
 
 /**
- * Подождать пока статус сообщения изменится
- */
-export async function waitForMessageStatus(
-	page: Page,
-	statusText: string,
-	messageIndex: number = -1,
-	timeout = 10000
-): Promise<void> {
-	await page.waitForFunction(
-		({ status: s, index: idx }) => {
-			const statuses = document.querySelectorAll('.message.mine .message-status');
-			if (statuses.length === 0) return false;
-			const target = idx < 0 ? statuses[statuses.length - 1] : statuses[idx];
-			return target?.textContent?.includes(s);
-		},
-		{ status: statusText, index: messageIndex },
-		{ timeout }
-	);
-}
-
-/**
  * Проверить что индикатор подключения онлайн
  */
 export function isOnline(page: Page): Promise<boolean> {
