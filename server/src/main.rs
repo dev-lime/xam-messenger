@@ -185,15 +185,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // PERF-2: для E2E тестов и быстрой регистрации нескольких пользователей
         // burst_size = max(rate_limit * 2, 200) — минимум 200 запросов подряд
         let burst = std::cmp::max(server_config.rate_limit * 2, 200);
-
-        let governor_conf = actix_governor::GovernorConfigBuilder::default()
-            .milliseconds_per_request(milliseconds_per_request)
-            .burst_size(burst)
-            .finish()
-            .expect("Failed to create GovernorConfig");
-
-        // E2E FIX: полностью отключаем rate limiting при запуске тестов
-        // Чтобы не было блокировки при множестве параллельных запросов
         let skip_governor = std::env::var("XAM_SKIP_RATE_LIMIT").ok().is_some();
 
         let governor_conf = if skip_governor {

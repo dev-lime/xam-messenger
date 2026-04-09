@@ -578,7 +578,7 @@ describe('ServerClient (реальный класс)', () => {
             expect(servers.length).toBe(1);
             expect(servers[0].ip).toBe('1.1.1.1');
             expect(servers[0].wsUrl).toBe('ws://1.1.1.1:8080/ws');
-            expect(servers[0].httpUrl).toBe('http://1.1.1.1:8080/api');
+            expect(servers[0].httpUrl).toBe('http://1.1.1.1:8080/api/v1');
         });
 
         test('возвращает пустой массив при пустом кэше', () => {
