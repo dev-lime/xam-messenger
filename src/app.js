@@ -40,6 +40,15 @@ const elements = {
 	menuSettings: document.getElementById('menuSettings'),
 	menuLogout: document.getElementById('menuLogout'),
 	menuChangeServer: document.getElementById('menuChangeServer'),
+	appSettingsDialog: document.getElementById('appSettingsDialog'),
+	closeAppSettings: document.getElementById('closeAppSettings'),
+	saveAppSettings: document.getElementById('saveAppSettings'),
+	resetAppSettings: document.getElementById('resetAppSettings'),
+	clearCacheBtn: document.getElementById('clearCacheBtn'),
+	exportDataBtn: document.getElementById('exportDataBtn'),
+	settingFontSize: document.getElementById('settingFontSize'),
+	fontSizeValue: document.getElementById('fontSizeValue'),
+	settingTheme: document.getElementById('settingTheme'),
 	userProfileHeader: document.getElementById('userProfileHeader'),
 	chatTitle: document.getElementById('chatTitle'),
 	chatTitleText: document.getElementById('chatTitleText'),
@@ -1839,13 +1848,35 @@ function updateSendButton() {
  * Настройка событий
  */
 function setupEventListeners() {
-	// Новый UI: клик по статусу показывает задержку до сервера
+	// Новый UI: клик по статусу — задержка или переподключение
 	if (elements.connectionStatus) {
-		elements.connectionStatus.addEventListener('click', () => {
+		elements.connectionStatus.addEventListener('click', async () => {
 			if (state.connected) {
 				showServerLatency();
 			} else {
-				openServerSelector();
+				// Пытаемся восстановить сессию
+				const savedUser = localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_USER);
+				const savedServer = localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
+
+				if (savedUser && savedServer) {
+					try {
+						const user = JSON.parse(savedUser);
+						const server = JSON.parse(savedServer);
+						state.selectedServer = server;
+						elements.userNameInput.value = user.name;
+						if (elements.serverStatus) {
+							elements.serverStatus.innerHTML =
+								'<span style="color: var(--warning);">🔄 Переподключение...</span>';
+						}
+						await connectToServer();
+					} catch (e) {
+						console.warn('⚠️ Переподключение не удалось:', e);
+						openServerSelector();
+					}
+				} else {
+					// Нет сохранённой сессии — открываем выбор сервера
+					openServerSelector();
+				}
 			}
 		});
 	}
@@ -1927,8 +1958,12 @@ function setupEventListeners() {
 	
 	if (elements.menuSettings) {
 		elements.menuSettings.addEventListener('click', () => {
-			// TODO: Открыть настройки приложения (пока не реализовано)
-			console.log('Настройки приложения...');
+			if (!state.connected) {
+				alert('Подключитесь к серверу');
+				closeProfileMenu();
+				return;
+			}
+			elements.appSettingsDialog.showModal();
 			closeProfileMenu();
 		});
 	}
@@ -1950,9 +1985,58 @@ function setupEventListeners() {
 			localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_USER);
 			localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
 			closeProfileMenu();
+			// Перезагружаем страницу чтобы показать меню входа
+			location.reload();
 		});
 	}
-	
+
+	// ========================================================================
+	// Обработчики диалога настроек приложения
+	// ========================================================================
+
+	if (elements.closeAppSettings) {
+		elements.closeAppSettings.addEventListener('click', () => {
+			elements.appSettingsDialog.close();
+		});
+	}
+
+	if (elements.saveAppSettings) {
+		elements.saveAppSettings.addEventListener('click', () => {
+			// TODO: Сохранить настройки в localStorage / на сервер
+			console.log('💾 Сохранение настроек (мок)');
+			elements.appSettingsDialog.close();
+		});
+	}
+
+	if (elements.resetAppSettings) {
+		elements.resetAppSettings.addEventListener('click', () => {
+			// TODO: Сбросить настройки к значениям по умолчанию
+			console.log('🔄 Сброс настроек (мок)');
+			elements.appSettingsDialog.close();
+		});
+	}
+
+	// Обновление отображения размера шрифта при движении ползунка
+	if (elements.settingFontSize && elements.fontSizeValue) {
+		elements.settingFontSize.addEventListener('input', () => {
+			elements.fontSizeValue.textContent = `${elements.settingFontSize.value}px`;
+		});
+	}
+
+	if (elements.clearCacheBtn) {
+		elements.clearCacheBtn.addEventListener('click', () => {
+			// TODO: Очистить кэш серверов
+			console.log('🗑️ Очистка кэша (мок)');
+		});
+	}
+
+	if (elements.exportDataBtn) {
+		elements.exportDataBtn.addEventListener('click', () => {
+			// TODO: Экспорт истории сообщений
+			console.log('📤 Экспорт данных (мок)');
+		});
+	}
+
 	if (elements.menuChangeServer) {
 		elements.menuChangeServer.addEventListener('click', () => {
 			// Если подключены — отключаемся и сбрасываем состояние
