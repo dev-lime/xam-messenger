@@ -214,7 +214,7 @@ test.describe('Краевые случаи E2E', () => {
 		expect(textContent?.length).toBeGreaterThan(100);
 	});
 
-	test.fixme('отправка файла', async ({ users }) => {
+	test('отправка файла', async ({ users }) => {
 		// BUG: сообщение с файлом дублируется — одно с галочкой, второе с часиками
 		// Требуется исправление в логике отправки файлов в app.js/server-client.js
 		const { userA, userB } = await users.createTwoUsers();
@@ -243,9 +243,8 @@ test.describe('Краевые случаи E2E', () => {
 		await userA.page.waitForTimeout(1000);
 
 		// Проверяем что добавилось ровно одно сообщение (не дубликат!)
-		const mineAfter = await userA.page.locator('.message.mine').count();
-		console.log(`[FILE TEST] mineBefore=${mineBefore}, mineAfter=${mineAfter}, delta=${mineAfter - mineBefore}`);
-		expect(mineAfter - mineBefore).toBe(1);
+		const mineCount = await userA.page.locator('.message.mine').count();
+		expect(mineCount - mineBefore).toBe(1);
 
 		// Считаем сообщения у B ДО открытия чата
 		const theirsBefore = await userB.page.locator('.message.theirs').count();
