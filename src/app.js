@@ -763,13 +763,19 @@ function handleNewMessage(msg) {
  * Поиск локального сообщения по тексту и времени
  */
 function findLocalMessageIndex(msg) {
-	return state.messages.findIndex(
-		(m) =>
-			m.id.startsWith('local_') &&
-			m.sender_id === state.user?.id &&
-			m.text === msg.text &&
-			Math.abs(m.timestamp - msg.timestamp) < CONFIG.LOCAL_MESSAGE_TTL
-	);
+	return state.messages.findIndex((m) => {
+		if (!m.id.startsWith('local_') || m.sender_id !== state.user?.id) return false;
+		if (Math.abs(m.timestamp - msg.timestamp) >= CONFIG.LOCAL_MESSAGE_TTL) return false;
+		// Текстовое совпадение (оба пустых = совпадение)
+		if (m.text === msg.text) return true;
+		// Fallback для файлов: один получатель, совпадение по именам файлов
+		if (m.recipient_id === msg.recipient_id &&
+			m.files?.length > 0 && msg.files?.length > 0 &&
+			m.files.length === msg.files.length) {
+			return m.files.every((f, i) => f.name === msg.files[i]?.name);
+		}
+		return false;
+	});
 }
 
 /**
@@ -1097,7 +1103,7 @@ async function sendMessage() {
 		id: localId,
 		sender_id: state.user.id,
 		sender_name: state.user.name,
-		text: text || (filesToSend.length > 0 ? `📎 Файлов: ${filesToSend.length}` : ''),
+		text: text,
 		timestamp: Date.now() / 1000,
 		delivery_status: DELIVERY_STATUS.SENT,
 		files: filesToSend.map(f => ({ name: f.name, size: f.size, path: '' })),
