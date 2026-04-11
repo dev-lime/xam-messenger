@@ -26,6 +26,9 @@ use config::AppConfig;
 use models::{AppState, FileUploads};
 use websocket::ws_handler;
 
+// FIX L-05: выносим mDNS service type в константу
+const MDNS_SERVICE_TYPE: &str = "_xam-messenger._tcp.local.";
+
 /// PERF-1: Создаём r2d2 pool соединений SQLite
 fn create_db_pool(
     config: &AppConfig,
@@ -35,12 +38,9 @@ fn create_db_pool(
         std::fs::create_dir_all(parent)?;
     }
 
+    // FIX L-02: PRAGMA применяются только в init_database(), не дублируем здесь
     let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
-        // ARCH-3: PRAGMA применяются при каждом получении соединения
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -5000;",
-        )?;
-        // Инициализируем схему БД (создаёт таблицы если нет)
+        // Инициализируем схему БД (создаёт таблицы, применяет PRAGMA и миграции)
         db::init_database(conn)?;
         Ok(())
     });
@@ -108,14 +108,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     if let Ok(daemon) = mdns_daemon {
         let service_ip = local_ips.first().map(|s| s.as_str()).unwrap_or("127.0.0.1");
-        let instance_name = "XAM Messenger._xam-messenger._tcp.local.".to_string();
+        let instance_name = format!("XAM Messenger.{}", MDNS_SERVICE_TYPE);
 
         let mut txt_props = HashMap::new();
         txt_props.insert("version".to_string(), "1.0.0".to_string());
         txt_props.insert("protocol".to_string(), "ws".to_string());
 
         match ServiceInfo::new(
-            "_xam-messenger._tcp.local.",
+            MDNS_SERVICE_TYPE,
             "XAM Messenger",
             instance_name.as_str(),
             service_ip,
@@ -185,7 +185,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // PERF-2: для E2E тестов и быстрой регистрации нескольких пользователей
         // burst_size = max(rate_limit * 2, 200) — минимум 200 запросов подряд
         let burst = std::cmp::max(server_config.rate_limit * 2, 200);
-        let skip_governor = std::env::var("XAM_SKIP_RATE_LIMIT").ok().is_some();
+        // FIX M-05: проверяем конкретное значение "1", а не просто наличие переменной
+        let skip_governor = std::env::var("XAM_SKIP_RATE_LIMIT").ok().as_deref() == Some("1");
 
         let governor_conf = if skip_governor {
             log::info!("⚠️ Rate limiting отключен (XAM_SKIP_RATE_LIMIT=1)");
@@ -251,10 +252,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 /// ARCH-3: Создаёт тестовое состояние с r2d2 pool и PRAGMA
 #[cfg(test)]
 pub async fn create_test_state() -> AppState {
+    // FIX L-02: PRAGMA только в init_database, не дублируем
     let manager = SqliteConnectionManager::file(":memory:").with_init(|conn| {
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA cache_size = -5000;",
-        )?;
         db::init_database(conn)?;
         Ok(())
     });
@@ -564,6 +563,7 @@ mod tests {
                 params!["msg3", "user3", "User 3", "Other chat", 1002, "user4"],
             )
             .expect("Failed to insert msg3");
+            // FIX M-01: сообщение без получателя НЕ должно попадать в приватный чат
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -589,7 +589,76 @@ mod tests {
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         let messages = body["data"].as_array().expect("Expected data array");
-        assert_eq!(messages.len(), 3);
+        // FIX M-01: после убирания ветки "OR recipient_id IS NULL" общие сообщения
+        // НЕ возвращаются в приватном чате. Ожидаем только msg1 и msg2.
+        assert_eq!(messages.len(), 2);
+
+        // Проверяем что msg4 (общее сообщение) НЕ вернулся в чате user2
+        let has_general = messages.iter().any(|m| m["id"] == "msg4");
+        assert!(
+            !has_general,
+            "General message should NOT appear in private chat"
+        );
+    }
+
+    /// FIX M-01/M-06: тест что сообщения без recipient_id НЕ существуют в системе.
+    /// Все сообщения ДОЛЖНЫ иметь recipient_id — это гарантирует БД.
+    #[actix_rt::test]
+    async fn test_all_messages_must_have_recipient() {
+        let state = create_test_state().await;
+
+        {
+            let conn = state.db.get().expect("Failed to get connection");
+            // Вставляем сообщение с recipient_id
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    "msg-with-recipient",
+                    "user1",
+                    "User 1",
+                    "Private",
+                    1000,
+                    "user2"
+                ],
+            )
+            .expect("Failed to insert message");
+
+            // Вставляем сообщение БЕЗ recipient_id (NULL) — это должно быть возможно в БД
+            // но НЕ должно возвращаться в get_messages_for_chat
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                params!["msg-no-recipient", "user1", "User 1", "General", 1001],
+            )
+            .expect("Failed to insert general message");
+        }
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/v1/messages", web::get().to(handlers::get_messages)),
+        )
+        .await;
+
+        // Запрос чата user2 — должен вернуть ТОЛЬКО msg-with-recipient
+        let req = test::TestRequest::get()
+            .uri("/api/v1/messages?chat_peer_id=user2")
+            .to_request();
+
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let messages = body["data"].as_array().expect("Expected data array");
+
+        // FIX M-01: msg-no-recipient НЕ должен возвращаться в приватном чате
+        assert_eq!(
+            messages.len(),
+            1,
+            "Should only return messages involving user2"
+        );
+        assert_eq!(messages[0]["id"], "msg-with-recipient");
     }
 
     #[actix_rt::test]
@@ -611,5 +680,109 @@ mod tests {
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], false);
         assert_eq!(body["error"], "File not found");
+    }
+
+    /// FIX L-10: Тест is_chat_participant из db.rs
+    #[actix_rt::test]
+    async fn test_is_chat_participant_both_exist() {
+        let state = create_test_state().await;
+        {
+            let conn = state.db.get().expect("Failed to get connection");
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["alice", "Alice", "👩"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["bob", "Bob", "👨"],
+            )
+            .unwrap();
+        }
+        let conn = state.db.get().expect("Failed to get connection");
+        assert!(db::is_chat_participant(&conn, "alice", "bob").unwrap());
+        assert!(db::is_chat_participant(&conn, "bob", "alice").unwrap());
+    }
+
+    #[actix_rt::test]
+    async fn test_is_chat_participant_one_missing() {
+        let state = create_test_state().await;
+        {
+            let conn = state.db.get().expect("Failed to get connection");
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["alice", "Alice", "👩"],
+            )
+            .unwrap();
+        }
+        let conn = state.db.get().expect("Failed to get connection");
+        assert!(!db::is_chat_participant(&conn, "alice", "nonexistent").unwrap());
+    }
+
+    /// FIX L-10 + C-01: тест get_or_create_user — новый пользователь создаётся
+    #[actix_rt::test]
+    async fn test_get_or_create_user_new() {
+        let state = create_test_state().await;
+        let conn = state.db.get().expect("Failed to get connection");
+        let user = db::get_or_create_user(&conn, "NewUser", "👤").unwrap();
+        assert_eq!(user.name, "NewUser");
+        assert_eq!(user.avatar, "👤");
+        assert!(!user.id.is_empty());
+    }
+
+    /// FIX L-10 + C-01: тест get_or_create_user — существующий пользователь возвращается
+    #[actix_rt::test]
+    async fn test_get_or_create_user_existing() {
+        let state = create_test_state().await;
+        {
+            let conn = state.db.get().expect("Failed to get connection");
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["existing-id", "ExistingUser", "🌟"],
+            )
+            .unwrap();
+        }
+        let conn = state.db.get().expect("Failed to get connection");
+        let user = db::get_or_create_user(&conn, "ExistingUser", "👤").unwrap();
+        assert_eq!(user.id, "existing-id");
+        assert_eq!(user.avatar, "🌟"); // Возвращаем существующий avatar, не перезаписываем
+    }
+
+    /// FIX L-10: тест get_messages_for_chat — общие сообщения НЕ возвращаются
+    #[actix_rt::test]
+    async fn test_get_messages_for_chat_excludes_general() {
+        let state = create_test_state().await;
+        {
+            let conn = state.db.get().expect("Failed to get connection");
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["u1", "User1", "👤"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["u2", "User2", "👤"],
+            )
+            .unwrap();
+            // Приватное сообщение между u1 и u2
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["m1", "u1", "User1", "Private", 1000, "u2"],
+            )
+            .unwrap();
+            // Общее сообщение без получателя
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["m2", "u3", "User3", "General", 1001],
+            )
+            .unwrap();
+        }
+        let conn = state.db.get().expect("Failed to get connection");
+        let (msgs, _, _) = db::get_messages_for_chat(&conn, 50, None, "u2").unwrap();
+        // FIX M-01: только m1 (приватное), m2 (общее) НЕ должно быть
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].id, "m1");
     }
 }

@@ -14,6 +14,9 @@ use tokio_util::sync::CancellationToken;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use tauri::{Emitter, Manager};
 
+// FIX L-05: выносим mDNS service type в константу
+const MDNS_SERVICE_TYPE: &str = "_xam-messenger._tcp.local.";
+
 /// Информация о найденном сервере
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerInfo {
@@ -76,7 +79,7 @@ async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
             .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
         let receiver = daemon
-            .browse("_xam-messenger._tcp.local.")
+            .browse(MDNS_SERVICE_TYPE)
             .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
 
         log::info!("✅ mDNS поиск запущен, ждём 3 секунды...");
@@ -132,7 +135,7 @@ async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
         }
 
         log::info!("📊 Найдено серверов: {}", seen_services.len());
-        let _ = daemon.stop_browse("_xam-messenger._tcp.local.");
+        let _ = daemon.stop_browse(MDNS_SERVICE_TYPE);
         log::info!("🛑 mDNS поиск остановлен");
 
         Ok::<Vec<ServerInfo>, String>(seen_services.into_values().collect())
@@ -187,9 +190,27 @@ fn has_network_interface() -> bool {
     false
 }
 
-/// Проверка: является ли URL локальным (loopback)
+/// FIX C-06: Проверяем что URL указывает на локальную/приватную сеть
+/// Парсим URL через url::Url и проверяем IP через is_private()
 fn is_local_url(url: &str) -> bool {
-    url.contains("127.0.0.1") || url.contains("localhost") || url.contains("::1")
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            if let Some(host) = parsed.host() {
+                match host {
+                    url::Host::Domain(_) => {
+                        // Доменные имена — разрешаем localhost, запрещаем остальные
+                        let h = parsed.host_str().unwrap_or("");
+                        h == "localhost" || h == "localhost.local"
+                    }
+                    url::Host::Ipv4(ip) => ip.is_private() || ip.is_loopback(),
+                    url::Host::Ipv6(ip) => ip.is_loopback(),
+                }
+            } else {
+                false
+            }
+        }
+        Err(_) => false, // Невалидный URL — не локальный
+    }
 }
 
 /// Подключение к серверу через нативный WebSocket

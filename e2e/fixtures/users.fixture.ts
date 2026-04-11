@@ -56,10 +56,9 @@ async function findUserIdByName(name: string): Promise<string | null> {
 export const test = base.extend<{ users: UsersFixture }>({
 	users: async ({ browser }, use) => {
 		// Логируем конфигурация для отладки
-		const SERVER_URL = process.env.XAM_SERVER_URL || 'http://localhost:8080';
 		const WS_URL = process.env.XAM_WS_URL || 'ws://localhost:8080/ws';
 		const FRONTEND_URL = process.env.XAM_FRONTEND_URL || 'http://localhost:3000';
-		
+
 		console.log(`🔧 E2E конфигурация:
    Сервер: ${SERVER_URL}
    WebSocket: ${WS_URL}

@@ -224,48 +224,104 @@ test.describe('Краевые случаи E2E', () => {
 		// Считаем сообщения ДО отправки (проверка на дубликаты через дельту)
 		const mineBefore = await userA.page.locator('.message.mine').count();
 
-		// Создаём тестовый файл
-		const filePath = '/tmp/test-file.txt';
-		const fs = require('fs');
-		fs.writeFileSync(filePath, 'Тестовый контент для E2E теста');
+		// M-08 FIX: используем test.info().outputDir для временных файлов с cleanup
+		const path = await import('path');
+		const fs = await import('fs');
+		const os = await import('os');
+		const tmpDir = os.tmpdir();
+		const filePath = path.join(tmpDir, `test-file-${Date.now()}.txt`);
 
-		// Прикрепляем файл через input
-		const fileInput = userA.page.locator('#fileInput');
-		await fileInput.setInputFiles(filePath);
+		try {
+			fs.writeFileSync(filePath, 'Тестовый контент для E2E теста');
 
-		// Проверяем что файл появился в превью (приложение рендерит в #attachedFiles)
-		await expect(userA.page.locator('#attachedFiles .attached-file-name')).toBeVisible({ timeout: 5000 });
+			// Прикрепляем файл через input
+			const fileInput = userA.page.locator('#fileInput');
+			await fileInput.setInputFiles(filePath);
 
-		// Отправляем сообщение (без текста, только файл)
-		await userA.page.click('#sendBtn');
+			// Проверяем что файл появился в превью (приложение рендерит в #attachedFiles)
+			await expect(userA.page.locator('#attachedFiles .attached-file-name')).toBeVisible({ timeout: 5000 });
 
-		// Ждём появления сообщения с файлом
-		await userA.page.waitForTimeout(1000);
+			// Отправляем сообщение (без текста, только файл)
+			await userA.page.click('#sendBtn');
 
-		// Проверяем что добавилось ровно одно сообщение (не дубликат!)
-		const mineCount = await userA.page.locator('.message.mine').count();
-		expect(mineCount - mineBefore).toBe(1);
+			// Ждём появления сообщения с файлом
+			await userA.page.waitForTimeout(1000);
 
-		// Считаем сообщения у B ДО открытия чата
-		const theirsBefore = await userB.page.locator('.message.theirs').count();
+			// Проверяем что добавилось ровно одно сообщение (не дубликат!)
+			const mineCount = await userA.page.locator('.message.mine').count();
+			expect(mineCount - mineBefore).toBe(1);
 
-		// B открывает чат и проверяет наличие файла
-		await users.openChat(userB.page, userA.name);
-		await users.waitForMessageInChat(userB.page, '');
+			// Считаем сообщения у B ДО открытия чата
+			const theirsBefore = await userB.page.locator('.message.theirs').count();
 
-		// Проверяем что у получателя тоже появилось ровно одно сообщение
-		const theirsAfter = await userB.page.locator('.message.theirs').count();
-		expect(theirsAfter - theirsBefore).toBe(1);
+			// B открывает чат и проверяет наличие файла
+			await users.openChat(userB.page, userA.name);
+			await users.waitForMessageInChat(userB.page, '');
 
-		// Проверяем что файл отображается у получателя и не дублируется
-		const fileNameEl = userB.page.locator('.file-name').first();
-		await expect(fileNameEl).toBeVisible({ timeout: 10000 });
-		const fileName = await fileNameEl.textContent();
-		expect(fileName).toContain('test-file.txt');
+			// Проверяем что у получателя тоже появилось ровно одно сообщение
+			const theirsAfter = await userB.page.locator('.message.theirs').count();
+			expect(theirsAfter - theirsBefore).toBe(1);
 
-		// Проверяем что имя файла встречается ровно один раз
-		const fileNamesCount = await userB.page.locator('.file-name', { hasText: 'test-file.txt' }).count();
-		expect(fileNamesCount).toBe(1);
+			// Проверяем что файл отображается у получателя и не дублируется
+			const fileNameEl = userB.page.locator('.file-name').first();
+			await expect(fileNameEl).toBeVisible({ timeout: 10000 });
+			const fileName = await fileNameEl.textContent();
+			expect(fileName).toContain('test-file-');
+
+			// Проверяем что имя файла встречается ровно один раз
+			const fileNamesCount = await userB.page.locator('.file-name', { hasText: path.basename(filePath) }).count();
+			expect(fileNamesCount).toBe(1);
+		} finally {
+			// M-08 FIX: cleanup — удаляем временный файл
+			try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+		}
+	});
+
+	test('скачивание файла — проверка содержимого', async ({ users }) => {
+		const { userA, userB } = await users.createTwoUsers();
+
+		await users.openChat(userA.page, userB.name);
+
+		const path = await import('path');
+		const fs = await import('fs');
+		const os = await import('os');
+		const tmpDir = os.tmpdir();
+		const originalContent = `Уникальный контент для проверки скачивания ${Date.now()}`;
+		const filePath = path.join(tmpDir, `download-test-${Date.now()}.txt`);
+
+		try {
+			fs.writeFileSync(filePath, originalContent);
+
+			// Прикрепляем и отправляем файл
+			const fileInput = userA.page.locator('#fileInput');
+			await fileInput.setInputFiles(filePath);
+			await expect(userA.page.locator('#attachedFiles .attached-file-name')).toBeVisible({ timeout: 5000 });
+			await userA.page.click('#sendBtn');
+			await userA.page.waitForTimeout(1000);
+
+			// B открывает чат и ждёт файл
+			await users.openChat(userB.page, userA.name);
+			await users.waitForMessageInChat(userB.page, '');
+
+			const fileNameEl = userB.page.locator('.file-name').first();
+			await expect(fileNameEl).toBeVisible({ timeout: 10000 });
+
+			// Нажимаем кнопку скачивания
+			const downloadBtn = userB.page.locator('.file-download-btn').first();
+			const [download] = await Promise.all([
+				userB.page.waitForEvent('download'),
+				downloadBtn.click(),
+			]);
+
+			// Скачиваем файл и проверяем содержимое
+			const downloadedPath = await download.path();
+			expect(downloadedPath).toBeTruthy();
+			const downloadedContent = fs.readFileSync(downloadedPath!, 'utf-8');
+			expect(downloadedContent).toContain(originalContent);
+		} finally {
+			// Cleanup
+			try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+		}
 	});
 
 	test.fixme('индикатор онлайн-статуса: переход в оффлайн и обратно', async ({ users }) => {
