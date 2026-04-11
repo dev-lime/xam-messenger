@@ -114,7 +114,7 @@ test.describe('Полный цикл обмена сообщениями', () =>
 		expect(lastThree[2]).toContain(messages[2].split('(')[0].trim());
 	});
 
-	test('обмен сообщениями в обоих направлениях', async ({ users }) => {
+	test('обмен сообщениями в обоих направлениях → удаление чата', async ({ users }) => {
 		const { userA, userB } = await users.createTwoUsers();
 
 		const msgAtoB = `A→B: Привет! (${Date.now()})`;
@@ -137,6 +137,42 @@ test.describe('Полный цикл обмена сообщениями', () =>
 		await expect(userA.page.locator('.message-text', { hasText: msgBtoA })).toBeVisible();
 		await expect(userB.page.locator('.message-text', { hasText: msgAtoB })).toBeVisible();
 		await expect(userB.page.locator('.message-text', { hasText: msgBtoA })).toBeVisible();
+
+		// --- Удаление чата пользователем A ---
+
+		// A открывает контекстное меню контакта B
+		const peerMenuBtn = userA.page.locator('.peer-item', { hasText: userB.name }).locator('.peer-menu-btn');
+		await peerMenuBtn.click();
+
+		// Ждём появления меню
+		await expect(userA.page.locator('.peer-context-menu.open')).toBeVisible({ timeout: 5000 });
+
+		// Перехватываем confirm-диалог
+		userA.page.on('dialog', async (dialog) => {
+			expect(dialog.type()).toBe('confirm');
+			expect(dialog.message()).toContain('Удалить всю переписку');
+			await dialog.accept();
+		});
+
+		// Нажимаем "Удалить чат"
+		await userA.page.locator('[data-action="delete-chat"]').click();
+
+		// Ждём удаления сообщений у A
+		await expect(userA.page.locator('.message-text', { hasText: msgAtoB })).toBeHidden({ timeout: 10000 });
+		await expect(userA.page.locator('.message-text', { hasText: msgBtoA })).toBeHidden({ timeout: 10000 });
+
+		// Проверяем что чат закрылся — показывается пустое состояние
+		await expect(userA.page.locator('#messagesContainer')).toContainText('Выберите контакт', { timeout: 5000 });
+
+		// B всё ещё видит сообщения (удаление только у инициатора, сервер удаляет у обоих но B может не обновить UI)
+		// Проверяем что B всё ещё может открыть чат
+		await users.openChat(userB.page, userA.name);
+		await userB.page.waitForTimeout(500);
+
+		// После удаления чата A больше не видит сообщений от B в списке контактов
+		// (сообщения удалены из state.messages на клиенте A)
+		const messagesAfter = await userA.page.locator('.message').count();
+		expect(messagesAfter).toBe(0);
 	});
 
 	test('индикатор онлайн-статуса контакта', async ({ users }) => {
