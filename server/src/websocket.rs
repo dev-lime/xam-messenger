@@ -54,14 +54,24 @@ async fn send_to_user(state: &AppState, user_id: &str, payload: serde_json::Valu
 }
 
 /// PERF-3: Отправить сообщение всем КРОМЕ указанного пользователя
+/// FIX H-01: добавлен retain() для удаления мёртвых каналов
 async fn broadcast_except(state: &AppState, except_user_id: &str, payload: serde_json::Value) {
-    let senders = state.user_senders.lock().await;
-    for (uid, user_senders) in senders.iter() {
+    let mut senders = state.user_senders.lock().await;
+    let mut dead_users = Vec::new();
+
+    for (uid, user_senders) in senders.iter_mut() {
         if uid != except_user_id {
-            for tx in user_senders {
-                let _ = tx.send(payload.clone());
+            // FIX H-01: удаляем мёртвые каналы при каждом broadcast
+            user_senders.retain(|tx| tx.send(payload.clone()).is_ok());
+            if user_senders.is_empty() {
+                dead_users.push(uid.clone());
             }
         }
+    }
+
+    // Удаляем пользователей у которых не осталось живых каналов
+    for uid in dead_users {
+        senders.remove(&uid);
     }
 }
 
@@ -192,7 +202,7 @@ async fn handle_file_end(
 
     // Проверка что весь файл получен
     if upload.uploaded_bytes != upload.size {
-        // Удаляем неполный файл
+        // FIX H-05 / L-03: Удаляем неполный файл
         let _ = tokio::fs::remove_file(&upload.filepath).await;
         return Err(format!(
             "File incomplete: {} of {} bytes",
@@ -200,9 +210,11 @@ async fn handle_file_end(
         ));
     }
 
-    // Сохраняем metadata в БД
+    // FIX H-05: Сохраняем metadata в БД в транзакции.
+    // При ошибке — удаляем файл с диска чтобы не было файлов-сирот.
     let conn = state.db.get().map_err(|e| e.to_string())?;
-    db::save_file_metadata(
+
+    if let Err(e) = db::save_file_metadata(
         &conn,
         &file_id,
         &upload.name,
@@ -210,8 +222,11 @@ async fn handle_file_end(
         upload.size as i64,
         &upload.sender_id,
         upload.recipient_id.as_deref().unwrap_or(""),
-    )
-    .map_err(|e| e.to_string())?;
+    ) {
+        // FIX H-05: cleanup — удаляем файл при ошибке записи метаданных
+        let _ = tokio::fs::remove_file(&upload.filepath).await;
+        return Err(format!("Failed to save file metadata: {}", e));
+    }
 
     // Создаём сообщение с файлом
     let message = ChatMessage {
@@ -230,7 +245,16 @@ async fn handle_file_end(
     };
 
     // Сохраняем сообщение
-    db::save_message(&conn, &message).map_err(|e| e.to_string())?;
+    if let Err(e) = db::save_message(&conn, &message) {
+        // FIX H-05: cleanup — удаляем файл и метаданные при ошибке сохранения сообщения
+        let _ = tokio::fs::remove_file(&upload.filepath).await;
+        // Пытаемся удалить запись о файле из БД (best effort)
+        let _ = conn.execute(
+            "DELETE FROM files WHERE id = ?1",
+            rusqlite::params![file_id],
+        );
+        return Err(format!("Failed to save message with file: {}", e));
+    }
 
     // Рассылаем сообщение
     let payload = json!({ "type": "message", "message": message });
@@ -256,7 +280,7 @@ pub async fn handle_client_message(
             "update_profile" => handle_update_profile(client_msg, user_id, session, state).await,
             "message" => handle_message(client_msg, user_id, session, state).await,
             "ack" => handle_ack(client_msg, user_id, session, state).await,
-            "get_messages" => handle_get_messages(client_msg, session, state).await,
+            "get_messages" => handle_get_messages(client_msg, user_id, session, state).await,
             _ => log::warn!("⚠️ Неизвестный тип сообщения: {}", client_msg.msg_type),
         }
     });
@@ -611,11 +635,24 @@ async fn handle_ack(
 /// Обработка запроса истории сообщений
 async fn handle_get_messages(
     client_msg: ClientMsg,
+    user_id: &Option<String>,
     session: &mut actix_ws::Session,
     state: &AppState,
 ) {
     let limit = client_msg.limit.clamp(1, 200);
     let before_id = &client_msg.before_id;
+
+    // FIX C-03: Запрос должен быть от зарегистрированного пользователя
+    let uid = match user_id {
+        Some(id) => id.clone(),
+        None => {
+            log::warn!("⚠️ Запрос сообщений до регистрации пользователя");
+            let _ = session
+                .text(json!({"type": "error", "error": "Not registered"}).to_string())
+                .await;
+            return;
+        }
+    };
 
     // PERF-1: Получаем соединение из pool
     let conn = match state.db.get() {
@@ -626,8 +663,21 @@ async fn handle_get_messages(
         }
     };
 
-    // FIX S4/B6: Используем chat_peer_id для фильтрации по чату
+    // FIX C-03 + M-01: При запросе чата проверяем что пользователь — участник чата.
     let result = if let Some(ref chat_peer_id) = client_msg.recipient_id {
+        // FIX C-03: Проверяем что requester является участником чата
+        let is_participant = db::is_chat_participant(&conn, &uid, chat_peer_id).unwrap_or(false);
+        if !is_participant {
+            log::warn!(
+                "⚠️ Пользователь {} запросил чужой чат с {}",
+                uid,
+                chat_peer_id
+            );
+            let _ = session
+                .text(json!({"type": "error", "error": "Access denied"}).to_string())
+                .await;
+            return;
+        }
         db::get_messages_for_chat(&conn, limit, before_id.as_deref(), chat_peer_id)
     } else {
         db::get_messages_with_pagination(&conn, limit, before_id.as_deref())

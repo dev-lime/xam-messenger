@@ -196,21 +196,22 @@ async function pingServer(httpUrl, timeout = 3000) {
 				method: 'GET',
 				signal: controller.signal,
 			});
-			
-			// FIX: Проверяем что это действительно XAM сервер
-			// XAM сервер возвращёт JSON с полем success или data
-			if (!response.ok) return false;
-			
+
+			// FIX L-07: Строго проверяем HTTP статус и структуру ответа
+			if (!response.ok || response.status !== 200) return false;
+
 			// Проверяем Content-Type — должен быть JSON
 			const contentType = response.headers.get('content-type');
 			if (!contentType || !contentType.includes('application/json')) {
 				return false; // Это не JSON, скорее всего HTML от serve
 			}
-			
+
 			// Пробуем распарсить JSON
 			try {
 				const data = await response.json();
-				return data && (data.success !== undefined || data.data !== undefined);
+				// FIX L-07: Проверяем что это действительно XAM сервер
+				// с ожидаемой структурой ответа (должны быть И success И data)
+				return data && typeof data === 'object' && 'success' in data && 'data' in data;
 			} catch {
 				return false; // Не JSON
 			}

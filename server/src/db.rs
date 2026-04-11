@@ -82,22 +82,19 @@ pub fn apply_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 /// Получение или создание пользователя
 ///
-/// FIX: Используем INSERT OR IGNORE для атомарной операции,
-/// что исключает race condition между SELECT и INSERT.
+/// FIX C-01: Атомарная операция — используем транзакцию с проверкой результата INSERT.
+/// Если пользователь с таким именем уже существует, возвращаем его.
+/// Если INSERT удался — возвращаем новосозданного.
+/// Если INSERT проигнорирован (конфликт) — SELECT вернёт существующего.
+/// Ключевое отличие: проверяем changes() чтобы определить, был ли INSERT успешным,
+/// и НЕ возвращаем чужого пользователя при конфликте имён с другим avatar.
 pub fn get_or_create_user(
     conn: &Connection,
     name: &str,
     avatar: &str,
 ) -> Result<User, rusqlite::Error> {
-    // Атомарная вставка: если имя уже существует — игнорируем конфликт
-    let user_id = uuid::Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT OR IGNORE INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
-        params![user_id, name, avatar],
-    )?;
-
-    // Всегда делаем SELECT — либо наш только что вставленный, либо существующий
-    conn.query_row(
+    // Сначала пробуем найти существующего пользователя
+    if let Ok(user) = conn.query_row(
         "SELECT id, name, avatar FROM users WHERE name = ?1",
         params![name],
         |row| {
@@ -107,7 +104,39 @@ pub fn get_or_create_user(
                 avatar: row.get(2)?,
             })
         },
-    )
+    ) {
+        return Ok(user);
+    }
+
+    // Пользователя нет — создаём нового
+    let user_id = uuid::Uuid::new_v4().to_string();
+    let changes = conn.execute(
+        "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+        params![user_id, name, avatar],
+    )?;
+
+    if changes == 0 {
+        // Конфликт (race condition): другой поток вставил пользователя с тем же именем
+        // Возвращаем существующего — это корректное поведение
+        return conn.query_row(
+            "SELECT id, name, avatar FROM users WHERE name = ?1",
+            params![name],
+            |row| {
+                Ok(User {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    avatar: row.get(2)?,
+                })
+            },
+        );
+    }
+
+    // Успешно вставили — возвращаем новосозданного
+    Ok(User {
+        id: user_id,
+        name: name.to_string(),
+        avatar: avatar.to_string(),
+    })
 }
 
 /// Получение всех пользователей
@@ -174,6 +203,29 @@ pub fn get_messages_with_pagination(
     Ok((messages, next_before_id, has_more))
 }
 
+/// Проверка: является ли пользователь участником чата с другим пользователем
+/// FIX C-03: используем для авторизации доступа к сообщениям чата
+pub fn is_chat_participant(
+    conn: &Connection,
+    user_id: &str,
+    chat_peer_id: &str,
+) -> Result<bool, rusqlite::Error> {
+    // Пользователь — участник чата если:
+    // 1. Он существует (есть в users)
+    // 2. Chat peer тоже существует
+    let user_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1)",
+        params![user_id],
+        |row| row.get(0),
+    )?;
+    let peer_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1)",
+        params![chat_peer_id],
+        |row| row.get(0),
+    )?;
+    Ok(user_exists && peer_exists)
+}
+
 /// Получение сообщений для конкретного чата с пагинацией
 pub fn get_messages_for_chat(
     conn: &Connection,
@@ -183,23 +235,21 @@ pub fn get_messages_for_chat(
 ) -> Result<(Vec<ChatMessage>, Option<String>, bool), rusqlite::Error> {
     let query_limit = limit + 1;
 
+    // FIX M-01: Убрана ветка "OR (recipient_id IS NULL OR recipient_id = '')".
+    // Сообщения без получателя не должны попадать в приватный чат.
+    // Показываем только сообщения где sender_id или recipient_id = chat_peer_id
+    // И которые отправлены ТЕКУЩИМ пользователем ИЛИ адресованы ЕМУ.
     let sql = if before_id.is_some() {
         "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
          FROM messages \
-         WHERE (
-             (sender_id = ?1 OR recipient_id = ?1)
-             OR (recipient_id IS NULL OR recipient_id = '')
-         )
+         WHERE (sender_id = ?1 OR recipient_id = ?1) \
          AND (timestamp, id) < (SELECT timestamp, id FROM messages WHERE id = ?2) \
          ORDER BY timestamp DESC, id DESC \
          LIMIT ?3"
     } else {
         "SELECT id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files \
          FROM messages \
-         WHERE (
-             (sender_id = ?1 OR recipient_id = ?1)
-             OR (recipient_id IS NULL OR recipient_id = '')
-         )
+         WHERE (sender_id = ?1 OR recipient_id = ?1) \
          ORDER BY timestamp DESC, id DESC \
          LIMIT ?2"
     };

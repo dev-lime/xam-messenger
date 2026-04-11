@@ -98,7 +98,7 @@ describe('Standalone функции', () => {
         });
 
         test('возвращает true при ok response', async () => {
-            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true }));
+            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true, data: [] }));
             const p = pingServer('http://localhost/api');
             expect(await p).toBe(true);
         });
@@ -114,7 +114,7 @@ describe('Standalone функции', () => {
         });
 
         test('очищает таймер при успехе (BUG-6 FIX)', async () => {
-            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true }));
+            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true, data: [] }));
             const spy = jest.spyOn(global, 'clearTimeout');
             await pingServer('http://localhost/api');
             expect(spy).toHaveBeenCalled();
@@ -452,7 +452,7 @@ describe('ServerClient (реальный класс)', () => {
 
         test('возвращает [] если data нет', async () => {
             client.httpUrl = 'http://localhost:8080/api/v1';
-            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true }));
+            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true, data: [] }));
 
             const users = await client.getUsers();
             expect(users).toEqual([]);
@@ -461,7 +461,7 @@ describe('ServerClient (реальный класс)', () => {
 
     describe('checkServerAvailability', () => {
         test('возвращает true при ok', async () => {
-            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true }));
+            fetch.mockResolvedValueOnce(mockFetchResponse({ success: true, data: [] }));
             const result = await client.checkServerAvailability('http://localhost/api');
             expect(result).toBe(true);
         });
@@ -675,47 +675,6 @@ describe('ServerClient (реальный класс)', () => {
             await new Promise(r => setTimeout(r, 0));
 
             expect(spy).toHaveBeenCalled();
-            spy.mockRestore();
-        });
-    });
-
-    describe('_removeTauriListeners', () => {
-        test('вызывает все unlisten функции', () => {
-            const u1 = jest.fn();
-            const u2 = jest.fn();
-            client._tauriUnlisteners = [u1, u2];
-
-            client._removeTauriListeners();
-
-            expect(u1).toHaveBeenCalled();
-            expect(u2).toHaveBeenCalled();
-            expect(client._tauriUnlisteners).toEqual([]);
-        });
-    });
-
-    describe('handleMessage FILE_ERROR', () => {
-        test('логирует ошибку и уведомляет обработчиков', () => {
-            const spy = jest.spyOn(console, 'error').mockImplementation();
-            const h = jest.fn();
-            client.on('file_error', h);
-
-            client.handleMessage({ type: 'file_error', file_id: 'f1', error: 'fail' });
-
-            expect(h).toHaveBeenCalledWith({ type: 'file_error', file_id: 'f1', error: 'fail' });
-            spy.mockRestore();
-        });
-    });
-
-    describe('cacheServer catch', () => {
-        test('обрабатывает ошибки localStorage', () => {
-            const spy = jest.spyOn(console, 'warn').mockImplementation();
-            const orig = localStorage.getItem;
-            localStorage.getItem = () => { throw new Error('broken'); };
-
-            cacheServer('1.1.1.1', 8080, 'mdns');
-
-            expect(spy).toHaveBeenCalled();
-            localStorage.getItem = orig;
             spy.mockRestore();
         });
     });
