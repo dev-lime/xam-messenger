@@ -114,6 +114,35 @@ let userSettings = { name: '', avatar: CONFIG.AVATAR_DEFAULT };
 let loadPeersTimer = null;
 
 // ============================================================================
+// Анимации
+// ============================================================================
+
+/**
+ * Создание ripple-эффекта на кнопке
+ */
+function createRipple(event, element) {
+	// Удаляем предыдущий ripple
+	const existing = element.querySelector('.ripple-effect');
+	if (existing) existing.remove();
+
+	const circle = document.createElement('span');
+	circle.classList.add('ripple-effect');
+
+	const rect = element.getBoundingClientRect();
+	const diameter = Math.max(rect.width, rect.height);
+	const radius = diameter / 2;
+
+	circle.style.width = circle.style.height = `${diameter}px`;
+	circle.style.left = `${event.clientX - rect.left - radius}px`;
+	circle.style.top = `${event.clientY - rect.top - radius}px`;
+
+	element.appendChild(circle);
+
+	// Удаляем после анимации
+	setTimeout(() => circle.remove(), 600);
+}
+
+// ============================================================================
 // Утилиты
 // ============================================================================
 
@@ -871,6 +900,18 @@ function handleAck(data) {
 
 		updateFilteredMessage(msg);
 		renderMessages(!!state.currentPeer);
+
+		// Анимация обновления статуса на последнем сообщении
+		const messageElements = elements.messages.querySelectorAll('.message.mine');
+		if (messageElements.length > 0) {
+			const lastMsg = messageElements[messageElements.length - 1];
+			const statusEl = lastMsg.querySelector('.read-status');
+			if (statusEl) {
+				statusEl.classList.add('status-changed');
+				// Убираем класс после завершения анимации
+				setTimeout(() => statusEl.classList.remove('status-changed'), 400);
+			}
+		}
 	} else {
 		console.log('⚠️ Сообщение не найдено для ACK:', data.message_id);
 	}
@@ -1236,8 +1277,11 @@ function renderPeers() {
 		return;
 	}
 
-	state.peers.forEach((peer) => {
+	state.peers.forEach((peer, index) => {
 		const item = createPeerElement(peer);
+		// Staggered-анимация: каждый контакт появляется с задержкой
+		item.style.animationDelay = `${index * 50}ms`;
+		item.classList.add('animate-in');
 		elements.peersList.appendChild(item);
 	});
 }
@@ -1756,9 +1800,22 @@ function renderAttachedFiles() {
  */
 window.removeAttachedFile = (event, index) => {
 	event.stopPropagation();
-	attachedFiles.splice(index, 1);
-	renderAttachedFiles();
-	updateSendButton();
+
+	// Анимация удаления
+	const fileElement = elements.attachedFiles.querySelector(`.attached-file:nth-child(${index + 1})`);
+	if (fileElement) {
+		fileElement.classList.add('animate-out');
+		// Ждём окончания анимации перед удалением
+		fileElement.addEventListener('animationend', () => {
+			attachedFiles.splice(index, 1);
+			renderAttachedFiles();
+			updateSendButton();
+		}, { once: true });
+	} else {
+		attachedFiles.splice(index, 1);
+		renderAttachedFiles();
+		updateSendButton();
+	}
 };
 
 /**
@@ -1908,7 +1965,11 @@ function setupEventListeners() {
 		});
 	}
 
-	elements.sendBtn.addEventListener('click', sendMessage);
+	elements.sendBtn.addEventListener('click', (e) => {
+		// Ripple эффект
+		createRipple(e, elements.sendBtn);
+		sendMessage();
+	});
 	elements.messageInput.addEventListener('input', updateSendButton);
 
 	elements.messageInput.addEventListener('keydown', (e) => {

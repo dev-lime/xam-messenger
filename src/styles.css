@@ -57,6 +57,16 @@
 	--transition-fast: 0.15s ease;
 	--transition-normal: 0.2s ease;
 	--transition-slow: 0.3s ease;
+
+	/* Spring-анимации для более естественного движения */
+	--spring-fast: 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+	--spring-normal: 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+	--spring-slow: 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+	/* Easing-кривые */
+	--ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+	--ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
 
 /* ============================================================================
@@ -131,16 +141,258 @@ body {
 	}
 }
 
+/* ============================================================================
+   Дополнительные анимации
+   ============================================================================ */
+
+/* Появление сообщения снизу */
+@keyframes messageSlideIn {
+	from {
+		opacity: 0;
+		transform: translateY(12px) scale(0.97);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+/* Появление контакта слева */
+@keyframes peerSlideIn {
+	from {
+		opacity: 0;
+		transform: translateX(-16px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+/* Bounce для бейджа непрочитанных */
+@keyframes badgeBounce {
+	0% {
+		transform: scale(0);
+	}
+	60% {
+		transform: scale(1.2);
+	}
+	80% {
+		transform: scale(0.9);
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+
+/* Пульсация онлайн-индикатора */
+@keyframes onlinePulse {
+	0%, 100% {
+		box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4);
+	}
+	50% {
+		box-shadow: 0 0 0 4px rgba(52, 199, 89, 0);
+	}
+}
+
+/* Открытие диалога */
+@keyframes dialogOpen {
+	from {
+		opacity: 0;
+		transform: translate(-50%, -50%) scale(0.92) translateY(20px);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, -50%) scale(1) translateY(0);
+	}
+}
+
+/* Закрытие диалога */
+@keyframes dialogClose {
+	from {
+		opacity: 1;
+		transform: translate(-50%, -50%) scale(1) translateY(0);
+	}
+	to {
+		opacity: 0;
+		transform: translate(-50%, -50%) scale(0.92) translateY(20px);
+	}
+}
+
+/* Fade-in backdrop */
+@keyframes backdropFadeIn {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+/* Появление файла */
+@keyframes fileSlideIn {
+	from {
+		opacity: 0;
+		transform: translateY(8px) scale(0.95);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+/* Удаление файла */
+@keyframes fileSlideOut {
+	from {
+		opacity: 1;
+		transform: translateX(0) scale(1);
+		max-width: 200px;
+		margin: 0;
+		padding: 8px 12px;
+	}
+	to {
+		opacity: 0;
+		transform: translateX(30px) scale(0.8);
+		max-width: 0;
+		margin: 0;
+		padding: 8px 0;
+	}
+}
+
+/* Ripple эффект на кнопке */
+@keyframes ripple {
+	to {
+		transform: scale(2.5);
+		opacity: 0;
+	}
+}
+
+/* Shimmer skeleton для загрузки */
+@keyframes shimmer {
+	0% {
+		background-position: -200% 0;
+	}
+	100% {
+		background-position: 200% 0;
+	}
+}
+
+/* Обновление статуса (✓ → ✓✓) */
+@keyframes statusUpdate {
+	0% {
+		opacity: 0.5;
+		transform: scale(0.8);
+	}
+	50% {
+		transform: scale(1.15);
+	}
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+/* Появление сервера в списке */
+@keyframes serverSlideIn {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* Ping анимация для статуса */
+@keyframes pingRotate {
+	0% { transform: rotate(0deg); }
+	100% { transform: rotate(360deg); }
+}
+
+/* Shake для ошибки */
+@keyframes shake {
+	0%, 100% { transform: translateX(0); }
+	10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+	20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
 .animate-fade-in {
-	animation: fadeIn var(--transition-normal);
+	animation: fadeIn 0.3s var(--ease-out-expo);
 }
 
 .animate-slide-in {
-	animation: slideIn var(--transition-normal);
+	animation: slideIn 0.3s var(--ease-out-expo);
 }
 
 .animate-pulse {
 	animation: pulse 2s infinite;
+}
+
+/* Staggered-анимации для списков */
+.animate-stagger-1 { animation-delay: 0ms; }
+.animate-stagger-2 { animation-delay: 50ms; }
+.animate-stagger-3 { animation-delay: 100ms; }
+.animate-stagger-4 { animation-delay: 150ms; }
+.animate-stagger-5 { animation-delay: 200ms; }
+.animate-stagger-6 { animation-delay: 250ms; }
+.animate-stagger-7 { animation-delay: 300ms; }
+.animate-stagger-8 { animation-delay: 350ms; }
+.animate-stagger-9 { animation-delay: 400ms; }
+.animate-stagger-10 { animation-delay: 450ms; }
+
+/* Утилитарные классы анимаций */
+.animation-message-slide-in {
+	animation: messageSlideIn 0.35s var(--ease-out-expo) both;
+}
+
+.animation-peer-slide-in {
+	animation: peerSlideIn 0.3s var(--ease-out-expo) both;
+}
+
+.animation-file-slide-in {
+	animation: fileSlideIn 0.25s var(--spring-normal) both;
+}
+
+.animation-file-slide-out {
+	animation: fileSlideOut 0.25s var(--transition-normal) both;
+	pointer-events: none;
+}
+
+.animation-badge-bounce {
+	animation: badgeBounce 0.4s var(--ease-bounce) both;
+}
+
+.animation-online-pulse {
+	animation: onlinePulse 2s ease-in-out infinite;
+}
+
+.animation-dialog-open {
+	animation: dialogOpen 0.35s var(--ease-out-expo) both;
+}
+
+.animation-dialog-close {
+	animation: dialogClose 0.2s var(--ease-in-out) both;
+}
+
+.animation-status-update {
+	animation: statusUpdate 0.3s var(--spring-normal) both;
+}
+
+.animation-server-slide-in {
+	animation: serverSlideIn 0.3s var(--ease-out-expo) both;
+}
+
+.animation-shake {
+	animation: shake 0.5s var(--ease-out-expo) both;
+}
+
+/* Shimmer для состояния загрузки */
+.skeleton-shimmer {
+	background: linear-gradient(
+		90deg,
+		var(--bg-secondary) 25%,
+		var(--bg-tertiary) 50%,
+		var(--bg-secondary) 75%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.5s infinite;
 }
 
 /* ============================================================================
@@ -193,7 +445,7 @@ body {
 	align-items: center;
 	padding: 12px 16px;
 	cursor: pointer;
-	transition: background var(--transition-normal);
+	transition: background var(--transition-normal), transform var(--transition-fast);
 	border-bottom: 1px solid var(--border);
 	gap: 12px;
 	position: relative;
@@ -201,11 +453,21 @@ body {
 
 .peer-item:hover {
 	background: var(--bg-tertiary);
+	transform: translateX(2px);
+}
+
+.peer-item:active {
+	transform: translateX(2px) scale(0.98);
 }
 
 .peer-item.active {
 	background: var(--accent);
 	color: var(--text-inverse);
+}
+
+/* Стили для staggered-анимации при загрузке */
+.peer-item.animate-in {
+	animation: peerSlideIn 0.3s var(--ease-out-expo) both;
 }
 
 .peer-icon {
@@ -348,6 +610,7 @@ body {
 	text-align: center;
 	margin-left: 8px;
 	flex-shrink: 0;
+	animation: badgeBounce 0.4s var(--ease-bounce) both;
 }
 
 .peer-item.active .unread-badge {
@@ -571,10 +834,12 @@ body {
 
 .status-indicator.online {
 	background: var(--success);
+	animation: onlinePulse 2.5s ease-in-out infinite;
 }
 
 .status-indicator.offline {
 	background: var(--text-tertiary);
+	animation: none;
 }
 
 .status-text {
@@ -650,6 +915,7 @@ body {
 	background: transparent;
 	z-index: 1;
 	top: 0;
+	scroll-behavior: smooth;
 }
 
 .messages-container {
@@ -687,17 +953,49 @@ body {
 	border-radius: var(--border-radius-xl);
 	font-size: 13px;
 	cursor: pointer;
-	transition: all var(--transition-normal);
+	transition: all var(--spring-normal);
+	position: relative;
+	overflow: hidden;
 }
 
 .btn-load-more:hover:not(:disabled) {
 	background: var(--bg-tertiary);
 	color: var(--text-primary);
+	transform: scale(1.03);
+}
+
+.btn-load-more:active:not(:disabled) {
+	transform: scale(0.97);
 }
 
 .btn-load-more:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
+}
+
+/* Shimmer при загрузке */
+.btn-load-more.loading {
+	color: transparent;
+	background: var(--bg-secondary);
+	pointer-events: none;
+}
+
+.btn-load-more.loading::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		var(--bg-tertiary) 50%,
+		transparent 100%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.2s infinite;
+	border-radius: inherit;
 }
 
 /* Разделитель дат */
@@ -722,8 +1020,13 @@ body {
 	padding: 10px 14px;
 	border-radius: var(--border-radius-xl);
 	position: relative;
-	animation: fadeIn var(--transition-normal) ease;
+	animation: messageSlideIn 0.35s var(--ease-out-expo) both;
 	word-wrap: break-word;
+}
+
+/* Более плавная анимация для сообщений — появление при скролле */
+.message.animate-in {
+	animation: messageSlideIn 0.35s var(--ease-out-expo) both;
 }
 
 .message.mine {
@@ -781,6 +1084,11 @@ body {
 .read-status {
 	font-weight: 600;
 	font-size: 13px;
+	transition: opacity 0.2s ease, transform 0.2s var(--spring-normal);
+}
+
+.read-status.status-changed {
+	animation: statusUpdate 0.3s var(--spring-normal) both;
 }
 
 .message.mine .read-status {
@@ -884,13 +1192,14 @@ body {
 	background: var(--bg-primary);
 	align-items: center;
 	flex-shrink: 0;
-	transition: all var(--transition-normal);
+	transition: all var(--spring-normal);
 	position: absolute;
 	bottom: 10px;
 	left: 20px;
 	right: 20px;
 	z-index: 10;
 	border-radius: var(--border-radius-lg);
+	will-change: transform, opacity;
 }
 
 @supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
@@ -930,6 +1239,7 @@ body {
 	pointer-events: none;
 	z-index: 10;
 	border-radius: var(--border-radius-md);
+	animation: fadeIn 0.2s var(--ease-out-expo);
 }
 
 .btn-attach {
@@ -940,7 +1250,7 @@ body {
 	height: 44px;
 	font-size: 20px;
 	cursor: pointer;
-	transition: all var(--transition-normal);
+	transition: all var(--spring-normal);
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -949,6 +1259,12 @@ body {
 
 .btn-attach:hover {
 	background: var(--bg-quaternary);
+	transform: rotate(15deg) scale(1.05);
+}
+
+.btn-attach:active {
+	transform: scale(0.92) rotate(0deg);
+	transition: transform 0.08s ease;
 }
 
 #messageInput {
@@ -984,8 +1300,10 @@ body {
 	color: var(--text-secondary);
 	border: none;
 	cursor: not-allowed;
-	transition: all var(--transition-normal);
+	transition: all var(--spring-normal);
 	flex-shrink: 0;
+	position: relative;
+	overflow: hidden;
 }
 
 .btn-send:not(:disabled) {
@@ -996,7 +1314,24 @@ body {
 
 .btn-send:not(:disabled):hover {
 	background: var(--accent-hover);
-	transform: scale(1.05);
+	transform: scale(1.08);
+	box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+}
+
+.btn-send:not(:disabled):active {
+	transform: scale(0.92);
+	transition: transform 0.08s ease;
+}
+
+/* Ripple на кнопке отправки */
+.btn-send .ripple-effect {
+	position: absolute;
+	border-radius: 50%;
+	background: rgba(255, 255, 255, 0.4);
+	width: 20px;
+	height: 20px;
+	animation: ripple 0.5s ease-out;
+	pointer-events: none;
 }
 
 .btn-send:disabled {
@@ -1067,12 +1402,19 @@ body {
 	max-width: 200px;
 	min-width: 150px;
 	cursor: pointer;
-	transition: background var(--transition-normal);
+	transition: background var(--transition-normal), transform var(--transition-fast);
 	flex-shrink: 0;
+	animation: fileSlideIn 0.25s var(--spring-normal) both;
 }
 
 .attached-file:hover {
 	background: var(--bg-tertiary);
+	transform: scale(1.02);
+}
+
+.attached-file.animate-out {
+	animation: fileSlideOut 0.25s var(--transition-normal) both;
+	pointer-events: none;
 }
 
 .attached-file-icon {
@@ -1121,6 +1463,26 @@ body {
 	left: 50%;
 	transform: translate(-50%, -50%);
 	background: var(--bg-primary);
+
+	/* Анимация открытия */
+	animation: dialogOpen 0.35s var(--ease-out-expo) both;
+
+	/* Скрываем нативный appearance */
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.2s var(--ease-in-out), transform 0.2s var(--ease-in-out);
+}
+
+/* Показываем dialog через [open] */
+.dialog[open] {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+/* Анимация закрытия — перехватываем через JS-класс */
+.dialog.closing {
+	animation: dialogClose 0.2s var(--ease-in-out) both;
+	pointer-events: none;
 }
 
 @supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
@@ -1328,10 +1690,28 @@ body {
 	transition: all var(--transition-normal);
 	background: var(--bg-tertiary);
 	color: var(--text-primary);
+	position: relative;
+	overflow: hidden;
 }
 
 .btn:hover {
 	background: var(--bg-quaternary);
+}
+
+.btn:active {
+	transform: scale(0.96);
+	transition: transform 0.1s ease;
+}
+
+/* Ripple эффект для кнопок */
+.btn .ripple-effect {
+	position: absolute;
+	border-radius: 50%;
+	background: rgba(255, 255, 255, 0.4);
+	width: 20px;
+	height: 20px;
+	animation: ripple 0.6s ease-out;
+	pointer-events: none;
 }
 
 .btn-primary {
@@ -1343,9 +1723,17 @@ body {
 	background: var(--accent-hover);
 }
 
+.btn-primary:active {
+	transform: scale(0.96);
+}
+
 .btn:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
+}
+
+.btn:disabled:active {
+	transform: none;
 }
 
 /* ============================================================================
@@ -1504,6 +1892,7 @@ body {
 	border-bottom: 1px solid var(--border);
 	gap: 12px;
 	transition: background var(--transition-fast);
+	animation: serverSlideIn 0.3s var(--ease-out-expo) both;
 }
 
 .server-item:last-child {
@@ -1512,6 +1901,7 @@ body {
 
 .server-item:hover {
 	background: var(--bg-secondary);
+	transform: translateX(2px);
 }
 
 .server-item.online .server-status-indicator {
