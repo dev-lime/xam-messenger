@@ -388,6 +388,18 @@ pub fn update_user_avatar(
     )
 }
 
+/// Обновление имени пользователя
+pub fn update_user_name(
+    conn: &Connection,
+    user_id: &str,
+    name: &str,
+) -> Result<usize, rusqlite::Error> {
+    conn.execute(
+        "UPDATE users SET name = ?1 WHERE id = ?2",
+        params![name, user_id],
+    )
+}
+
 /// Получение sender_id сообщения по ID (для targeted ACK delivery)
 pub fn get_message_sender(conn: &Connection, message_id: &str) -> Result<String, rusqlite::Error> {
     conn.query_row(

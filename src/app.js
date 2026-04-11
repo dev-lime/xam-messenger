@@ -2339,16 +2339,35 @@ function saveSettings() {
 	const name = elements.settingsNameInput.value.trim();
 	const avatar = elements.settingsAvatarInput.value.trim() || CONFIG.AVATAR_DEFAULT;
 
-	if (name && state.user) {
-		state.user.name = name;
-		userSettings = { name, avatar };
-		saveUserSettings();
-		updateUserProfile(name, elements.userAddress.textContent);
+	// Валидация: пустое имя
+	if (!name) {
+		alert('Имя не может быть пустым');
+		return;
+	}
 
-		if (state.connected) {
-			serverClient.updateProfile(avatar);
-			console.log(`👤 Профиль обновлён: ${name}, аватар: ${avatar}`);
-		}
+	// Валидация: слишком длинное имя
+	if (name.length > 50) {
+		alert('Имя слишком длинное (макс. 50 символов)');
+		return;
+	}
+
+	if (!state.user) {
+		alert('Вы не подключены к серверу');
+		return;
+	}
+
+	// Обновляем локальное состояние
+	state.user.name = name;
+	userSettings = { name, avatar };
+	saveUserSettings();
+
+	// Обновляем UI
+	updateUserProfile(name, 'В сети');
+
+	// Отправляем обновление на сервер
+	if (state.connected) {
+		serverClient.updateProfile(name, avatar);
+		console.log(`👤 Профиль обновлён: ${name}, аватар: ${avatar}`);
 	}
 
 	elements.settingsDialog.close();

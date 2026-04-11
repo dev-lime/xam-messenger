@@ -406,9 +406,7 @@ test.describe('Краевые случаи E2E', () => {
 		await userA.page.locator('#cancelServerSelector').click();
 	});
 
-	test.fixme('редактирование профиля: смена имени', async ({ users }) => {
-		// BUG: #saveSettings не закрывает #settingsDialog после сохранения
-		// Требуется исправление в app.js — saveSettings() не вызывается или выбрасывает ошибку
+	test('редактирование профиля: смена имени', async ({ users }) => {
 		const { userA } = await users.createTwoUsers();
 
 		const newName = `НовоеИмя_${Date.now()}`;
@@ -428,7 +426,6 @@ test.describe('Краевые случаи E2E', () => {
 
 		// Сохраняем
 		await userA.page.locator('#saveSettings').click();
-		await userA.page.waitForTimeout(1000);
 
 		// Ждём закрытия диалога
 		await expect(userA.page.locator('#settingsDialog')).not.toBeVisible({ timeout: 10000 });

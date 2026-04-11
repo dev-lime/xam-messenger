@@ -355,13 +355,14 @@ describe('ServerClient (реальный класс)', () => {
     });
 
     describe('updateProfile', () => {
-        test('отправляет update_profile', () => {
+        test('отправляет update_profile с именем и аватаром', () => {
             const mockWs = { readyState: WebSocket.OPEN, send: jest.fn() };
             client.ws = mockWs;
-            client.updateProfile('🎭');
+            client.updateProfile('НовоеИмя', '🎭');
             const s = JSON.parse(mockWs.send.mock.calls[0][0]);
             expect(s.type).toBe('update_profile');
             expect(s.text).toBe('🎭');
+            expect(s.name).toBe('НовоеИмя');
         });
     });
 
