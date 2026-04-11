@@ -696,6 +696,26 @@ describe('ServerClient (реальный класс)', () => {
             expect(window.__TAURI__.event.listen).toHaveBeenCalledTimes(4);
         });
     });
+
+    describe('deleteChat', () => {
+        test('отправляет delete_chat с recipient_id', () => {
+            const mockWs = { readyState: WebSocket.OPEN, send: jest.fn() };
+            client.ws = mockWs;
+            client.deleteChat('user-123');
+            const s = JSON.parse(mockWs.send.mock.calls[0][0]);
+            expect(s.type).toBe('delete_chat');
+            expect(s.recipient_id).toBe('user-123');
+        });
+    });
+
+    describe('chat_deleted handler', () => {
+        test('уведомляет обработчиков', () => {
+            const h = jest.fn();
+            client.on('chat_deleted', h);
+            client.handleMessage({ type: 'chat_deleted', peer_id: 'user-123', deleted_by: 'user-456' });
+            expect(h).toHaveBeenCalledWith({ type: 'chat_deleted', peer_id: 'user-123', deleted_by: 'user-456' });
+        });
+    });
 });
 
 // Импортируем app.js для покрытия

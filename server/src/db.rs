@@ -397,6 +397,45 @@ pub fn get_message_sender(conn: &Connection, message_id: &str) -> Result<String,
     )
 }
 
+/// Удаление всех сообщений чата между двумя пользователями
+/// Возвращает список file_id для удаления файлов с диска
+pub fn delete_chat_messages(
+    conn: &Connection,
+    user1_id: &str,
+    user2_id: &str,
+) -> Result<Vec<String>, rusqlite::Error> {
+    // Сначала собираем file_id файлов которые нужно удалить с диска
+    let mut stmt = conn.prepare(
+        "SELECT files FROM messages \
+         WHERE (sender_id = ?1 AND recipient_id = ?2) \
+            OR (sender_id = ?2 AND recipient_id = ?1)",
+    )?;
+    let file_ids: Vec<String> = stmt
+        .query_map(params![user1_id, user2_id], |row| {
+            let files_str: String = row.get(0)?;
+            Ok(files_str)
+        })?
+        .filter_map(|r| r.ok())
+        .flat_map(|files_str| {
+            serde_json::from_str::<Vec<crate::models::FileData>>(&files_str)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|f| f.path)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    // Удаляем сообщения
+    conn.execute(
+        "DELETE FROM messages \
+         WHERE (sender_id = ?1 AND recipient_id = ?2) \
+            OR (sender_id = ?2 AND recipient_id = ?1)",
+        params![user1_id, user2_id],
+    )?;
+
+    Ok(file_ids)
+}
+
 /// Инициализация схемы базы данных
 pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Включаем WAL mode

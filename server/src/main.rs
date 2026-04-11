@@ -785,4 +785,62 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].id, "m1");
     }
+
+    /// Тест удаления чата между двумя пользователями
+    #[actix_rt::test]
+    async fn test_delete_chat_messages() {
+        let state = create_test_state().await;
+        {
+            let conn = state.db.get().expect("Failed to get connection");
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["alice", "Alice", "👩"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["bob", "Bob", "👨"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+                params!["charlie", "Charlie", "👤"],
+            )
+            .unwrap();
+            // Сообщения между Alice и Bob
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["m1", "alice", "Alice", "Hi Bob", 1000, "bob"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["m2", "bob", "Bob", "Hi Alice", 1001, "alice"],
+            )
+            .unwrap();
+            // Сообщения между Alice и Charlie (не должны удалиться)
+            conn.execute(
+                "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, recipient_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["m3", "alice", "Alice", "Hi Charlie", 1002, "charlie"],
+            )
+            .unwrap();
+        }
+
+        // Удаляем чат между Alice и Bob
+        let conn = state.db.get().expect("Failed to get connection");
+        let file_ids = db::delete_chat_messages(&conn, "alice", "bob").unwrap();
+        assert_eq!(file_ids.len(), 0); // нет файлов
+
+        // Проверяем что сообщения между Alice и Bob удалены
+        let (msgs, _, _) = db::get_messages_for_chat(&conn, 50, None, "bob").unwrap();
+        assert_eq!(msgs.len(), 0);
+
+        // Проверяем что сообщения между Alice и Charlie остались
+        let (msgs, _, _) = db::get_messages_for_chat(&conn, 50, None, "charlie").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].id, "m3");
+    }
 }

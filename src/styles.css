@@ -449,15 +449,32 @@ body {
 	border-bottom: 1px solid var(--border);
 	gap: 12px;
 	position: relative;
+	z-index: 1;
+}
+
+/* Когда контекстное меню открыто — держим z-index высоким */
+.peer-item:has(.peer-context-menu.open) {
+	z-index: 100;
 }
 
 .peer-item:hover {
 	background: var(--bg-tertiary);
 	transform: translateX(2px);
+	z-index: 10;
+}
+
+/* Hover поверх открытого меню */
+.peer-item:hover:has(.peer-context-menu.open) {
+	z-index: 100;
 }
 
 .peer-item:active {
 	transform: translateX(2px) scale(0.98);
+	z-index: 10;
+}
+
+.peer-item:active:has(.peer-context-menu.open) {
+	z-index: 100;
 }
 
 .peer-item.active {

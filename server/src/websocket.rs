@@ -281,6 +281,7 @@ pub async fn handle_client_message(
             "message" => handle_message(client_msg, user_id, session, state).await,
             "ack" => handle_ack(client_msg, user_id, session, state).await,
             "get_messages" => handle_get_messages(client_msg, user_id, session, state).await,
+            "delete_chat" => handle_delete_chat(client_msg, user_id, session, state).await,
             _ => log::warn!("⚠️ Неизвестный тип сообщения: {}", client_msg.msg_type),
         }
     });
@@ -698,6 +699,81 @@ async fn handle_get_messages(
         }
         Err(e) => {
             log::error!("Failed to get messages: {}", e);
+        }
+    }
+}
+
+/// Удаление чата между двумя пользователями
+async fn handle_delete_chat(
+    client_msg: ClientMsg,
+    user_id: &Option<String>,
+    session: &mut actix_ws::Session,
+    state: &AppState,
+) {
+    let uid = match user_id {
+        Some(id) => id.clone(),
+        None => {
+            log::warn!("⚠️ Запрос удаления чата до регистрации пользователя");
+            let _ = session
+                .text(json!({"type": "error", "error": "Not registered"}).to_string())
+                .await;
+            return;
+        }
+    };
+
+    let peer_id = match &client_msg.recipient_id {
+        Some(id) => id.clone(),
+        None => {
+            let _ = session
+                .text(json!({"type": "error", "error": "recipient_id is required"}).to_string())
+                .await;
+            return;
+        }
+    };
+
+    let conn = match state.db.get() {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("Failed to get DB connection: {}", e);
+            return;
+        }
+    };
+
+    match db::delete_chat_messages(&conn, &uid, &peer_id) {
+        Ok(file_ids) => {
+            for file_id in &file_ids {
+                let filepath = state.upload_dir.join(file_id);
+                if filepath.starts_with(&state.upload_dir) {
+                    let _ = tokio::fs::remove_file(&filepath).await;
+                }
+            }
+
+            log::info!("🗑️ Чат удалён: user={}, peer={}", uid, peer_id);
+
+            let payload = json!({
+                "type": "chat_deleted",
+                "peer_id": peer_id,
+                "deleted_by": uid
+            });
+
+            let _ = session.text(payload.to_string()).await;
+
+            send_to_user(
+                state,
+                &peer_id,
+                json!({
+                    "type": "chat_deleted",
+                    "peer_id": uid,
+                    "deleted_by": uid
+                }),
+            )
+            .await;
+        }
+        Err(e) => {
+            log::error!("Failed to delete chat: {}", e);
+            let _ = session
+                .text(json!({"type": "error", "error": "Failed to delete chat"}).to_string())
+                .await;
         }
     }
 }

@@ -221,6 +221,7 @@ async function init() {
 	serverClient.on('user_online', handleUserOnline);
 	serverClient.on('user_updated', handleUserUpdated);
 	serverClient.on('connection_lost', handleConnectionLost);
+	serverClient.on('chat_deleted', handleChatDeleted);
 
 	loadUserSettings();
 	setupEventListeners();
@@ -707,8 +708,7 @@ function openPeerMenu(event, peerId, peerName) {
 			if (actionBtn) {
 				const action = actionBtn.dataset.action;
 				if (action === 'delete-chat') {
-					console.log('Удалить чат с', peerName);
-					// TODO: Реализовать удаление чата
+					deleteChatWithPeer(peerId, peerName);
 				}
 				closePeerMenu(peerId);
 			}
@@ -1441,6 +1441,75 @@ function markMessagesAsRead(userId) {
 function loadMessagesForPeer(userId) {
 	filterMessagesForCurrentPeer();
 	renderMessages(true);
+}
+
+/**
+ * Удаление чата с подтверждением
+ */
+async function deleteChatWithPeer(peerId, peerName) {
+	const confirmed = confirm(`Удалить всю переписку с ${peerName}?\n\nЭто действие нельзя отменить.`);
+	if (!confirmed) return;
+
+	try {
+		console.log(`🗑️ Удаление чата с ${peerName} (${peerId})`);
+		await serverClient.deleteChat(peerId);
+
+		// Очищаем сообщения этого чата
+		state.messages = state.messages.filter(
+			(m) => !(
+				(m.sender_id === state.user?.id && m.recipient_id === peerId) ||
+				(m.sender_id === peerId && m.recipient_id === state.user?.id)
+			)
+		);
+
+		// Если сейчас открыт этот чат — закрываем
+		if (state.currentPeer === peerId) {
+			state.currentPeer = null;
+			state.filteredMessages = [];
+			state.currentPeerBeforeId = null;
+			state.hasMoreMessages = true;
+			renderMessages();
+		} else {
+			// Перерисовываем текущий чат если открыт
+			if (state.currentPeer) {
+				filterMessagesForCurrentPeer();
+				renderMessages(true);
+			}
+		}
+
+		console.log(`✅ Чат с ${peerName} удалён`);
+	} catch (error) {
+		console.error('❌ Ошибка удаления чата:', error);
+		alert(`Не удалось удалить чат: ${error.message}`);
+	}
+}
+
+/**
+ * Обработка уведомления об удалении чата (от сервера)
+ */
+function handleChatDeleted(data) {
+	console.log('🗑️ Чат удалён:', data);
+	const peerId = data.peer_id;
+
+	// Очищаем сообщения этого чата
+	state.messages = state.messages.filter(
+		(m) => !(
+			(m.sender_id === state.user?.id && m.recipient_id === peerId) ||
+			(m.sender_id === peerId && m.recipient_id === state.user?.id)
+		)
+	);
+
+	// Если открыт этот чат — закрываем
+	if (state.currentPeer === peerId) {
+		state.currentPeer = null;
+		state.filteredMessages = [];
+		state.currentPeerBeforeId = null;
+		state.hasMoreMessages = true;
+		renderMessages();
+	} else if (state.currentPeer) {
+		filterMessagesForCurrentPeer();
+		renderMessages(true);
+	}
 }
 
 // ============================================================================

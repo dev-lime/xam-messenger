@@ -809,6 +809,10 @@ class ServerClient {
 				this.notifyHandlers(MESSAGE_TYPES.USER_UPDATED, data);
 				break;
 
+			case 'chat_deleted':
+				this.notifyHandlers('chat_deleted', data);
+				break;
+
 			default:
 				console.warn('⚠️ Неизвестный тип сообщения:', type);
 		}
@@ -1088,6 +1092,17 @@ class ServerClient {
 			limit: Math.max(1, Math.min(200, limit)),
 			before_id: beforeId,
 			chat_peer_id: chatPeerId,
+		});
+	}
+
+	/**
+	 * Удаление чата с пользователем (удаляет все сообщения между двумя участниками)
+	 * @param {string} peerId - ID собеседника
+	 */
+	deleteChat(peerId) {
+		this.send({
+			type: 'delete_chat',
+			recipient_id: peerId,
 		});
 	}
 
