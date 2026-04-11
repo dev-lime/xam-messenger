@@ -466,9 +466,19 @@ async fn handle_update_profile(
         "👤".to_string()
     };
 
-    log::info!("👤 Обновление профиля: user={}, avatar={}", uid, new_avatar);
+    let new_name = if !client_msg.name.is_empty() {
+        client_msg.name.clone()
+    } else {
+        String::new()
+    };
 
-    // PERF-1: Получаем соединение из pool
+    log::info!(
+        "👤 Обновление профиля: user={}, name={}, avatar={}",
+        uid,
+        new_name,
+        new_avatar
+    );
+
     let conn = match state.db.get() {
         Ok(c) => c,
         Err(e) => {
@@ -477,8 +487,17 @@ async fn handle_update_profile(
         }
     };
 
+    // Обновляем аватар
     if let Err(e) = db::update_user_avatar(&conn, &uid, &new_avatar) {
         log::error!("Failed to update avatar: {}", e);
+        return;
+    }
+
+    // Обновляем имя если указано
+    if !new_name.is_empty()
+        && let Err(e) = db::update_user_name(&conn, &uid, &new_name)
+    {
+        log::error!("Failed to update name: {}", e);
         return;
     }
 
@@ -489,7 +508,8 @@ async fn handle_update_profile(
         json!({
             "type": "user_updated",
             "user_id": uid,
-            "avatar": new_avatar
+            "avatar": new_avatar,
+            "name": new_name
         }),
     )
     .await;

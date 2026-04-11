@@ -1108,12 +1108,14 @@ class ServerClient {
 
 	/**
 	 * Обновление профиля пользователя
+	 * @param {string} name - Новое имя
 	 * @param {string} avatar - Новый аватар (эмодзи)
 	 */
-	updateProfile(avatar) {
+	updateProfile(name, avatar) {
 		this.send({
 			type: MESSAGE_TYPES.UPDATE_PROFILE,
 			text: avatar,
+			name: name,
 		});
 	}
 
