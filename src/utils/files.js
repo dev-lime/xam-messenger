@@ -7,7 +7,7 @@
 
 import { getFileIcon, CONFIG } from '../utils/helpers.js';
 import { t } from '../i18n.js';
-import { showError } from '../toast.js';
+import { error as showError } from '../toast.js';
 import { state, elements, attachedFiles, setAttachedFiles, getServerClient } from '../state.js';
 
 /**

@@ -6,7 +6,7 @@
 'use strict';
 
 import { t } from '../i18n.js';
-import { showError } from '../toast.js';
+import { error as showError } from '../toast.js';
 import { state, elements, userSettings } from '../state.js';
 import { getServerClient } from '../state.js';
 import { saveSession } from '../storage.js';
