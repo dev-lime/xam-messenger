@@ -5,8 +5,7 @@
 
 'use strict';
 
-import { DELIVERY_STATUS } from '../utils/helpers.js';
-import { state, elements } from '../state.js';
+import { state } from '../state.js';
 
 /**
  * Проверка: сообщение в текущем чате

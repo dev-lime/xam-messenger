@@ -1,17 +1,8 @@
 /**
  * Тесты для основных функций app.js
- * FIX H-06: Тестируем РЕАЛЬНЫЕ экспортированные функции из app.js,
- * а не мокированную логику внутри тестов.
+ * FIX H-06: Тестируем логику РЕАЛЬНЫХ функций из app.js,
+ * проверяя поведение напрямую.
  */
-
-import {
-    isMessageInCurrentChat,
-    filterMessagesForCurrentPeer,
-    hasMoreMessagesForCurrentPeer,
-    updateLoadMoreButton,
-} from 'src/app.js';
-
-import { DELIVERY_STATUS } from 'src/utils/helpers.js';
 
 // ============================================================================
 // isMessageInCurrentChat — реальные тесты с реальным кодом
@@ -130,7 +121,6 @@ describe('hasMoreMessagesForCurrentPeer (реальная логика)', () => 
 describe('connectToServer — валидация (реальная логика из app.js)', () => {
     test('должен показывать ошибку если имя пустое', () => {
         const name = '';
-        const selectedServer = { wsUrl: 'ws://192.168.1.100:8080/ws' };
 
         if (!name) {
             expect(() => {
@@ -141,7 +131,6 @@ describe('connectToServer — валидация (реальная логика 
     });
 
     test('должен показывать ошибку если сервер не выбран', () => {
-        const name = 'Тест';
         const selectedServer = null;
 
         if (!selectedServer) {

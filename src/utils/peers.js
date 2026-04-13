@@ -81,7 +81,7 @@ function createPeerElement(peer) {
     item.addEventListener('click', (e) => {
         if (e.target.closest('.peer-menu-btn')) return;
         e.stopPropagation();
-        window._selectPeer && window._selectPeer(peer.id, peer.name);
+        window._selectPeer && window._selectPeer(peer.id);
     });
 
     item.querySelector('.peer-menu-btn').addEventListener('click', (e) => {

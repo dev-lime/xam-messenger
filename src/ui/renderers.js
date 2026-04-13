@@ -6,6 +6,7 @@
 'use strict';
 
 import { escapeHtml, getFileIcon, formatFileSize, STATUS_ICONS, DELIVERY_STATUS } from '../utils/helpers.js';
+import { t } from '../i18n.js';
 
 /**
  * Создание HTML для списка файлов
@@ -51,10 +52,10 @@ function getStatusIcon(status) {
  */
 function getStatusTitle(status) {
     switch (status) {
-    case DELIVERY_STATUS.SENT: return 'Отправлено';
-    case DELIVERY_STATUS.DELIVERED: return 'Доставлено';
-    case DELIVERY_STATUS.READ: return 'Прочитано';
-    default: return 'Отправлено';
+    case DELIVERY_STATUS.SENT: return t('sent');
+    case DELIVERY_STATUS.DELIVERED: return t('delivered');
+    case DELIVERY_STATUS.READ: return t('read');
+    default: return t('sent');
     }
 }
 
@@ -158,7 +159,7 @@ function createEmptyChatHtml() {
     return `
 		<div class="empty-chat">
 			<div class="empty-chat-icon">💬</div>
-			<div class="empty-chat-text">Выберите контакт для начала общения</div>
+			<div class="empty-chat-text">${t('selectContactHint')}</div>
 		</div>
 	`.trim();
 }
@@ -180,7 +181,7 @@ function createAttachedFilesHtml(files) {
 				<span class="file-icon">${icon}</span>
 				<span class="file-name">${safeName}</span>
 				<span class="file-size">${size}</span>
-				<button class="remove-file-btn" data-index="${index}" title="Удалить файл">✕</button>
+				<button class="remove-file-btn" data-index="${index}" title="${t('removeFile')}">✕</button>
 			</div>
 		`.trim();
     }).join('');

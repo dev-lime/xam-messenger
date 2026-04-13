@@ -17,9 +17,8 @@ let WebSocketClient = global.WebSocket;
 if (!WebSocketClient) {
     try {
         WebSocketClient = require('ws');
-    } catch (e) {
-        console.warn('⚠️  Пакет "ws" не установлен. Интеграционные тесты будут пропущены.');
-        console.warn('Установите: npm install --save-dev ws');
+    } catch {
+        // ws not installed - tests will be skipped
     }
 }
 
@@ -31,7 +30,7 @@ const checkServerAvailability = async () => {
             signal: AbortSignal.timeout(5000)
         });
         return response.ok;
-    } catch (error) {
+    } catch {
         return false;
     }
 };

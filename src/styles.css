@@ -1749,6 +1749,18 @@ body {
 	cursor: not-allowed;
 }
 
+/* Кнопка удаления профиля — danger outline */
+.btn-danger-outline {
+	border: 2px solid var(--error);
+	color: var(--error);
+	background: transparent;
+}
+
+.btn-danger-outline:hover {
+	background: var(--error);
+	color: var(--text-inverse);
+}
+
 .btn:disabled:active {
 	transform: none;
 }
@@ -1929,6 +1941,11 @@ body {
 	background: var(--text-tertiary);
 }
 
+.server-item.pending .server-status-indicator {
+	background: var(--warning);
+	animation: pulse 1.5s ease-in-out infinite;
+}
+
 .server-status-indicator {
 	width: 10px;
 	height: 10px;
@@ -1965,6 +1982,10 @@ body {
 
 .server-status-text.offline {
 	color: var(--text-tertiary);
+}
+
+.server-status-text.pending {
+	color: var(--warning);
 }
 
 .server-connect-btn {
