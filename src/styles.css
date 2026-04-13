@@ -2017,3 +2017,242 @@ body {
 	outline: none;
 	border-color: var(--accent);
 }
+
+/* ============================================================================
+   Toast Notifications
+   ============================================================================ */
+
+.toast-container {
+	position: fixed;
+	top: 20px;
+	right: 20px;
+	z-index: 10000;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-width: 380px;
+	pointer-events: none;
+}
+
+.toast {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 16px;
+	background: var(--bg-primary);
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-md);
+	box-shadow: 0 8px 24px var(--shadow-lg);
+	font-size: 14px;
+	color: var(--text-primary);
+	opacity: 0;
+	transform: translateX(100%);
+	transition: opacity 0.3s var(--ease-out-expo), transform 0.3s var(--ease-out-expo);
+	pointer-events: auto;
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.toast {
+		background: rgba(255, 255, 255, 0.9);
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+	}
+}
+
+.toast.toast-show {
+	opacity: 1;
+	transform: translateX(0);
+}
+
+.toast.toast-hide {
+	opacity: 0;
+	transform: translateX(100%);
+	transition: opacity 0.3s ease-in, transform 0.3s ease-in;
+}
+
+.toast-icon {
+	font-size: 18px;
+	flex-shrink: 0;
+}
+
+.toast-message {
+	flex: 1;
+	word-break: break-word;
+}
+
+.toast-close {
+	background: none;
+	border: none;
+	font-size: 20px;
+	cursor: pointer;
+	color: var(--text-tertiary);
+	padding: 0 4px;
+	line-height: 1;
+	transition: color var(--transition-fast);
+}
+
+.toast-close:hover {
+	color: var(--text-primary);
+}
+
+.toast-success { border-left: 3px solid var(--success); }
+.toast-error { border-left: 3px solid var(--error); }
+.toast-warning { border-left: 3px solid var(--warning); }
+.toast-info { border-left: 3px solid var(--accent); }
+
+/* ============================================================================
+   Peer Search
+   ============================================================================ */
+
+.peer-search-container {
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg-primary);
+}
+
+.peer-search-input {
+	width: 100%;
+	padding: 8px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-xl);
+	font-size: 13px;
+	font-family: inherit;
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	transition: border-color var(--transition-normal), background var(--transition-normal);
+}
+
+.peer-search-input:focus {
+	outline: none;
+	border-color: var(--accent);
+	background: var(--bg-primary);
+}
+
+.peer-search-input::placeholder {
+	color: var(--text-tertiary);
+}
+
+/* ============================================================================
+   Floating Chat Settings Button (Liquid Glass)
+   ============================================================================ */
+
+.chat {
+	position: relative;
+}
+
+.chat-settings-btn {
+	position: absolute;
+	top: 12px;
+	left: 12px;
+	z-index: 50;
+	background: transparent;
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-round);
+	width: 36px;
+	height: 36px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	color: var(--text-secondary);
+	transition: all var(--spring-normal);
+	flex-shrink: 0;
+	opacity: 0.7;
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.chat-settings-btn {
+		background: rgba(255, 255, 255, 0.6);
+		backdrop-filter: blur(20px) saturate(180%);
+		-webkit-backdrop-filter: blur(20px) saturate(180%);
+		border-color: rgba(255, 255, 255, 0.3);
+	}
+}
+
+.chat-settings-btn:hover {
+	opacity: 1;
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	transform: scale(1.1);
+}
+
+.chat-settings-btn:active {
+	transform: scale(0.9);
+}
+
+.chat-settings-menu {
+	position: absolute;
+	top: 54px;
+	left: 12px;
+	background: var(--bg-primary);
+	border: 1px solid var(--border);
+	border-radius: var(--border-radius-md);
+	box-shadow: 0 8px 24px var(--shadow-lg);
+	min-width: 200px;
+	z-index: 51;
+	overflow: hidden;
+	animation: dialogOpen 0.2s var(--ease-out-expo) both;
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+	.chat-settings-menu {
+		background: rgba(255, 255, 255, 0.85);
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+	}
+}
+
+.chat-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 16px;
+	background: none;
+	border: none;
+	cursor: pointer;
+	transition: background var(--transition-normal);
+	text-align: left;
+	font-size: 14px;
+	color: var(--text-primary);
+	width: 100%;
+}
+
+.chat-menu-item:hover {
+	background: var(--bg-secondary);
+}
+
+.chat-menu-item .menu-icon {
+	width: 18px;
+	height: 18px;
+	flex-shrink: 0;
+	stroke: currentColor;
+}
+
+.chat-menu-item[data-action="delete-chat"] {
+	color: var(--error);
+}
+
+.chat-menu-item[data-action="delete-chat"]:hover {
+	background: var(--error-light);
+}
+
+/* ============================================================================
+   Language Selector in Settings
+   ============================================================================ */
+
+.settings-section select {
+	width: 100%;
+	padding: 8px 12px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background-color: var(--bg-secondary);
+	color: var(--text-primary);
+	font-size: 14px;
+	cursor: pointer;
+	outline: none;
+	transition: border-color 0.15s ease;
+}
+
+.settings-section select:focus {
+	border-color: var(--accent);
+}

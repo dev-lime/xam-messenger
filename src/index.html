@@ -70,6 +70,11 @@
                 </div>
             </div>
             
+            <!-- Поиск контактов -->
+            <div class="peer-search-container">
+                <input type="text" id="peerSearchInput" class="peer-search-input" placeholder="Поиск контактов...">
+            </div>
+
             <!-- Список контактов -->
             <div class="peers-list" id="peersList">
                 <!-- Контакты будут загружены сюда -->
@@ -77,10 +82,25 @@
         </aside>
 
         <!-- Основная панель - чат -->
-        <main class="chat">
-            <!-- Верхняя панель (пустая, без заголовка) -->
-            <header class="chat-header chat-header-empty">
-            </header>
+        <main class="chat" id="chatMain">
+            <!-- Floating кнопка настроек чата -->
+            <button class="chat-settings-btn" id="chatSettingsBtn" title="Настройки чата" style="display:none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="5" r="2"/>
+                    <circle cx="12" cy="12" r="2"/>
+                    <circle cx="12" cy="19" r="2"/>
+                </svg>
+            </button>
+            <!-- Меню настроек чата -->
+            <div class="chat-settings-menu" id="chatSettingsMenu" style="display:none;">
+                <button class="chat-menu-item" data-action="delete-chat">
+                    <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    <span data-i18n="deleteChatMenu">Удалить чат</span>
+                </button>
+            </div>
 
             <!-- Контейнер для прокрутки -->
             <div class="chat-scroll-container" id="chatScrollContainer">
@@ -220,6 +240,13 @@
             <!-- Внешний вид -->
             <div class="settings-section">
                 <h4>Внешний вид</h4>
+                <div class="form-group">
+                    <label>Язык / Language</label>
+                    <select id="settingLanguage">
+                        <option value="ru" selected>Русский</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
                 <div class="form-group">
                     <label>Размер шрифта: <span id="fontSizeValue">14px</span></label>
                     <input type="range" id="settingFontSize" min="12" max="20" value="14">
