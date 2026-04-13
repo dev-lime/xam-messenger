@@ -10,11 +10,10 @@ import { loadUserSettings, saveUserSettings, loadSession, clearSession } from '.
 import { loadLanguage, t } from './i18n.js';
 import { requestPermission as requestNotifPermission } from './notifications.js';
 import { setupEventListeners, initAppSettings } from './events/setup.js';
-import { wsToHttpUrl, extractIpFromWsUrl } from './discovery.js';
 import { renderPeers } from './utils/peers.js';
 import { renderMessages, setupFileDelegation } from './utils/messages.js';
 import { handleNewMessage, handleAck, handleMessages, handleUserOnline, handleUserUpdated, handleChatDeleted } from './chat/handlers.js';
-import { selectPeer, deleteChatWithPeer, sendMessage, loadMoreMessages } from './chat/actions.js';
+import { selectPeer, sendMessage, loadMoreMessages } from './chat/actions.js';
 import { filterMessagesForCurrentChat, hasMoreMessagesForCurrentPeer } from './chat/pagination.js';
 import { connectToServer, openServerSelector, discoverServers, refreshServerList } from './dialogs/server.js';
 import { ServerClient } from './server-client.js';
@@ -84,7 +83,8 @@ async function init() {
         state.connected = false;
         clearSession();
         if (elements.connectionStatus) {
-            elements.connectionStatus.innerHTML = `<span style="color:var(--warning);">🔌 Сервер завершает работу...</span>`;
+            // eslint-disable-next-line quotes
+            elements.connectionStatus.innerHTML = `<span style='color:var(--warning);'>🔌 Сервер завершает работу...</span>`;
         }
         // Попытка переподключения через ServerClient
     });

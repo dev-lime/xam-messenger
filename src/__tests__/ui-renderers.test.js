@@ -3,7 +3,7 @@
  * Тестируем функции рендеринга
  */
 
-import { loadTranslations, setLanguage, t } from 'src/i18n.js';
+import { loadTranslations, setLanguage } from 'src/i18n.js';
 import {
     createFilesHtml,
     getStatusIcon,

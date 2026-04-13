@@ -5,12 +5,12 @@
 
 'use strict';
 
-import { elements, state, userSettings } from '../state.js';
+import { elements, state, userSettings, getServerClient } from '../state.js';
 import { t, setLanguage } from '../i18n.js';
 import { success } from '../toast.js';
 import { openServerSelector, connectToServer, refreshServerList } from '../dialogs/server.js';
 import { openProfileMenu, closeProfileMenu, saveSettings, openSettingsDialog, logout } from '../dialogs/profile.js';
-import { selectPeer, deleteChatWithPeer, sendMessage, loadMoreMessages } from '../chat/actions.js';
+import { deleteChatWithPeer, sendMessage, loadMoreMessages } from '../chat/actions.js';
 import { handleFileSelect, updateSendButton } from '../utils/files.js';
 import { CONFIG } from '../utils/helpers.js';
 import { saveAppSettings, loadAppSettings } from '../settings.js';
