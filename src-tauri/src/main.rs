@@ -2,17 +2,17 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use mdns_sd::ServiceDaemon;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use flume::RecvTimeoutError;
+use futures_util::{SinkExt, StreamExt};
+use mdns_sd::ServiceDaemon;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-use futures_util::{SinkExt, StreamExt};
-use tokio_util::sync::CancellationToken;
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use tauri::{Emitter, Manager};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_util::sync::CancellationToken;
 
 // FIX L-05: выносим mDNS service type в константу
 const MDNS_SERVICE_TYPE: &str = "_xam-messenger._tcp.local.";
@@ -60,7 +60,10 @@ struct WsState {
 
 impl WsState {
     fn new() -> Self {
-        Self { tx: None, shutdown: None }
+        Self {
+            tx: None,
+            shutdown: None,
+        }
     }
 }
 
@@ -75,8 +78,8 @@ async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
 
     // Запускаем mDNS поиск в отдельном потоке чтобы не блокировать UI
     let servers = tokio::task::spawn_blocking(|| {
-        let daemon = ServiceDaemon::new()
-            .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
+        let daemon =
+            ServiceDaemon::new().map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
         let receiver = daemon
             .browse(MDNS_SERVICE_TYPE)
@@ -122,7 +125,11 @@ async fn search_mdns_servers() -> Result<Vec<ServerInfo>, String> {
                             ws_url: format!("ws://{}:{}/ws", ip, port),
                             http_url: format!("http://{}:{}/api", ip, port),
                             source: "mdns".to_string(),
-                            txt_records: if txt_records.is_empty() { None } else { Some(txt_records) },
+                            txt_records: if txt_records.is_empty() {
+                                None
+                            } else {
+                                Some(txt_records)
+                            },
                         };
 
                         seen_services.insert(info.get_fullname().to_string(), server_info);
@@ -222,26 +229,22 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
     if !is_local_url(&url) {
         // Вариант 1: Проверяем наличие сети для удалённых адресов
         if !has_network_interface() {
-            return Err(
-                "Нет активного сетевого подключения.\n\n".to_string() +
-                "Включите Wi-Fi или подключите сетевой кабель.\n" +
-                "Интернет не нужен — достаточно локальной сети."
-            );
+            return Err("Нет активного сетевого подключения.\n\n".to_string()
+                + "Включите Wi-Fi или подключите сетевой кабель.\n"
+                + "Интернет не нужен — достаточно локальной сети.");
         }
     } else {
         log::info!("✅ Локальный адрес — подключаемся напрямую");
     }
 
-    let (ws_stream, _) = connect_async(&url)
-        .await
-        .map_err(|e| {
-            let err_str = e.to_string();
-            if err_str.contains("Network is unreachable") || err_str.contains("os error 51") {
-                "Сеть недоступна. Проверьте подключение к локальной сети.".to_string()
-            } else {
-                format!("Failed to connect: {}", err_str)
-            }
-        })?;
+    let (ws_stream, _) = connect_async(&url).await.map_err(|e| {
+        let err_str = e.to_string();
+        if err_str.contains("Network is unreachable") || err_str.contains("os error 51") {
+            "Сеть недоступна. Проверьте подключение к локальной сети.".to_string()
+        } else {
+            format!("Failed to connect: {}", err_str)
+        }
+    })?;
 
     let (mut write, mut read) = ws_stream.split();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<WsOutgoing>();
@@ -251,7 +254,8 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
 
     {
         let ws_state = app.state::<Mutex<WsState>>();
-        let mut state = ws_state.lock()
+        let mut state = ws_state
+            .lock()
             .map_err(|e| format!("WsState mutex poisoned: {}", e))?;
 
         // Отменяем предыдущий токен если был
@@ -334,24 +338,30 @@ async fn ws_connect(url: String, app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn ws_send(message: String, app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<Mutex<WsState>>();
-    let tx = state.lock()
+    let tx = state
+        .lock()
         .map_err(|e| format!("WsState mutex poisoned: {}", e))?
-        .tx.clone()
+        .tx
+        .clone()
         .ok_or("Not connected")?;
-    tx.send(WsOutgoing::Text(message)).map_err(|e| e.to_string())
+    tx.send(WsOutgoing::Text(message))
+        .map_err(|e| e.to_string())
 }
 
 /// Отправка бинарных данных через WebSocket (для чанковой передачи файлов)
 /// Принимает base64-строку — декодирует и отправляет как binary frame
 #[tauri::command]
 async fn ws_send_binary(data_b64: String, app: tauri::AppHandle) -> Result<(), String> {
-    let data = BASE64.decode(&data_b64)
+    let data = BASE64
+        .decode(&data_b64)
         .map_err(|e| format!("Invalid base64 data: {}", e))?;
 
     let state = app.state::<Mutex<WsState>>();
-    let tx = state.lock()
+    let tx = state
+        .lock()
         .map_err(|e| format!("WsState mutex poisoned: {}", e))?
-        .tx.clone()
+        .tx
+        .clone()
         .ok_or("Not connected")?;
     tx.send(WsOutgoing::Binary(data)).map_err(|e| e.to_string())
 }
@@ -361,7 +371,8 @@ async fn ws_send_binary(data_b64: String, app: tauri::AppHandle) -> Result<(), S
 async fn ws_close(app: tauri::AppHandle) -> Result<(), String> {
     log::info!("🔌 Закрытие WebSocket");
     let state = app.state::<Mutex<WsState>>();
-    let mut guard = state.lock()
+    let mut guard = state
+        .lock()
         .map_err(|e| format!("WsState mutex poisoned: {}", e))?;
 
     // Отменяем token — reader и writer задачи завершатся мгновенно
@@ -377,9 +388,7 @@ async fn ws_close(app: tauri::AppHandle) -> Result<(), String> {
 
 fn main() {
     // BP-1 FIX: инициализируем log через env_logger
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info")
-    ).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     tauri::Builder::default()
         .manage(Mutex::new(WsState::new()))
