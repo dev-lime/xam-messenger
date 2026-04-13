@@ -221,15 +221,32 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 web::get().to(handlers::download_file),
             )
             .route("/api/v1/online", web::get().to(handlers::get_online_users))
+            .route("/health", web::get().to(handlers::health_check))
     })
     .bind(format!("{}:{}", server_config.host, server_config.port))?
     .run();
 
     // Graceful shutdown
+    let state_for_shutdown = state.clone();
     let server_handle = server.handle();
     tokio::spawn(async move {
         if let Ok(()) = tokio::signal::ctrl_c().await {
             info!("📥 Получен сигнал завершения");
+
+            // PERF-3: Отправляем уведомление о завершении всем подключённым клиентам
+            let shutdown_payload = serde_json::json!({ "type": "server_shutdown", "message": "Server is shutting down" });
+            let senders = state_for_shutdown.user_senders.lock().await;
+            for (user_id, user_senders) in senders.iter() {
+                for tx in user_senders {
+                    let _ = tx.send(shutdown_payload.clone());
+                }
+                info!("📤 Отправлено server_shutdown пользователю {}", user_id);
+            }
+            drop(senders);
+
+            // Небольшая задержка чтобы клиенты получили уведомление
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
             server_handle.stop(true).await;
         }
     });

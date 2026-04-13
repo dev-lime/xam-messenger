@@ -1,12 +1,24 @@
-//! Обработчики HTTP запросов для XAM Messenger Server
+//! Обработчики HTTP запросов для XAM Messenger
 
 use actix_web::{HttpResponse, web};
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::db;
 use crate::error::AppError;
 use crate::models::AppState;
+
+/// Health-check эндпоинт для мониторинга
+pub async fn health_check(data: web::Data<AppState>) -> HttpResponse {
+    let db_ok = data.db.get().is_ok();
+    HttpResponse::Ok().json(json!({
+        "status": "ok",
+        "version": "1.0.0",
+        "db_available": db_ok,
+        "timestamp": Utc::now().timestamp()
+    }))
+}
 
 /// Запрос регистрации пользователя
 #[derive(Deserialize)]

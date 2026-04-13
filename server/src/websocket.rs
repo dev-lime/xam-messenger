@@ -5,8 +5,11 @@ use actix_ws::{Message, MessageStream};
 use chrono::Utc;
 use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
+use std::sync::{LazyLock, Mutex};
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 use std::time::SystemTime;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -15,6 +18,51 @@ use uuid::Uuid;
 
 use crate::db;
 use crate::models::{AppState, ChatMessage, ClientMsg, FileUploadState, User};
+
+// ============================================================================
+// Rate limiting для WebSocket сообщений
+// ============================================================================
+
+/// Лимит сообщений в секунду на пользователя
+const WS_RATE_LIMIT: u32 = 30;
+
+/// Структура для отслеживания частоты сообщений
+struct WsRateLimiter {
+    last_reset: Instant,
+    count: u32,
+}
+
+impl WsRateLimiter {
+    fn new() -> Self {
+        Self {
+            last_reset: Instant::now(),
+            count: 0,
+        }
+    }
+
+    /// Проверить лимит. Возвращает true если превышен.
+    fn check_and_increment(&mut self) -> bool {
+        let now = Instant::now();
+        // Сброс счётчика каждую секунду
+        if now.duration_since(self.last_reset) >= Duration::from_secs(1) {
+            self.count = 0;
+            self.last_reset = now;
+        }
+        self.count += 1;
+        self.count > WS_RATE_LIMIT
+    }
+}
+
+/// Глобальный rate limiter для WebSocket
+static WS_RATE_LIMITERS: LazyLock<Mutex<HashMap<String, WsRateLimiter>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Проверить rate limit для пользователя
+fn check_ws_rate_limit(user_id: &str) -> bool {
+    let mut limiters = WS_RATE_LIMITERS.lock().unwrap();
+    let limiter = limiters.entry(user_id.to_string()).or_insert_with(WsRateLimiter::new);
+    limiter.check_and_increment()
+}
 
 /// Получить лимит имени из env
 fn max_name_length() -> usize {
@@ -273,6 +321,27 @@ pub async fn handle_client_message(
     state: &AppState,
 ) {
     let msg_type = client_msg.msg_type.clone();
+
+    // Rate limiting для зарегистрированных пользователей (пропускаем register)
+    if let Some(uid) = user_id.as_ref() {
+        if msg_type != "register" && check_ws_rate_limit(uid) {
+            log::warn!(
+                "⚠️ Rate limit превышен для пользователя {}: {}",
+                uid,
+                msg_type
+            );
+            let _ = session
+                .text(
+                    json!({
+                        "type": "error",
+                        "message": "Rate limit exceeded. Too many messages per second."
+                    })
+                    .to_string(),
+                )
+                .await;
+            return;
+        }
+    }
 
     let future = AssertUnwindSafe(async {
         match client_msg.msg_type.as_str() {

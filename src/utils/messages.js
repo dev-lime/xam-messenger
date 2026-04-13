@@ -6,7 +6,9 @@
 'use strict';
 
 import { escapeHtml, getFileIcon, formatFileSize, STATUS_ICONS, DELIVERY_STATUS } from '../utils/helpers.js';
-import { state, elements } from '../state.js';
+import { state, elements, getServerClient } from '../state.js';
+import { t } from '../i18n.js';
+import { error as showError } from '../toast.js';
 
 /**
  * Рендеринг сообщений
@@ -100,12 +102,13 @@ function createFilesHtml(files) {
         const icon = getFileIcon(f.name);
         const size = formatFileSize(f.size);
         const name = escapeHtml(f.name);
-        return `<div class="file-item" data-filename="${name}" onclick="window._openFile('${f.path || ''}','${name}')">
+        const pathAttr = escapeHtml(f.path || '');
+        return `<div class="file-item" data-filepath="${pathAttr}" data-filename="${name}">
             <span class="file-icon">${icon}</span>
             <span class="file-info">
                 <span class="file-name-row">
                     <span class="file-name">${name}</span>
-                    <button class="file-download-btn" onclick="event.stopPropagation();window._downloadFile('${f.path || ''}','${name}')">
+                    <button class="file-download-btn" data-filepath="${pathAttr}" data-filename="${name}" type="button">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                             <path d="M12 5v14M5 12l7 7 7-7"/>
                         </svg>
@@ -130,4 +133,68 @@ function showMessageInput() {
 export function scrollToBottom() {
     const container = elements.chatScrollContainer || elements.messagesContainer;
     container.scrollTop = container.scrollHeight;
+}
+
+/**
+ * Настройка event delegation для кликов по файлам в сообщениях
+ * Вызывать после renderMessages() или один раз при инициализации
+ */
+export function setupFileDelegation() {
+    if (!elements.messages) return;
+
+    elements.messages.addEventListener('click', (e) => {
+        // Клик по file-item (открытие файла)
+        const fileItem = e.target.closest('.file-item');
+        if (fileItem) {
+            const filepath = fileItem.dataset.filepath;
+            const filename = fileItem.dataset.filename;
+            if (filepath && filename) {
+                e.preventDefault();
+                openFile(filepath, filename);
+            }
+            return;
+        }
+
+        // Клик по кнопке скачивания
+        const downloadBtn = e.target.closest('.file-download-btn');
+        if (downloadBtn) {
+            const filepath = downloadBtn.dataset.filepath;
+            const filename = downloadBtn.dataset.filename;
+            if (filepath && filename) {
+                e.preventDefault();
+                e.stopPropagation();
+                downloadFile(filepath, filename);
+            }
+        }
+    });
+}
+
+/**
+ * Открытие/скачивание файла
+ */
+async function openFile(filepath, filename) {
+    if (!filepath) { showError(t('filePathNotSpecified')); return; }
+    try {
+        const sc = getServerClient();
+        const url = filepath.startsWith('http') ? filepath : `${sc.httpUrl}/files/download?file_id=${encodeURIComponent(filepath)}`;
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(a.href);
+        document.body.removeChild(a);
+    } catch (error) {
+        showError(t('fileOpenError', error.message));
+    }
+}
+
+/**
+ * Скачивание файла
+ */
+async function downloadFile(filepath, filename) {
+    openFile(filepath, filename);
 }

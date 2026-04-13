@@ -3,26 +3,12 @@
  * @module ServerClient
  */
 
-// Реэкспорт для обратной совместимости с тестами
-export {
-    generateLocalNetworkServers, wsToHttpUrl, extractIpFromWsUrl,
-    pingServer, cacheServer, getCachedServers,
-    CACHE_CONFIG, WS_CONFIG, SUBNETS, SCAN_CONFIG,
-} from './discovery.js';
-
-// Глобально для app.js
+// Discovery функции импортируются из discovery.js — единственный источник правды
 import {
     generateLocalNetworkServers, wsToHttpUrl, extractIpFromWsUrl,
     pingServer, cacheServer, getCachedServers,
-    WS_CONFIG, SCAN_CONFIG,
+    WS_CONFIG, SCAN_CONFIG, discoverAllServers,
 } from './discovery.js';
-
-window.generateLocalNetworkServers = generateLocalNetworkServers;
-window.wsToHttpUrl = wsToHttpUrl;
-window.extractIpFromWsUrl = extractIpFromWsUrl;
-window.pingServer = pingServer;
-window.cacheServer = cacheServer;
-window.getCachedServers = getCachedServers;
 
 // ============================================================================
 // Константы
@@ -199,150 +185,18 @@ class ServerClient {
     }
 
     // ========================================================================
-    // Обнаружение серверов
+    // Обнаружение серверов (делегирование к discovery.js)
     // ========================================================================
 
     /**
-	 * Поиск серверов через mDNS (только Tauri)
-	 * @returns {Promise<Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string, hostname?: string}>}
-	 */
-    async discoverViaMdns() {
-        if (!this.isTauri) {
-            console.log('ℹ️ mDNS недоступен в веб-версии');
-            return [];
-        }
-
-        try {
-            console.log('🔍 Поиск серверов через mDNS...');
-            const servers = await invokeTauri('search_mdns_servers');
-
-            console.log(`✅ Найдено ${servers.length} серверов через mDNS:`, servers);
-
-            // Кэшируем найденные серверы и преобразуем поля из snake_case в camelCase
-            const normalizedServers = servers.map(s => ({
-                ip: s.ip,
-                port: s.port,
-                hostname: s.hostname,
-                wsUrl: s.ws_url,
-                httpUrl: s.http_url,
-                source: s.source,
-                txtRecords: s.txt_records,
-            }));
-
-            normalizedServers.forEach(s => cacheServer(s.ip, s.port, 'mdns'));
-
-            return normalizedServers;
-        } catch (e) {
-            console.warn('⚠️ Ошибка mDNS поиска:', e);
-            return [];
-        }
-    }
-
-    /**
-	 * Поиск серверов в кэше
-	 * @returns {Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string}>}
-	 */
-    discoverViaCache() {
-        const cached = getCachedServers();
-        const servers = cached.map(s => ({
-            ip: s.ip,
-            port: s.port,
-            wsUrl: `ws://${s.ip}:${s.port}/ws`,
-            httpUrl: `http://${s.ip}:${s.port}/api/v1`,
-            source: s.source,
-        }));
-		
-        console.log(`📦 Найдено ${servers.length} серверов в кэше`);
-        return servers;
-    }
-
-    /**
-	 * Поиск серверов через сканирование подсетей
-	 * @returns {Promise<Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string}>>}
-	 */
-    async discoverViaScan() {
-        console.log('🔍 Сканирование локальной сети...');
-        const candidates = generateLocalNetworkServers();
-        const found = [];
-		
-        // Оптимизация: параллельное сканирование с ограничением concurrent запросов
-        const CONCURRENCY = 20;  // Максимум 20 одновременных запросов
-        const SCAN_TIMEOUT = 500;  // Уменьшенный таймаут (500ms вместо 2000ms)
-		
-        console.log(`📡 Сканирование ${candidates.length} адресов (параллельно по ${CONCURRENCY})...`);
-		
-        // Функция для пинга с ограничением по времени
-        const pingWithTimeout = async (url) => {
-            const httpUrl = wsToHttpUrl(url);
-            const isAlive = await pingServer(httpUrl, SCAN_TIMEOUT);
-            return { url, httpUrl, isAlive };
-        };
-		
-        // Сканируем пачками по CONCURRENCY адресов
-        for (let i = 0; i < candidates.length; i += CONCURRENCY) {
-            const batch = candidates.slice(i, i + CONCURRENCY);
-			
-            // Параллельный пинг всех адресов в пачке
-            const results = await Promise.allSettled(
-                batch.map(url => pingWithTimeout(url))
-            );
-			
-            // Обрабатываем результаты
-            for (const result of results) {
-                if (result.status === 'fulfilled' && result.value.isAlive) {
-                    const { url, httpUrl } = result.value;
-                    const ip = extractIpFromWsUrl(url);
-                    found.push({
-                        ip,
-                        port: SCAN_CONFIG.PORT,
-                        wsUrl: url,
-                        httpUrl,
-                        source: 'scan',
-                    });
-                    console.log('✅ Найден сервер:', url);
-                }
-            }
-			
-            // Небольшая задержка между пачками для избежания перегрузки сети
-            if (i + CONCURRENCY < candidates.length) {
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }
-        }
-
-        console.log(`✅ Сканирование завершено, найдено ${found.length} серверов`);
-        return found;
-    }
-
-    /**
 	 * Полное обнаружение серверов (mDNS → кэш → сканирование)
+	 * Делегирует к discoverAllServers из discovery.js
 	 * @returns {Promise<Array<{ip: string, port: number, wsUrl: string, httpUrl: string, source: string, hostname?: string}>}
 	 */
     async discoverAllServers() {
-        console.log('🔍 Запуск обнаружения серверов...');
-        this.discoveredServers = [];
-
-        // 1. mDNS (приоритет)
-        const mdnsServers = await this.discoverViaMdns();
-        this.discoveredServers.push(...mdnsServers);
-
-        // 2. Кэш (если mDNS ничего не нашёл)
-        if (mdnsServers.length === 0) {
-            const cachedServers = this.discoverViaCache();
-            this.discoveredServers.push(...cachedServers);
-        }
-
-        // 3. Сканирование (если ничего не найдено)
-        if (this.discoveredServers.length === 0) {
-            const scannedServers = await this.discoverViaScan();
-            this.discoveredServers.push(...scannedServers);
-        }
-
-        // Сортировка: mDNS > кэш > сканирование
-        const priority = { mdns: 0, cache: 1, scan: 2, manual: 3 };
-        this.discoveredServers.sort((a, b) => priority[a.source] - priority[b.source]);
-
-        console.log(`📊 Всего найдено серверов: ${this.discoveredServers.length}`);
-        return this.discoveredServers;
+        const servers = await discoverAllServers();
+        this.discoveredServers = servers;
+        return servers;
     }
 
     /**
@@ -634,6 +488,11 @@ class ServerClient {
             this.notifyHandlers('chat_deleted', data);
             break;
 
+        case 'server_shutdown':
+            console.warn('⚠️ Сервер завершает работу');
+            this.notifyHandlers('server_shutdown', data);
+            break;
+
         default:
             console.warn('⚠️ Неизвестный тип сообщения:', type);
         }
@@ -755,6 +614,19 @@ class ServerClient {
     }
 
     /**
+	 * Форматирование размера файла
+	 * @param {number} bytes - Размер в байтах
+	 * @returns {string}
+	 */
+    _formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    /**
 	 * Отправка файла через WebSocket чанками (без ограничения по размеру)
 	 * Протокол: file_start → binary chunks → file_end
 	 * @param {File} file - Файл для отправки
@@ -764,6 +636,7 @@ class ServerClient {
 	 */
     async sendFile(file, recipientId = null, onProgress = null) {
         const fileId = crypto.randomUUID();
+        const formattedSize = this._formatBytes(file.size);
 
         // Отправляем file_start
         this.send({
@@ -774,9 +647,12 @@ class ServerClient {
             recipient_id: recipientId,
         });
 
+        console.log(`📤 Отправка файла: ${file.name} (${formattedSize}) — 0%`);
+
         // Читаем файл чанками и отправляем
         const totalBytes = file.size;
         let bytesSent = 0;
+        let lastLoggedPercent = 0;
 
         if (totalBytes === 0) {
             // Пустой файл — сразу file_end
@@ -817,6 +693,12 @@ class ServerClient {
             if (onProgress) {
                 onProgress(bytesSent, totalBytes);
             }
+            // Логирование каждые 10%
+            const percent = Math.round((bytesSent / totalBytes) * 100);
+            if (percent - lastLoggedPercent >= 10 || percent === 100) {
+                console.log(`📤 Отправка файла: ${file.name} (${formattedSize}) — ${percent}%`);
+                lastLoggedPercent = percent;
+            }
         }
 
         // Отправляем file_end
@@ -824,6 +706,8 @@ class ServerClient {
             type: MESSAGE_TYPES.FILE_END,
             file_id: fileId,
         });
+
+        console.log(`📤 Отправка файла: ${file.name} (${formattedSize}) — 100% ✅`);
 
         return { name: file.name, size: totalBytes, path: fileId };
     }
@@ -987,6 +871,12 @@ class ServerClient {
 
 // Экспортируем класс для ES modules
 export { ServerClient };
+
+// Реэкспорт discovery функций для обратной совместимости
+export {
+    generateLocalNetworkServers, wsToHttpUrl, extractIpFromWsUrl,
+    pingServer, cacheServer, getCachedServers,
+} from './discovery.js';
 
 // Экспортируем глобально для обратной совместимости
 if (typeof window !== 'undefined') {
