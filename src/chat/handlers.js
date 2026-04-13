@@ -11,7 +11,7 @@ import { renderPeers } from '../utils/peers.js';
 import { renderMessages, renderEmptyChatState } from '../utils/messages.js';
 import { sendNotification } from '../notifications.js';
 import { t } from '../i18n.js';
-import { state, elements, setAttachedFiles, setUserSettings, getServerClient } from '../state.js';
+import { state, elements, getServerClient } from '../state.js';
 
 /**
  * Обработка нового сообщения

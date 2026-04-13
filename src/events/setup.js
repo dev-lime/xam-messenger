@@ -12,8 +12,9 @@ import { success } from '../toast.js';
 import { openServerSelector, connectToServer, refreshServerList } from '../dialogs/server.js';
 import { openProfileMenu, closeProfileMenu, saveSettings, openSettingsDialog, logout } from '../dialogs/profile.js';
 import { selectPeer, deleteChatWithPeer, sendMessage, loadMoreMessages } from '../chat/actions.js';
-import { handleFileSelect, renderAttachedFiles, updateSendButton, clearMessageInput } from '../utils/files.js';
+import { handleFileSelect, updateSendButton } from '../utils/files.js';
 import { CONFIG } from '../utils/helpers.js';
+import { saveAppSettings, loadAppSettings } from '../storage.js';
 
 /**
  * Настройка всех обработчиков
@@ -96,22 +97,40 @@ export function setupEventListeners() {
     // Профиль
     if (elements.profileAvatarBtn) elements.profileAvatarBtn.addEventListener('click', e => { e.stopPropagation(); openProfileMenu(); });
     if (elements.menuProfile) elements.menuProfile.addEventListener('click', () => { openSettingsDialog(); closeProfileMenu(); });
-    if (elements.menuSettings) elements.menuSettings.addEventListener('click', () => { if (!state.connected) { alert('Подключитесь к серверу'); } else { elements.appSettingsDialog.showModal(); } closeProfileMenu(); });
+    if (elements.menuSettings) elements.menuSettings.addEventListener('click', () => { if (!state.connected) { alert(t('connectToServerAlert')); } else { elements.appSettingsDialog.showModal(); } closeProfileMenu(); });
     if (elements.menuLogout) elements.menuLogout.addEventListener('click', logout);
     if (elements.menuChangeServer) elements.menuChangeServer.addEventListener('click', () => { if (state.connected) { getServerClient().disconnect(); state.connected = false; state.user = null; state.selectedServer = null; state.peers = []; state.messages = []; state.filteredMessages = []; state.currentPeer = null; clearSession(); } openServerSelector(); closeProfileMenu(); });
 
     // Настройки приложения
     if (elements.closeAppSettings) elements.closeAppSettings.addEventListener('click', () => elements.appSettingsDialog.close());
-    if (elements.saveAppSettings) elements.saveAppSettings.addEventListener('click', () => { elements.appSettingsDialog.close(); });
-    if (elements.resetAppSettings) elements.resetAppSettings.addEventListener('click', () => { elements.appSettingsDialog.close(); });
+    if (elements.saveAppSettings) elements.saveAppSettings.addEventListener('click', () => {
+        const appSettings = collectAppSettings();
+        saveAppSettings(appSettings);
+        applyAppSettings(appSettings);
+        elements.appSettingsDialog.close();
+        success(t('done'));
+    });
+    if (elements.resetAppSettings) elements.resetAppSettings.addEventListener('click', () => {
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.APP_SETTINGS);
+        elements.appSettingsDialog.close();
+    });
     if (elements.settingFontSize && elements.fontSizeValue) elements.settingFontSize.addEventListener('input', () => { elements.fontSizeValue.textContent = `${elements.settingFontSize.value}px`; });
 
     // Язык
-    if (elements.settingLanguage) elements.settingLanguage.addEventListener('change', e => { setLanguage(e.target.value); success(`Language: ${e.target.value === 'ru' ? 'Русский' : 'English'}`); });
+    if (elements.settingLanguage) elements.settingLanguage.addEventListener('change', e => { setLanguage(e.target.value); success(`Language: ${e.target.value === 'ru' ? t('languageNameRu') : t('languageNameEn')}`); });
 
     // Диалог настроек профиля
     elements.cancelSettings.addEventListener('click', () => elements.settingsDialog.close());
     elements.saveSettings.addEventListener('click', saveSettings);
+    // TODO: Реализовать удаление профиля (пока заглушка)
+    if (elements.deleteProfileBtn) {
+        elements.deleteProfileBtn.addEventListener('click', () => {
+            // Пока не реализовано — просто показываем confirm
+            if (confirm(t('deleteProfileConfirm'))) {
+                alert('Функция удаления профиля ещё не реализована.');
+            }
+        });
+    }
 
     // Серверы
     if (elements.refreshServersBtn) elements.refreshServersBtn.addEventListener('click', refreshServerList);
@@ -147,37 +166,71 @@ async function showLatency() {
         const timer = setTimeout(() => controller.abort(), 3000);
         await fetch(`${state.selectedServer.httpUrl}/users`, { method: 'GET', signal: controller.signal });
         clearTimeout(timer);
-        latencyEl.textContent = `⏱ ${Math.round(performance.now() - latencyEl.dataset.start || 0)} мс`;
-    } catch { latencyEl.textContent = '❌ Нет ответа'; }
+        latencyEl.textContent = `⏱ ${t('latencyMs', Math.round(performance.now() - latencyEl.dataset.start || 0))}`;
+    } catch { latencyEl.textContent = t('noResponse'); }
     setTimeout(() => { latencyEl.classList.remove('visible'); latencyEl.classList.add('hiding'); setTimeout(() => { statusEl.classList.remove('pinging'); latencyEl.className = 'status-latency'; }, 400); }, 2000);
 }
 
 /**
  * Подключение к серверу вручную
+ * Поддерживаемые форматы:
+ * - IP: 192.168.1.100, 192.168.1.100:8080
+ * - HTTP URL: http://192.168.1.100:8080, http://myserver.local:8080
+ * - WS URL: ws://192.168.1.100:8080/ws, wss://server.example.com/ws
+ * - mDNS hostname: XAM Messenger._xam-messenger._tcp.local
+ * - Домен: myserver.local, server.example.com
  */
 async function connectToManualServer() {
     const address = elements.manualServerInput?.value.trim();
-    if (!address) { alert('Введите адрес сервера'); return; }
+    if (!address) { alert(t('enterServerAddress')); return; }
+
     let wsUrl = address;
-    if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) wsUrl = `ws://${address}`;
+
+    // Определяем тип адреса
+    const isWsUrl = address.startsWith('ws://') || address.startsWith('wss://');
+    const isHttpUrl = address.startsWith('http://') || address.startsWith('https://');
+    const isMdnsPattern = /_xam-messenger|\.local/.test(address); // mDNS или .local домен
+
+    if (!isWsUrl && !isHttpUrl) {
+        // Нет префикса — добавляем ws://
+        wsUrl = `ws://${address}`;
+    }
+
     try {
         const parsed = new URL(wsUrl);
-        const ip = parsed.hostname;
+        const hostname = parsed.hostname;
         const port = parsed.port ? parseInt(parsed.port) : 8080;
-        const httpUrl = `http://${ip}:${port}`;
-        if (!parsed.pathname.endsWith('/ws')) wsUrl = `ws://${ip}:${port}/ws`;
-        state.selectedServer = { wsUrl, httpUrl, ip, port, source: 'manual' };
+
+        // Определяем httpUrl из wsUrl
+        let httpUrl;
+        if (isHttpUrl) {
+            httpUrl = address.replace(/:\/\/.*$/, `://${hostname}:${port}`);
+        } else {
+            httpUrl = `http://${hostname}:${port}`;
+        }
+
+        // Убеждаемся что pathname оканчивается на /ws
+        if (!parsed.pathname.endsWith('/ws')) {
+            wsUrl = `${parsed.protocol}//${hostname}:${port}/ws`;
+        }
+
+        state.selectedServer = { wsUrl, httpUrl, ip: hostname, port, source: 'manual', hostname: isMdnsPattern ? hostname : null };
+
         if (window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke) {
             const fn = window.__TAURI__.core?.invoke || window.__TAURI__.invoke;
-            fn('cache_server', { ip, port, source: 'manual' }).catch(console.warn);
+            fn('cache_server', { ip: hostname, port, source: 'manual' }).catch(console.warn);
         }
+
         if (elements.serverSelectorDialog) elements.serverSelectorDialog.close();
-        if (elements.selectedServerInfo) { elements.selectedServerInfo.textContent = `📡 ${ip}:${port}`; elements.selectedServerInfo.style.color = 'var(--success)'; }
+        if (elements.selectedServerInfo) {
+            elements.selectedServerInfo.textContent = `📡 ${hostname}:${port}`;
+            elements.selectedServerInfo.style.color = 'var(--success)';
+        }
         elements.connectDialog.showModal();
         elements.userNameInput.value = userSettings?.name || '';
         elements.userNameInput.focus();
         if (elements.confirmConnect) elements.confirmConnect.disabled = !elements.userNameInput.value.trim();
-    } catch (e) { alert(`Неверный формат: ${e.message}`); }
+    } catch (e) { alert(t('invalidUrlFormat', e.message)); }
 }
 
 /**
@@ -204,7 +257,7 @@ function initDragAndDrop() {
  * Открытие/скачивание файла
  */
 async function openFile(filepath, filename) {
-    if (!filepath) { alert('Путь к файлу не указан'); return; }
+    if (!filepath) { alert(t('filePathNotSpecified')); return; }
     try {
         const sc = getServerClient();
         const url = filepath.startsWith('http') ? filepath : `${sc.httpUrl}/files/download?file_id=${encodeURIComponent(filepath)}`;
@@ -214,7 +267,7 @@ async function openFile(filepath, filename) {
         a.href = URL.createObjectURL(blob); a.download = filename;
         document.body.appendChild(a); a.click();
         URL.revokeObjectURL(a.href); document.body.removeChild(a);
-    } catch (error) { alert(`Ошибка: ${error.message}`); }
+    } catch (error) { alert(t('fileOpenError', error.message)); }
 }
 
 async function downloadFile(filepath, filename) {
@@ -224,4 +277,62 @@ async function downloadFile(filepath, filename) {
 function clearSession() {
     localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_USER);
     localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
+}
+
+/**
+ * Собрать текущие настройки приложения из UI
+ */
+function collectAppSettings() {
+    return {
+        soundNotifications: elements.soundNotifications?.checked ?? true,
+        desktopNotifications: elements.desktopNotifications?.checked ?? true,
+        fontSize: elements.settingFontSize?.value ?? '14',
+        showAvatars: elements.showAvatars?.checked ?? true,
+        showTimestamps: elements.showTimestamps?.checked ?? true,
+        theme: elements.settingTheme?.value ?? 'light',
+        autoDownload: elements.autoDownload?.checked ?? false,
+        language: elements.settingLanguage?.value ?? 'ru',
+    };
+}
+
+/**
+ * Применить настройки приложения к UI
+ */
+export function applyAppSettings(settings) {
+    if (elements.soundNotifications) elements.soundNotifications.checked = settings.soundNotifications ?? true;
+    if (elements.desktopNotifications) elements.desktopNotifications.checked = settings.desktopNotifications ?? true;
+    if (elements.settingFontSize) {
+        elements.settingFontSize.value = settings.fontSize ?? '14';
+        if (elements.fontSizeValue) elements.fontSizeValue.textContent = `${settings.fontSize ?? '14'}px`;
+    }
+    if (elements.showAvatars) elements.showAvatars.checked = settings.showAvatars ?? true;
+    if (elements.showTimestamps) elements.showTimestamps.checked = settings.showTimestamps ?? true;
+    if (elements.settingTheme) elements.settingTheme.value = settings.theme ?? 'light';
+    if (elements.autoDownload) elements.autoDownload.checked = settings.autoDownload ?? false;
+    if (elements.settingLanguage) elements.settingLanguage.value = settings.language ?? 'ru';
+
+    // Применяем языкку
+    if (settings.language) setLanguage(settings.language);
+
+    // Применяем размер шрифта к body
+    if (settings.fontSize) {
+        document.body.style.fontSize = `${settings.fontSize}px`;
+    }
+
+    // Применяем тему
+    if (settings.theme === 'dark') {
+        document.documentElement.classList.add('dark-theme');
+    } else {
+        document.documentElement.classList.remove('dark-theme');
+    }
+}
+
+/**
+ * Загрузка настроек приложения при инициализации
+ */
+export function initAppSettings() {
+    const saved = loadAppSettings();
+    if (Object.keys(saved).length > 0) {
+        applyAppSettings(saved);
+    }
 }

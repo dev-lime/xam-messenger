@@ -164,22 +164,28 @@
     <!-- Диалог настроек -->
     <dialog id="settingsDialog" class="dialog">
         <div class="dialog-header">
-            <h3>Настройки профиля</h3>
+            <h3 data-i18n="profileSettings">Настройки профиля</h3>
         </div>
         <div class="dialog-content">
             <div class="form-group">
-                <label>Ваше имя</label>
-                <input type="text" id="settingsNameInput" placeholder="Ваше имя">
+                <label data-i18n="nameLabel">Ваше имя</label>
+                <input type="text" id="settingsNameInput" data-i18n-placeholder="namePlaceholder" placeholder="Введите имя">
             </div>
             <div class="form-group">
-                <label>Аватар (эмодзи)</label>
+                <label data-i18n="avatarLabel">Аватар (эмодзи)</label>
                 <input type="text" id="settingsAvatarInput" placeholder="👤" maxlength="2">
             </div>
-            <p class="hint">Настройки сохраняются в базе данных</p>
+            <p class="hint" data-i18n="settingsHint">Настройки сохраняются в базе данных</p>
         </div>
         <div class="dialog-actions">
-            <button class="btn" id="cancelSettings">Отмена</button>
-            <button class="btn btn-primary" id="saveSettings">Сохранить</button>
+            <button class="btn" id="cancelSettings" data-i18n="cancel">Отмена</button>
+            <button class="btn btn-primary" id="saveSettings" data-i18n="save">Сохранить</button>
+        </div>
+        <div class="dialog-actions dialog-actions-danger" style="border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px;">
+            <button class="btn btn-danger-outline" id="deleteProfileBtn" data-action="delete-profile" data-i18n="deleteProfile">
+                🗑️ Удалить профиль
+            </button>
+            <p class="hint" data-i18n="deleteProfileDesc" style="margin-top: 4px;">Это действие удалит ваш аккаунт с сервера.</p>
         </div>
     </dialog>
 

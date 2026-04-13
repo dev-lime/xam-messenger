@@ -5,14 +5,14 @@
 
 'use strict';
 
-import { DELIVERY_STATUS, CONFIG } from '../utils/helpers.js';
+import { DELIVERY_STATUS } from '../utils/helpers.js';
 import { t } from '../i18n.js';
 import { success, showError } from '../toast.js';
-import { state, elements, attachedFiles, setAttachedFiles, getServerClient } from '../state.js';
+import { state, elements, attachedFiles, getServerClient } from '../state.js';
 import { filterMessagesForCurrentChat, hasMoreMessagesForCurrentPeer } from './pagination.js';
 import { renderPeers } from '../utils/peers.js';
-import { renderMessages, renderEmptyChatState, scrollToBottom } from '../utils/messages.js';
-import { renderAttachedFiles, updateSendButton, clearMessageInput } from '../utils/files.js';
+import { renderMessages, renderEmptyChatState } from '../utils/messages.js';
+import { clearMessageInput } from '../utils/files.js';
 
 /**
  * Отправка сообщения
@@ -50,7 +50,7 @@ export async function sendMessage() {
 /**
  * Выбор контакта
  */
-export function selectPeer(userId, userName) {
+export function selectPeer(userId) {
     state.currentPeer = userId;
     state.lastRequestedBeforeId = null;
     state.currentPeerBeforeId = null;

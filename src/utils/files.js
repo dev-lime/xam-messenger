@@ -5,7 +5,7 @@
 
 'use strict';
 
-import { getFileIcon, formatFileSize, CONFIG } from '../utils/helpers.js';
+import { getFileIcon, CONFIG } from '../utils/helpers.js';
 import { t } from '../i18n.js';
 import { showError } from '../toast.js';
 import { state, elements, attachedFiles, setAttachedFiles, getServerClient } from '../state.js';
@@ -73,7 +73,7 @@ export function updateSendButton() {
  * Открытие файла — скачивание
  */
 export async function openFile(filepath, filename) {
-    if (!filepath) { showError('Путь к файлу не указан'); return; }
+    if (!filepath) { showError(t('filePathNotSpecified')); return; }
     try {
         const httpUrl = getServerClient().httpUrl;
         const fileUrl = filepath.startsWith('http') ? filepath :
@@ -86,7 +86,7 @@ export async function openFile(filepath, filename) {
         a.href = url; a.download = filename;
         document.body.appendChild(a); a.click();
         window.URL.revokeObjectURL(url); document.body.removeChild(a);
-    } catch (error) { showError(`Не удалось открыть файл: ${error.message}`); }
+    } catch (error) { showError(t('fileDownloadError', error.message)); }
 }
 
 /**

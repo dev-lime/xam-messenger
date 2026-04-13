@@ -80,6 +80,7 @@ export const CONFIG = {
     AVATAR_DEFAULT: '👤',
     STORAGE_KEYS: {
         USER_SETTINGS: 'xam-user-settings',
+        APP_SETTINGS: 'xam-app-settings',
         LAST_MESSAGE_ID: 'xam-last-message-id',
         HAS_MORE: 'xam-has-more',
         SESSION_USER: 'xam-session-user',

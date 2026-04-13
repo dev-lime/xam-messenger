@@ -168,7 +168,14 @@ jobs:
     - name: Run Rust clippy
       working-directory: ./server
       run: cargo clippy -- -D warnings
-    
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run cargo audit (security check)
+      working-directory: ./server
+      run: cargo audit
+
     - name: Run ESLint
       run: npm run lint || true
 

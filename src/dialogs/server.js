@@ -6,14 +6,12 @@
 'use strict';
 
 import { t } from '../i18n.js';
-import { success, showError } from '../toast.js';
-import { state, elements, userSettings, setUserSettings } from '../state.js';
+import { showError } from '../toast.js';
+import { state, elements, userSettings } from '../state.js';
 import { getServerClient } from '../state.js';
-import { saveSession, loadSession, clearSession, saveUserSettings, loadUserSettings } from '../storage.js';
+import { saveSession } from '../storage.js';
 import { discoverAllServers, wsToHttpUrl, extractIpFromWsUrl, pingServer } from '../discovery.js';
 import { renderPeers } from '../utils/peers.js';
-import { filterMessagesForCurrentChat } from '../chat/pagination.js';
-import { renderMessages } from '../utils/messages.js';
 
 /**
  * Обнаружение серверов
@@ -58,6 +56,12 @@ export async function refreshServerList() {
         const servers = await discoverAllServers();
         state.discoveredServers = servers;
         if (servers.length === 0) { renderServerList([]); return; }
+
+        // Сначала показываем все серверы со статусом "pending" (только что найдены)
+        const pendingServers = servers.map(s => ({ ...s, online: null })); // null = unknown
+        renderServerList(pendingServers);
+
+        // Затем пингуем каждый сервер и обновляем статус
         const withStatus = await Promise.all(servers.map(async s => {
             const online = await pingServer(s.httpUrl, 3000);
             return { ...s, online };
@@ -82,14 +86,15 @@ function renderServerList(servers) {
         return;
     }
     const icons = { mdns: '📢', cache: '📦', scan: '🔍', manual: '✏️' };
-    const names = { mdns: 'mDNS', cache: 'кэш', scan: 'сканирование', manual: 'вручную' };
+    const names = { mdns: t('sourceMdns'), cache: t('sourceCache'), scan: t('sourceScan'), manual: t('sourceManual') };
     elements.serverList.innerHTML = servers.map(s => {
-        const cls = s.online ? 'online' : 'offline';
-        return `<div class="server-item ${cls}" data-ws-url="${s.wsUrl}">
-            <div class="server-status-indicator ${cls}"></div>
+        const statusCls = s.online === null ? 'pending' : (s.online ? 'online' : 'offline');
+        const statusText = s.online === null ? '⏳ Проверка...' : (s.online ? t('onlineText') : t('offlineText'));
+        return `<div class="server-item ${statusCls}" data-ws-url="${s.wsUrl}">
+            <div class="server-status-indicator ${statusCls}"></div>
             <div class="server-info"><div class="server-address">${s.ip}:${s.port}</div>
             <div class="server-source">${icons[s.source] || '📡'} ${names[s.source] || s.source}${s.hostname ? `<br><small style="color:var(--text-tertiary);">${s.hostname}</small>` : ''}</div></div>
-            <div class="server-status-text ${cls}">${s.online ? t('onlineText') : t('offlineText')}</div>
+            <div class="server-status-text ${statusCls}">${statusText}</div>
             <button class="server-connect-btn" onclick="window._connectToServer('${s.wsUrl}')">${t('connect')}</button></div>`;
     }).join('');
 }
@@ -129,7 +134,7 @@ export async function connectToServer() {
         setTimeout(() => elements.connectDialog.close(), 500);
     } catch (error) {
         console.error('❌ Ошибка подключения:', error);
-        elements.serverStatus.innerHTML = '<span style="color:var(--error);">❌ Ошибка<br><small>Проверьте что сервер запущен</small></span>';
+        elements.serverStatus.innerHTML = `<span style="color:var(--error);">❌ ${t('connectionError')}<br><small>${t('serverCheckRunning')}</small></span>`;
         elements.confirmConnect.disabled = false;
     }
 }
