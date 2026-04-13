@@ -3,226 +3,47 @@
  * @module ServerClient
  */
 
+// Реэкспорт для обратной совместимости с тестами
+export {
+	generateLocalNetworkServers, wsToHttpUrl, extractIpFromWsUrl,
+	pingServer, cacheServer, getCachedServers,
+	CACHE_CONFIG, WS_CONFIG, SUBNETS, SCAN_CONFIG,
+} from './discovery.js';
+
+// Глобально для app.js
+import {
+	generateLocalNetworkServers, wsToHttpUrl, extractIpFromWsUrl,
+	pingServer, cacheServer, getCachedServers,
+	WS_CONFIG, SCAN_CONFIG,
+} from './discovery.js';
+
+window.generateLocalNetworkServers = generateLocalNetworkServers;
+window.wsToHttpUrl = wsToHttpUrl;
+window.extractIpFromWsUrl = extractIpFromWsUrl;
+window.pingServer = pingServer;
+window.cacheServer = cacheServer;
+window.getCachedServers = getCachedServers;
+
 // ============================================================================
 // Константы
 // ============================================================================
 
-const WS_CONFIG = {
-	RECONNECT_DELAY: 2000,
-	MAX_RECONNECT_ATTEMPTS: 10,
-	CONNECTION_TIMEOUT: 3000,
-	MDNS_TIMEOUT: 3000,
-	SCAN_TIMEOUT: 2000,
-};
-
-const SERVER_CANDIDATES = [
-	'ws://localhost:8080/ws',
-	'ws://127.0.0.1:8080/ws',
-];
-
-// Расширенный список подсетей для сканирования
-const SUBNETS = [
-	'192.168.1.',
-	'192.168.0.',
-	'192.168.88.',
-	'192.168.2.',
-	'192.168.3.',
-	'192.168.10.',
-	'192.168.31.',
-	'10.0.0.',
-	'10.0.1.',
-	'10.0.2.',
-	'10.0.3.',
-	'172.16.0.',
-	'172.16.1.',
-];
-
-const MESSAGE_TYPES = {
-	REGISTER: 'register',
-	REGISTERED: 'registered',
-	MESSAGE: 'message',
-	ACK: 'ack',
-	MESSAGES: 'messages',
-	USER_ONLINE: 'user_online',
-	USER_UPDATED: 'user_updated',
-	GET_MESSAGES: 'get_messages',
-	UPDATE_PROFILE: 'update_profile',
-	FILE_START: 'file_start',
-	FILE_END: 'file_end',
-	FILE_ERROR: 'file_error',
-};
-
-const CACHE_CONFIG = {
-	KEY: 'xam_server_cache',
-	TTL: 24 * 60 * 60 * 1000, // 24 часа в миллисекундах
-};
-
 const CHUNK_SIZE = 64 * 1024; // 64KB чанки для передачи файлов
 
-// ============================================================================
-// Вспомогательные функции
-// ============================================================================
-
-/**
- * Вызов Tauri команды (совместимость с v1 и v2)
- * @param {string} cmd - Имя команды
- * @param {Object} [args] - Аргументы
- * @returns {Promise<any>}
- */
-async function invokeTauri(cmd, args = {}) {
-	if (window.__TAURI__?.core?.invoke) {
-		// Tauri v2
-		return window.__TAURI__.core.invoke(cmd, args);
-	} else if (window.__TAURI__?.invoke) {
-		// Tauri v1
-		return window.__TAURI__.invoke(cmd, args);
-	}
-	throw new Error('Tauri API недоступен');
-}
-
-// Делаем функцию доступной глобально для app.js
-window.invokeTauri = invokeTauri;
-
-const SCAN_CONFIG = {
-	PORT: 8080,
-	IP_START_MIN: 1,
-	IP_START_MAX: 10,
-	IP_END_MIN: 100,
-	IP_END_MAX: 110,
+const MESSAGE_TYPES = {
+	REGISTER: 'register', REGISTERED: 'registered', MESSAGE: 'message',
+	ACK: 'ack', MESSAGES: 'messages', USER_ONLINE: 'user_online',
+	USER_UPDATED: 'user_updated', GET_MESSAGES: 'get_messages',
+	UPDATE_PROFILE: 'update_profile', FILE_START: 'file_start',
+	FILE_END: 'file_end', FILE_ERROR: 'file_error',
 };
 
-/**
- * Генерирует список серверов для сканирования локальной сети
- * BP-7 FIX: используем SCAN_CONFIG.PORT вместо захардкоженного 8080
- */
-function generateLocalNetworkServers() {
-	const servers = [];
-	
-	// FIX: Пропускаем localhost при сканировании чтобы не находить serve LiveReload
-	const isTestEnv = typeof window !== 'undefined' && window.location.hostname === 'localhost';
-	
-	SUBNETS.forEach((subnet) => {
-		// Пропускаем подсети начинающиеся с 127. (localhost)
-		if (subnet.startsWith('127.')) return;
-		
-		for (let i = SCAN_CONFIG.IP_START_MIN; i <= SCAN_CONFIG.IP_START_MAX; i++) {
-			servers.push(`ws://${subnet}${i}:${SCAN_CONFIG.PORT}/ws`);
-		}
-		for (let i = SCAN_CONFIG.IP_END_MIN; i <= SCAN_CONFIG.IP_END_MAX; i++) {
-			servers.push(`ws://${subnet}${i}:${SCAN_CONFIG.PORT}/ws`);
-		}
-	});
-	return servers;
-}
-
-/**
- * Преобразует WebSocket URL в HTTP API URL
- * @param {string} wsUrl - WebSocket URL
- * @returns {string} HTTP API URL
- */
-function wsToHttpUrl(wsUrl) {
-	return wsUrl.replace('ws://', 'http://').replace(/\/ws$/, '/api/v1');
-}
-
-/**
- * Извлекает IP из WebSocket URL
- * @param {string} wsUrl - WebSocket URL
- * @returns {string} IP адрес
- */
-function extractIpFromWsUrl(wsUrl) {
-	const match = wsUrl.match(/ws:\/\/([^:]+):(\d+)/);
-	return match ? match[1] : '';
-}
-
-/**
- * Сохраняет сервер в кэш localStorage
- * @param {string} ip - IP адрес
- * @param {number} port - Порт
- * @param {string} source - Источник (mdns, scan, manual)
- */
-function cacheServer(ip, port, source) {
-	try {
-		const cache = JSON.parse(localStorage.getItem(CACHE_CONFIG.KEY) || '[]');
-		const timestamp = Date.now();
-
-		// Удаляем старую запись для этого IP
-		const filtered = cache.filter(s => s.ip !== ip);
-
-		// Добавляем новую
-		filtered.push({ ip, port, lastSeen: timestamp, source });
-
-		localStorage.setItem(CACHE_CONFIG.KEY, JSON.stringify(filtered));
-
-		// Если в Tauri, вызываем нативную команду для кэширования
-		const isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
-		if (isTauri) {
-			invokeTauri('cache_server', { ip, port, source }).catch(console.warn);
-		}
-	} catch (e) {
-		console.warn('⚠️ Не удалось сохранить сервер в кэш:', e);
-	}
-}
-
-/**
- * Получает кэшированные серверы из localStorage
- * @returns {Array<{ip: string, port: number, lastSeen: number, source: string}>}
- */
-function getCachedServers() {
-	try {
-		const cache = JSON.parse(localStorage.getItem(CACHE_CONFIG.KEY) || '[]');
-		const now = Date.now();
-		
-		// Фильтруем по TTL
-		return cache.filter(server => (now - server.lastSeen) < CACHE_CONFIG.TTL);
-	} catch (e) {
-		console.warn('⚠️ Не удалось прочитать кэш серверов:', e);
-		return [];
-	}
-}
-
-/**
- * Проверяет доступность сервера через HTTP ping
- * @param {string} httpUrl - HTTP API URL
- * @param {number} timeout - Таймаут в мс
- * @returns {Promise<boolean>}
- */
-async function pingServer(httpUrl, timeout = 3000) {
-	try {
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), timeout);
-
-		try {
-			const response = await fetch(`${httpUrl}/users`, {
-				method: 'GET',
-				signal: controller.signal,
-			});
-
-			// FIX L-07: Строго проверяем HTTP статус и структуру ответа
-			if (!response.ok || response.status !== 200) return false;
-
-			// Проверяем Content-Type — должен быть JSON
-			const contentType = response.headers.get('content-type');
-			if (!contentType || !contentType.includes('application/json')) {
-				return false; // Это не JSON, скорее всего HTML от serve
-			}
-
-			// Пробуем распарсить JSON
-			try {
-				const data = await response.json();
-				// FIX L-07: Проверяем что это действительно XAM сервер
-				// с ожидаемой структурой ответа (должны быть И success И data)
-				return data && typeof data === 'object' && 'success' in data && 'data' in data;
-			} catch {
-				return false; // Не JSON
-			}
-		} finally {
-			// BUG-6 FIX: гарантированно очищаем таймер
-			clearTimeout(timer);
-		}
-	} catch (e) {
-		return false;
-	}
-}
+// Глобально для app.js
+window.invokeTauri = async function(cmd, args = {}) {
+	if (window.__TAURI__?.core?.invoke) return window.__TAURI__.core.invoke(cmd, args);
+	if (window.__TAURI__?.invoke) return window.__TAURI__.invoke(cmd, args);
+	throw new Error('Tauri API недоступен');
+};
 
 // ============================================================================
 // Класс ServerClient

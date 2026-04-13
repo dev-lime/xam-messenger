@@ -1,0 +1,166 @@
+/**
+ * @file Диалоги: выбор сервера, подключение
+ * @module Dialogs/Server
+ */
+
+'use strict';
+
+import { t } from '../i18n.js';
+import { success, showError } from '../toast.js';
+import { state, elements, userSettings, setUserSettings } from '../state.js';
+import { getServerClient, setServerClient } from '../state.js';
+import { saveSession, loadSession, clearSession, saveUserSettings, loadUserSettings } from '../storage.js';
+import { discoverAllServers, wsToHttpUrl, extractIpFromWsUrl, pingServer } from '../discovery.js';
+import { renderPeers } from '../utils/peers.js';
+import { filterMessagesForCurrentChat } from '../chat/pagination.js';
+import { renderMessages } from '../utils/messages.js';
+
+/**
+ * Обнаружение серверов
+ */
+export async function discoverServers() {
+	if (state.isDiscovering) return false;
+	state.isDiscovering = true;
+	updateServerStatus('🔍 Поиск серверов...', 'warning');
+	try {
+		const servers = await discoverAllServers();
+		state.discoveredServers = servers;
+		if (servers.length === 0) { updateServerStatus(t('noServers'), 'error'); state.isDiscovering = false; return false; }
+		updateServerStatus(t('serversFound', servers.length), 'success');
+		state.isDiscovering = false;
+		return true;
+	} catch (error) {
+		console.error('❌ Ошибка обнаружения:', error);
+		updateServerStatus(t('connectionError'), 'error');
+		state.isDiscovering = false;
+		return false;
+	}
+}
+
+/**
+ * Открытие диалога выбора сервера
+ */
+export async function openServerSelector() {
+	if (!elements.serverSelectorDialog) return;
+	if (elements.serverList) elements.serverList.innerHTML = '<div style="padding:20px;text-align:center;">🔍 Поиск серверов...</div>';
+	elements.serverSelectorDialog.showModal();
+	await refreshServerList();
+}
+
+/**
+ * Обновление списка серверов
+ */
+export async function refreshServerList() {
+	if (!elements.serverList) return;
+	state.isDiscovering = true;
+	renderServerList([]);
+	try {
+		const servers = await discoverAllServers();
+		state.discoveredServers = servers;
+		if (servers.length === 0) { renderServerList([]); return; }
+		const withStatus = await Promise.all(servers.map(async s => {
+			const online = await pingServer(s.httpUrl, 3000);
+			return { ...s, online };
+		}));
+		renderServerList(withStatus);
+	} catch (error) {
+		console.error('❌ Ошибка:', error);
+		elements.serverList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--error);">❌ Ошибка</div>';
+	}
+	state.isDiscovering = false;
+}
+
+/**
+ * Рендеринг списка серверов
+ */
+function renderServerList(servers) {
+	if (!elements.serverList) return;
+	if (servers.length === 0) {
+		elements.serverList.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-tertiary);">
+			<div style="font-size:18px;margin-bottom:10px;">📡</div><div>${t('serverListEmpty')}</div>
+			<div style="font-size:12px;margin-top:10px;">${t('serverListHint')}</div></div>`;
+		return;
+	}
+	const icons = { mdns: '📢', cache: '📦', scan: '🔍', manual: '✏️' };
+	const names = { mdns: 'mDNS', cache: 'кэш', scan: 'сканирование', manual: 'вручную' };
+	elements.serverList.innerHTML = servers.map(s => {
+		const cls = s.online ? 'online' : 'offline';
+		return `<div class="server-item ${cls}" data-ws-url="${s.wsUrl}">
+			<div class="server-status-indicator ${cls}"></div>
+			<div class="server-info"><div class="server-address">${s.ip}:${s.port}</div>
+			<div class="server-source">${icons[s.source]||'📡'} ${names[s.source]||s.source}${s.hostname?`<br><small style="color:var(--text-tertiary);">${s.hostname}</small>`:''}</div></div>
+			<div class="server-status-text ${cls}">${s.online ? t('onlineText') : t('offlineText')}</div>
+			<button class="server-connect-btn" onclick="window._connectToServer('${s.wsUrl}')">${t('connect')}</button></div>`;
+	}).join('');
+}
+
+/**
+ * Подключение к серверу
+ */
+export async function connectToServer() {
+	const name = elements.userNameInput.value.trim();
+	const avatar = userSettings?.avatar || '👤';
+	if (!name) { showError(t('enterNameError')); return; }
+	if (!state.selectedServer) { showError(t('selectServerFirst')); return; }
+
+	try {
+		elements.serverStatus.innerHTML = `<span style="color:var(--warning);">${t('connecting')}</span>`;
+		elements.confirmConnect.disabled = true;
+
+		const sc = getServerClient();
+		await sc.connectToServer(state.selectedServer.wsUrl);
+		const user = await sc.register(name, avatar);
+
+		state.user = user; state.connected = true; state.serverUrl = state.selectedServer.wsUrl;
+		saveSession(user, state.selectedServer);
+
+		updateUserProfile(user.name, 'В сети');
+		if (elements.serverStatus) elements.serverStatus.innerHTML = `<span style="color:var(--success);">${t('connected')}</span>`;
+
+		if (!state.lastMessageId && state.messages.length === 0) {
+			state.isLoadingMessages = true;
+			sc.getMessages(50, null, state.currentPeer);
+		} else { state.isLoadingMessages = false; }
+
+		await sc.getUsers().then(users => { state.peers = users.filter(u => u.id !== user.id); });
+		renderPeers();
+		setTimeout(renderPeers, 500);
+
+		setTimeout(() => elements.connectDialog.close(), 500);
+	} catch (error) {
+		console.error('❌ Ошибка подключения:', error);
+		elements.serverStatus.innerHTML = '<span style="color:var(--error);">❌ Ошибка<br><small>Проверьте что сервер запущен</small></span>';
+		elements.confirmConnect.disabled = false;
+	}
+}
+
+function updateUserProfile(name, status) {
+	if (elements.profileMenuName) elements.profileMenuName.textContent = name || t('notConnected');
+	if (elements.userName) elements.userName.textContent = name || t('notConnected');
+	if (elements.userAddress) elements.userAddress.textContent = status || '--';
+}
+
+function updateServerStatus(msg, type) {
+	if (!elements.serverStatus) return;
+	const colors = { info: 'var(--text-secondary)', success: 'var(--success)', warning: 'var(--warning)', error: 'var(--error)' };
+	elements.serverStatus.innerHTML = `<span style="color:${colors[type]};">${msg}</span>`;
+}
+
+// Глобально для onclick в HTML
+window._connectToServer = async (wsUrl) => {
+	const server = state.discoveredServers.find(s => s.wsUrl === wsUrl);
+	state.selectedServer = server || { wsUrl, httpUrl: wsToHttpUrl(wsUrl), ip: extractIpFromWsUrl(wsUrl) || '', port: 8080 };
+	if (elements.serverSelectorDialog) elements.serverSelectorDialog.close();
+	updateSelectedServerInfo(state.selectedServer);
+	elements.connectDialog.showModal();
+	elements.userNameInput.value = userSettings?.name || '';
+	elements.userNameInput.focus();
+	if (elements.confirmConnect) elements.confirmConnect.disabled = !elements.userNameInput?.value.trim();
+};
+
+function updateSelectedServerInfo(server) {
+	if (!elements.selectedServerInfo) return;
+	const address = server.ip ? `${server.ip}:${server.port}` : server.wsUrl;
+	elements.selectedServerInfo.textContent = `📡 ${address}`;
+	elements.selectedServerInfo.style.color = 'var(--success)';
+}
