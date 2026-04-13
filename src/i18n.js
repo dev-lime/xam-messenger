@@ -13,9 +13,6 @@ const STORAGE_KEY = 'xam-language';
 /** @type {Object<string, Object<string, string>>} */
 let translations = {};
 
-/** @type {boolean} */
-let translationsLoaded = false;
-
 /**
  * Загрузка переводов из JSON файлов
  * @returns {Promise<void>}
@@ -40,13 +37,10 @@ export async function loadTranslations() {
         // Fallback на встроенные данные если JSON не загрузились (тесты)
         if (!translations.ru) translations.ru = getFallbackTranslations('ru');
         if (!translations.en) translations.en = getFallbackTranslations('en');
-
-        translationsLoaded = true;
-    } catch (e) {
-        console.warn('⚠️ Ошибка загрузки переводов, используем fallback:', e);
+    } catch {
+        console.warn('⚠️ Ошибка загрузки переводов, используем fallback');
         translations.ru = getFallbackTranslations('ru');
         translations.en = getFallbackTranslations('en');
-        translationsLoaded = true;
     }
 }
 

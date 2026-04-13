@@ -1,0 +1,33 @@
+{
+  "maxFileSize": 104857600,
+  "localMessageTtl": 10,
+  "avatarDefault": "👤",
+  "defaultLanguage": "ru",
+  "storageKeys": {
+    "userSettings": "xam-user-settings",
+    "appSettings": "xam-app-settings",
+    "lastMessageId": "xam-last-message-id",
+    "hasMore": "xam-has-more",
+    "sessionUser": "xam-session-user",
+    "sessionServer": "xam-session-server"
+  },
+  "wsConfig": {
+    "reconnectDelay": 2000,
+    "maxReconnectAttempts": 10,
+    "connectionTimeout": 3000,
+    "mdnsTimeout": 3000,
+    "scanTimeout": 3000
+  },
+  "scanConfig": {
+    "port": 8080,
+    "ipStartMin": 1,
+    "ipStartMax": 10,
+    "ipEndMin": 100,
+    "ipEndMax": 110
+  },
+  "uiConfig": {
+    "messagePageSize": 50,
+    "searchDebounceMs": 150,
+    "peerAnimationDelayMs": 50
+  }
+}

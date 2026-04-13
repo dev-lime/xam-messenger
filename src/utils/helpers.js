@@ -5,6 +5,10 @@
 
 'use strict';
 
+// ============================================================================
+// Utility функции
+// ============================================================================
+
 /**
  * Экранирование HTML для безопасного отображения
  * @param {string} text - Текст для экранирования
@@ -19,8 +23,6 @@ export function escapeHtml(text) {
 
 /**
  * Экранирование строки для безопасного использования в JS-контексте
- * (внутри onclick, onchange и т.д.)
- * XSS FIX: экранирует одинарные кавычки которые могут разбить '...'
  * @param {string} text - Текст для экранирования
  * @returns {string} Экранированный текст
  */
@@ -71,8 +73,76 @@ export function getFileIcon(filename) {
     return icons[ext] || '📎';
 }
 
+// ============================================================================
+// Конфигурация приложения (загружается из JSON с fallback)
+// ============================================================================
+
+/** @type {Object|null} */
+let loadedConfig = null;
+
 /**
- * Конфигурация приложения
+ * Загрузить конфигурацию из JSON файла
+ * @returns {Promise<Object>}
+ */
+export async function loadClientConfig() {
+    if (loadedConfig) return loadedConfig;
+    try {
+        if (typeof fetch === 'function') {
+            const response = await fetch('config.client.json');
+            if (response.ok) {
+                loadedConfig = await response.json();
+            }
+        }
+    } catch {
+        // Fallback на встроенные значения
+    }
+    loadedConfig = loadedConfig || getDefaultConfig();
+    return loadedConfig;
+}
+
+/**
+ * Получить конфигурацию синхронно (использует уже загруженное или дефолтное)
+ * @returns {Object}
+ */
+function getDefaultConfig() {
+    return {
+        maxFileSize: 100 * 1024 * 1024,
+        localMessageTtl: 10,
+        avatarDefault: '👤',
+        defaultLanguage: 'ru',
+        storageKeys: {
+            userSettings: 'xam-user-settings',
+            appSettings: 'xam-app-settings',
+            lastMessageId: 'xam-last-message-id',
+            hasMore: 'xam-has-more',
+            sessionUser: 'xam-session-user',
+            sessionServer: 'xam-session-server',
+        },
+        wsConfig: {
+            reconnectDelay: 2000,
+            maxReconnectAttempts: 10,
+            connectionTimeout: 3000,
+            mdnsTimeout: 3000,
+            scanTimeout: 3000,
+        },
+        scanConfig: {
+            port: 8080,
+            ipStartMin: 1,
+            ipStartMax: 10,
+            ipEndMin: 100,
+            ipEndMax: 110,
+        },
+        uiConfig: {
+            messagePageSize: 50,
+            searchDebounceMs: 150,
+            peerAnimationDelayMs: 50,
+        },
+    };
+}
+
+/**
+ * Конфигурация приложения (синхронная, использует дефолтные значения)
+ * Загрузка из config.client.json происходит асинхронно через loadClientConfig()
  */
 export const CONFIG = {
     MAX_FILE_SIZE: 100 * 1024 * 1024, // 100MB
