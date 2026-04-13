@@ -4,6 +4,12 @@
  */
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+import * as fs from 'fs';
+import * as os from 'os';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const SERVER_PORT = process.env.XAM_SERVER_PORT || '8080';
 const FRONTEND_PORT = process.env.XAM_FRONTEND_PORT || '3000';
@@ -43,6 +49,28 @@ export default async function globalSetup(): Promise<ServerContext> {
 		serverProcess: null,
 		frontendProcess: null,
 	};
+
+	// Очищаем БД сервера перед каждым прогоном (защита от загрязнения состояния)
+	const homeDir = os.homedir();
+	// Кроссплатформенный путь к БД
+	const dataDir = process.platform === 'darwin'
+		? path.join(homeDir, 'Library', 'Application Support', 'xam-messenger')
+		: process.platform === 'win32'
+			? path.join(process.env.APPDATA || '', 'xam-messenger')
+			: path.join(homeDir, '.config', 'xam-messenger');
+	const dbPath = path.join(dataDir, 'xam.db');
+	const filesDir = path.join(dataDir, 'files');
+	try {
+		if (fs.existsSync(dbPath)) {
+			fs.unlinkSync(dbPath);
+			console.log('🧹 Очищена серверная БД');
+		}
+		if (fs.existsSync(filesDir)) {
+			fs.rmSync(filesDir, { recursive: true, force: true });
+		}
+	} catch {
+		// Игнорируем ошибки если файлы не найдены
+	}
 
 	// Буфер для хранения вывода сервера (чтобы извлечь IP)
 	let serverOutput = '';
