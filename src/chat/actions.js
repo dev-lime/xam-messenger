@@ -7,7 +7,7 @@
 
 import { DELIVERY_STATUS } from '../utils/helpers.js';
 import { t } from '../i18n.js';
-import { success, showError } from '../toast.js';
+import { success, error as showError } from '../toast.js';
 import { state, elements, attachedFiles, getServerClient } from '../state.js';
 import { filterMessagesForCurrentChat, hasMoreMessagesForCurrentPeer } from './pagination.js';
 import { renderPeers } from '../utils/peers.js';
