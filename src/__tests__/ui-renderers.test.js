@@ -3,6 +3,7 @@
  * Тестируем функции рендеринга
  */
 
+import { loadTranslations, setLanguage, t } from 'src/i18n.js';
 import {
     createFilesHtml,
     getStatusIcon,
@@ -15,6 +16,12 @@ import {
     createAttachedFilesHtml,
 } from 'src/ui/renderers.js';
 import { DELIVERY_STATUS } from 'src/utils/helpers.js';
+
+// Инициализируем переводы перед тестами
+beforeAll(async () => {
+    await loadTranslations();
+    setLanguage('ru');
+});
 
 describe('ui/renderers.js - createFilesHtml', () => {
     test('должен возвращать пустую строку для пустого массива', () => {

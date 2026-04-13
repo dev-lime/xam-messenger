@@ -14,6 +14,12 @@ const {
     getCachedServers,
 } = require('../server-client.js');
 
+// Discovery функции тестируем напрямую из discovery.js
+const {
+    discoverViaCache,
+    discoverViaMdns,
+} = require('../discovery.js');
+
 // Mock fetch helper — всегда возвращаем объект с методом json()
 const mockFetchResponse = (data, ok = true) => {
     return Promise.resolve({
@@ -575,7 +581,7 @@ describe('ServerClient (реальный класс)', () => {
             localStorage.setItem('xam_server_cache', JSON.stringify([
                 { ip: '1.1.1.1', port: 8080, lastSeen: Date.now(), source: 'mdns' }
             ]));
-            const servers = client.discoverViaCache();
+            const servers = discoverViaCache();
             expect(servers.length).toBe(1);
             expect(servers[0].ip).toBe('1.1.1.1');
             expect(servers[0].wsUrl).toBe('ws://1.1.1.1:8080/ws');
@@ -583,14 +589,14 @@ describe('ServerClient (реальный класс)', () => {
         });
 
         test('возвращает пустой массив при пустом кэше', () => {
-            const servers = client.discoverViaCache();
+            const servers = discoverViaCache();
             expect(servers).toEqual([]);
         });
     });
 
     describe('discoverViaMdns', () => {
         test('возвращает пустой массив без Tauri', async () => {
-            const servers = await client.discoverViaMdns();
+            const servers = await discoverViaMdns();
             expect(servers).toEqual([]);
         });
 
@@ -603,16 +609,14 @@ describe('ServerClient (реальный класс)', () => {
                     }])
                 }
             };
-            const c = new ServerClient();
-            const servers = await c.discoverViaMdns();
+            const servers = await discoverViaMdns();
             expect(servers.length).toBe(1);
             expect(servers[0].ip).toBe('1.1.1.1');
         });
 
         test('возвращает пустой массив при ошибке Tauri', async () => {
             window.__TAURI__ = { core: { invoke: jest.fn().mockRejectedValue(new Error('fail')) } };
-            const c = new ServerClient();
-            const servers = await c.discoverViaMdns();
+            const servers = await discoverViaMdns();
             expect(servers).toEqual([]);
         });
     });

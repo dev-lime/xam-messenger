@@ -81,12 +81,12 @@ function createPeerElement(peer) {
     item.addEventListener('click', (e) => {
         if (e.target.closest('.peer-menu-btn')) return;
         e.stopPropagation();
-        window._selectPeer && window._selectPeer(peer.id);
+        import('../chat/actions.js').then(m => m.selectPeer(peer.id));
     });
 
     item.querySelector('.peer-menu-btn').addEventListener('click', (e) => {
         e.stopPropagation();
-        window._openPeerMenu && window._openPeerMenu(e, peer.id, peer.name);
+        openPeerMenu(e, peer.id, peer.name);
     });
 
     return item;
@@ -95,3 +95,50 @@ function createPeerElement(peer) {
 function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+/**
+ * Открытие контекстного меню контакта
+ */
+function openPeerMenu(e, peerId, peerName) {
+    document.querySelectorAll('.peer-context-menu.open').forEach(m => m.classList.remove('open'));
+    let menu = document.querySelector(`.peer-context-menu[data-user-id="${peerId}"]`);
+    if (!menu) {
+        menu = document.createElement('div');
+        menu.className = 'peer-context-menu';
+        menu.dataset.userId = peerId;
+        menu.innerHTML = `<div class="peer-menu-info"><div class="peer-menu-id">ID: ${peerId}</div></div>
+			<div class="profile-menu-divider"></div>
+			<button class="profile-menu-item" data-action="delete-chat">
+				<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+				<span>Удалить чат</span></button>`;
+        menu.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('[data-action]');
+            if (btn && btn.dataset.action === 'delete-chat') {
+                import('../chat/actions.js').then(m => m.deleteChatWithPeer(peerId, peerName));
+            }
+            closePeerMenu(peerId);
+        });
+        const peerEl = document.querySelector(`.peer-item[data-user-id="${peerId}"]`);
+        if (peerEl) peerEl.appendChild(menu);
+    }
+    menu.classList.add('open');
+}
+
+/**
+ * Закрытие контекстного меню контакта
+ */
+function closePeerMenu(peerId) {
+    const menu = document.querySelector(`.peer-context-menu[data-user-id="${peerId}"]`);
+    if (menu) menu.classList.remove('open');
+}
+
+/**
+ * Глобальный обработчик для закрытия меню при клике вне его
+ */
+document.addEventListener('click', (e) => {
+    const openMenu = document.querySelector('.peer-context-menu.open');
+    if (openMenu && !openMenu.contains(e.target)) {
+        closePeerMenu(openMenu.dataset.userId);
+    }
+});

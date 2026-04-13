@@ -5,6 +5,8 @@
 
 'use strict';
 
+import { storage } from './storage.js';
+
 const CACHE_CONFIG = {
     KEY: 'xam_server_cache',
     TTL: 24 * 60 * 60 * 1000, // 24 часа
@@ -12,14 +14,17 @@ const CACHE_CONFIG = {
 
 /**
  * Сохранить сервер в кэш
+ * @param {string} ip - IP адрес
+ * @param {number} port - Порт
+ * @param {string} source - Источник (mdns/cache/scan/manual)
  */
 export function cacheServer(ip, port, source) {
     try {
-        const cache = JSON.parse(localStorage.getItem(CACHE_CONFIG.KEY) || '[]');
+        const cache = storage.getJson(CACHE_CONFIG.KEY, []);
         const timestamp = Date.now();
         const filtered = cache.filter(s => s.ip !== ip);
         filtered.push({ ip, port, lastSeen: timestamp, source });
-        localStorage.setItem(CACHE_CONFIG.KEY, JSON.stringify(filtered));
+        storage.setJson(CACHE_CONFIG.KEY, filtered);
 
         // Если в Tauri, вызываем нативную команду
         const isTauri = !!(window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke);
@@ -33,10 +38,11 @@ export function cacheServer(ip, port, source) {
 
 /**
  * Получить кэшированные серверы
+ * @returns {Array<{ip: string, port: number, lastSeen: number, source: string}>}
  */
 export function getCachedServers() {
     try {
-        const cache = JSON.parse(localStorage.getItem(CACHE_CONFIG.KEY) || '[]');
+        const cache = storage.getJson(CACHE_CONFIG.KEY, []);
         const now = Date.now();
         return cache.filter(server => (now - server.lastSeen) < CACHE_CONFIG.TTL);
     } catch (e) {

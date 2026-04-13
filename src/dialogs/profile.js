@@ -9,7 +9,7 @@ import { t } from '../i18n.js';
 import { success, error as showError } from '../toast.js';
 import { state, elements, userSettings, setUserSettings } from '../state.js';
 import { getServerClient } from '../state.js';
-import { saveUserSettings, clearSession } from '../storage.js';
+import { saveUserSettings, clearSession } from '../settings.js';
 import { CONFIG } from '../utils/helpers.js';
 
 /**

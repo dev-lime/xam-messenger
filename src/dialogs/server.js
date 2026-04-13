@@ -9,7 +9,7 @@ import { t } from '../i18n.js';
 import { error as showError } from '../toast.js';
 import { state, elements, userSettings } from '../state.js';
 import { getServerClient } from '../state.js';
-import { saveSession } from '../storage.js';
+import { saveSession } from '../settings.js';
 import { discoverAllServers, wsToHttpUrl, extractIpFromWsUrl, pingServer } from '../discovery.js';
 import { renderPeers } from '../utils/peers.js';
 
@@ -95,8 +95,30 @@ function renderServerList(servers) {
             <div class="server-info"><div class="server-address">${s.ip}:${s.port}</div>
             <div class="server-source">${icons[s.source] || '📡'} ${names[s.source] || s.source}${s.hostname ? `<br><small style="color:var(--text-tertiary);">${s.hostname}</small>` : ''}</div></div>
             <div class="server-status-text ${statusCls}">${statusText}</div>
-            <button class="server-connect-btn" onclick="window._connectToServer('${s.wsUrl}')">${t('connect')}</button></div>`;
+            <button class="server-connect-btn" data-ws-url="${s.wsUrl}" type="button">${t('connect')}</button></div>`;
     }).join('');
+
+    // Event delegation для кнопок подключения
+    elements.serverList.querySelectorAll('.server-connect-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const wsUrl = btn.dataset.wsUrl;
+            handleServerConnect(wsUrl);
+        });
+    });
+}
+
+/**
+ * Обработка выбора сервера из списка
+ */
+function handleServerConnect(wsUrl) {
+    const server = state.discoveredServers.find(s => s.wsUrl === wsUrl);
+    state.selectedServer = server || { wsUrl, httpUrl: wsToHttpUrl(wsUrl), ip: extractIpFromWsUrl(wsUrl) || '', port: 8080 };
+    if (elements.serverSelectorDialog) elements.serverSelectorDialog.close();
+    updateSelectedServerInfo(state.selectedServer);
+    elements.connectDialog.showModal();
+    elements.userNameInput.value = userSettings?.name || '';
+    elements.userNameInput.focus();
+    if (elements.confirmConnect) elements.confirmConnect.disabled = !elements.userNameInput?.value.trim();
 }
 
 /**
@@ -157,18 +179,6 @@ function updateServerStatus(msg, type) {
     const colors = { info: 'var(--text-secondary)', success: 'var(--success)', warning: 'var(--warning)', error: 'var(--error)' };
     elements.serverStatus.innerHTML = `<span style="color:${colors[type]};">${msg}</span>`;
 }
-
-// Глобально для onclick в HTML
-window._connectToServer = async (wsUrl) => {
-    const server = state.discoveredServers.find(s => s.wsUrl === wsUrl);
-    state.selectedServer = server || { wsUrl, httpUrl: wsToHttpUrl(wsUrl), ip: extractIpFromWsUrl(wsUrl) || '', port: 8080 };
-    if (elements.serverSelectorDialog) elements.serverSelectorDialog.close();
-    updateSelectedServerInfo(state.selectedServer);
-    elements.connectDialog.showModal();
-    elements.userNameInput.value = userSettings?.name || '';
-    elements.userNameInput.focus();
-    if (elements.confirmConnect) elements.confirmConnect.disabled = !elements.userNameInput?.value.trim();
-};
 
 function updateSelectedServerInfo(server) {
     if (!elements.selectedServerInfo) return;

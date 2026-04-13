@@ -6,7 +6,6 @@
 'use strict';
 
 import { elements, state, userSettings } from '../state.js';
-import { getServerClient } from '../state.js';
 import { t, setLanguage } from '../i18n.js';
 import { success } from '../toast.js';
 import { openServerSelector, connectToServer, refreshServerList } from '../dialogs/server.js';
@@ -14,7 +13,8 @@ import { openProfileMenu, closeProfileMenu, saveSettings, openSettingsDialog, lo
 import { selectPeer, deleteChatWithPeer, sendMessage, loadMoreMessages } from '../chat/actions.js';
 import { handleFileSelect, updateSendButton } from '../utils/files.js';
 import { CONFIG } from '../utils/helpers.js';
-import { saveAppSettings, loadAppSettings } from '../storage.js';
+import { saveAppSettings, loadAppSettings } from '../settings.js';
+import { storage } from '../storage.js';
 
 /**
  * Настройка всех обработчиков
@@ -24,10 +24,10 @@ export function setupEventListeners() {
     if (elements.connectionStatus) {
         elements.connectionStatus.addEventListener('click', async () => {
             if (state.connected) { showLatency(); return; }
-            if (localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_USER) && localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_SERVER)) {
+            if (storage.get(CONFIG.STORAGE_KEYS.SESSION_USER) && storage.get(CONFIG.STORAGE_KEYS.SESSION_SERVER)) {
                 try {
-                    const user = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_USER));
-                    const server = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.SESSION_SERVER));
+                    const user = storage.getJson(CONFIG.STORAGE_KEYS.SESSION_USER);
+                    const server = storage.getJson(CONFIG.STORAGE_KEYS.SESSION_SERVER);
                     state.selectedServer = server;
                     elements.userNameInput.value = user.name;
                     if (elements.serverStatus) elements.serverStatus.innerHTML = '<span style="color:var(--warning);">🔄 Переподключение...</span>';
@@ -111,7 +111,7 @@ export function setupEventListeners() {
         success(t('done'));
     });
     if (elements.resetAppSettings) elements.resetAppSettings.addEventListener('click', () => {
-        localStorage.removeItem(CONFIG.STORAGE_KEYS.APP_SETTINGS);
+        storage.remove(CONFIG.STORAGE_KEYS.APP_SETTINGS);
         elements.appSettingsDialog.close();
     });
     if (elements.settingFontSize && elements.fontSizeValue) elements.settingFontSize.addEventListener('input', () => { elements.fontSizeValue.textContent = `${elements.settingFontSize.value}px`; });
@@ -144,10 +144,8 @@ export function setupEventListeners() {
     // Drag'n'drop
     initDragAndDrop();
 
-    // Глобальные функции для inline onclick
-    window._selectPeer = selectPeer;
-    window._openFile = openFile;
-    window._downloadFile = downloadFile;
+    // Глобальные функции для inline onclick (больше не нужны — используем event delegation)
+    // window._selectPeer, window._openFile, window._downloadFile удалены
 }
 
 /**
@@ -253,30 +251,9 @@ function initDragAndDrop() {
     }, false);
 }
 
-/**
- * Открытие/скачивание файла
- */
-async function openFile(filepath, filename) {
-    if (!filepath) { alert(t('filePathNotSpecified')); return; }
-    try {
-        const sc = getServerClient();
-        const url = filepath.startsWith('http') ? filepath : `${sc.httpUrl}/files/download?file_id=${encodeURIComponent(filepath)}`;
-        const r = await fetch(url); if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const blob = await r.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob); a.download = filename;
-        document.body.appendChild(a); a.click();
-        URL.revokeObjectURL(a.href); document.body.removeChild(a);
-    } catch (error) { alert(t('fileOpenError', error.message)); }
-}
-
-async function downloadFile(filepath, filename) {
-    openFile(filepath, filename);
-}
-
 function clearSession() {
-    localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_USER);
-    localStorage.removeItem(CONFIG.STORAGE_KEYS.SESSION_SERVER);
+    storage.remove(CONFIG.STORAGE_KEYS.SESSION_USER);
+    storage.remove(CONFIG.STORAGE_KEYS.SESSION_SERVER);
 }
 
 /**
