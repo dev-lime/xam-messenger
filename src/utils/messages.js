@@ -198,3 +198,80 @@ async function openFile(filepath, filename) {
 async function downloadFile(filepath, filename) {
     openFile(filepath, filename);
 }
+
+/**
+ * Добавить одно сообщение в конец (оптимизация — без полной перерисовки)
+ * @param {Object} msg - Сообщение
+ */
+export function appendMessage(msg) {
+    if (!elements.messages || !elements.messagesContainer) return;
+    const scrollContainer = elements.messagesContainer;
+    const isScrolledToBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 50;
+
+    // Добавляем разделитель даты если нужно
+    const msgDate = new Date(msg.timestamp * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+    const lastSeparator = elements.messages.querySelector('.message-date-separator:last-of-type');
+    if (!lastSeparator || lastSeparator.textContent !== msgDate) {
+        const separators = elements.messages.querySelectorAll('.message-date-separator');
+        const lastSep = separators[separators.length - 1];
+        if (!lastSep || lastSep.textContent !== msgDate) {
+            const sep = document.createElement('div');
+            sep.className = 'message-date-separator';
+            sep.textContent = msgDate;
+            elements.messages.appendChild(sep);
+        }
+    }
+
+    elements.messages.appendChild(createMessageElement(msg));
+
+    if (isScrolledToBottom) scrollToBottom();
+}
+
+/**
+ * Вставить старые сообщения в начало (для пагинации)
+ * @param {Object[]} msgs - Массив сообщений (от старых к новым)
+ * @returns {boolean} Были ли вставлены сообщения
+ */
+export function prependMessages(msgs) {
+    if (!elements.messages || !elements.messagesContainer || msgs.length === 0) return false;
+    const scrollContainer = elements.messagesContainer;
+    const oldScrollHeight = scrollContainer.scrollHeight;
+
+    // Создаём фрагмент для.batch вставки
+    const fragment = document.createDocumentFragment();
+    let lastDate = null;
+
+    // Идём с конца чтобы правильно определить разделители дат
+    const reversed = [...msgs].reverse();
+    for (const msg of reversed) {
+        const msgDate = new Date(msg.timestamp * 1000).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+        if (lastDate !== msgDate) {
+            const sep = document.createElement('div');
+            sep.className = 'message-date-separator';
+            sep.textContent = msgDate;
+            fragment.appendChild(sep);
+            lastDate = msgDate;
+        }
+        fragment.appendChild(createMessageElement(msg));
+    }
+
+    // Вставляем после loadMoreContainer
+    const loadMoreEl = elements.loadMoreContainer;
+    if (loadMoreEl && loadMoreEl.parentNode === elements.messages) {
+        // Вставляем после кнопки загрузки
+        const firstMsg = elements.messages.querySelector('.message, .message-date-separator');
+        if (firstMsg) {
+            elements.messages.insertBefore(fragment, firstMsg);
+        } else {
+            elements.messages.appendChild(fragment);
+        }
+    } else {
+        elements.messages.prepend(fragment);
+    }
+
+    // Сохраняем позицию прокрутки
+    const newScrollHeight = scrollContainer.scrollHeight;
+    scrollContainer.scrollTop = newScrollHeight - oldScrollHeight;
+
+    return true;
+}

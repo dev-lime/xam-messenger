@@ -8,7 +8,7 @@
 import { DELIVERY_STATUS, CONFIG } from '../utils/helpers.js';
 import { filterMessagesForCurrentChat } from './pagination.js';
 import { renderPeers } from '../utils/peers.js';
-import { renderMessages, renderEmptyChatState } from '../utils/messages.js';
+import { renderMessages, renderEmptyChatState, appendMessage, prependMessages } from '../utils/messages.js';
 import { sendNotification } from '../notifications.js';
 import { t } from '../i18n.js';
 import { state, elements, getServerClient } from '../state.js';
@@ -59,7 +59,8 @@ export function handleNewMessage(msg) {
     state.messages.push(msg);
     if (state.currentPeer && isMessageInCurrentChat(msg)) {
         state.filteredMessages.push(msg);
-        renderMessages(true);
+        // Оптимизация: добавляем одно сообщение вместо полной ререндера
+        appendMessage(msg);
         if (!isMine) {
             getServerClient().sendAck(msg.id, 'read');
             msg.delivery_status = DELIVERY_STATUS.READ;
@@ -164,6 +165,13 @@ export function handleMessages(data) {
         state.messages = messages;
         state.currentPeerBeforeId = nextBeforeId;
         state.lastMessageId = nextBeforeId;
+        // Первый запрос — полная перерисовка
+        if (state.currentPeer) {
+            filterMessagesForCurrentChat();
+            renderMessages(true);
+        } else {
+            renderMessages();
+        }
     } else {
         if (beforeId === state.lastRequestedBeforeId) {
             state.hasMoreMessages = false;
@@ -173,27 +181,22 @@ export function handleMessages(data) {
             updateLoadMoreButton();
             return;
         }
+        // Пагинация — вставляем старые сообщения в начало
         state.messages = [...messages, ...state.messages];
         state.currentPeerBeforeId = nextBeforeId;
-    }
+        state.hasMoreMessages = hasMore;
+        state.isLoadingMessages = false;
+        prependMessages(messages);
+        updateLoadMoreButton();
 
-    state.hasMoreMessages = hasMore;
-    state.isLoadingMessages = false;
-
-    if (state.currentPeer) {
-        filterMessagesForCurrentChat();
-        renderMessages(true);
-        if (beforeId && state.filteredMessages.length === 0 && state.hasMoreMessages && nextBeforeId) {
+        // Рекурсивная дозагрузка если пусто
+        if (state.currentPeer && state.filteredMessages.length === 0 && state.hasMoreMessages && nextBeforeId) {
             state.lastRequestedBeforeId = nextBeforeId;
             state.isLoadingMessages = true;
             updateLoadMoreButton();
             getServerClient().getMessages(50, nextBeforeId, state.currentPeer);
-            return;
         }
-    } else {
-        renderMessages();
     }
-    updateLoadMoreButton();
 }
 
 /**
