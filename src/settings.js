@@ -10,7 +10,7 @@ import { storage } from './storage.js';
 
 /**
  * Сохранение настроек пользователя
- * @param {Object} settings - Настройки пользователя
+ * @param {UserSettings} settings - Настройки пользователя
  */
 export function saveUserSettings(settings) {
     storage.setJson(CONFIG.STORAGE_KEYS.USER_SETTINGS, settings);
@@ -18,8 +18,8 @@ export function saveUserSettings(settings) {
 
 /**
  * Загрузка настроек пользователя
- * @param {Object} defaultSettings - Настройки по умолчанию
- * @returns {Object}
+ * @param {UserSettings} defaultSettings - Настройки по умолчанию
+ * @returns {UserSettings}
  */
 export function loadUserSettings(defaultSettings) {
     return storage.getJson(CONFIG.STORAGE_KEYS.USER_SETTINGS, defaultSettings);
@@ -39,7 +39,7 @@ export function savePaginationState(hasMore, currentPeerBeforeId) {
 
 /**
  * Восстановление состояния пагинации
- * @param {Array} messages - Текущие сообщения
+ * @param {ChatMessage[]} messages - Текущие сообщения
  * @returns {{hasMoreMessages: boolean}}
  */
 export function restorePaginationState(messages) {
@@ -63,7 +63,7 @@ export function clearPaginationState() {
 
 /**
  * Сохранение настроек приложения
- * @param {Object} appSettings - Настройки приложения
+ * @param {AppSettings} appSettings - Настройки приложения
  */
 export function saveAppSettings(appSettings) {
     storage.setJson(CONFIG.STORAGE_KEYS.APP_SETTINGS, appSettings);
@@ -71,7 +71,7 @@ export function saveAppSettings(appSettings) {
 
 /**
  * Загрузка настроек приложения
- * @returns {Object}
+ * @returns {AppSettings}
  */
 export function loadAppSettings() {
     return storage.getJson(CONFIG.STORAGE_KEYS.APP_SETTINGS, {});
@@ -79,8 +79,8 @@ export function loadAppSettings() {
 
 /**
  * Сохранение сессии
- * @param {Object} user - Данные пользователя
- * @param {Object} server - Данные сервера
+ * @param {User} user - Данные пользователя
+ * @param {ServerInfo} server - Данные сервера
  */
 export function saveSession(user, server) {
     storage.setJson(CONFIG.STORAGE_KEYS.SESSION_USER, user);
@@ -89,7 +89,7 @@ export function saveSession(user, server) {
 
 /**
  * Загрузка сессии
- * @returns {{user: Object, server: Object}|null}
+ * @returns {{user: User, server: ServerInfo}|null}
  */
 export function loadSession() {
     const user = storage.getJson(CONFIG.STORAGE_KEYS.SESSION_USER, null);

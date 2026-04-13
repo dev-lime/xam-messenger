@@ -7,6 +7,7 @@
 
 import { CONFIG } from './utils/helpers.js';
 
+/** @type {UIElements} */
 export const elements = {
     status: document.getElementById('status'), statusIndicator: document.getElementById('statusIndicator'),
     statusText: document.getElementById('statusText'), connectionStatus: document.getElementById('connectionStatus'),
@@ -44,6 +45,7 @@ export const elements = {
     chatSettingsMenu: document.getElementById('chatSettingsMenu'), settingLanguage: document.getElementById('settingLanguage'),
 };
 
+/** @type {AppState} */
 export const state = {
     connected: false, serverUrl: null, selectedServer: null, user: null,
     messages: [], peers: [], currentPeer: null, filteredMessages: [],
@@ -53,12 +55,35 @@ export const state = {
     lastMessageTimes: {},
 };
 
+/** @type {ServerClient|null} */
 let serverClient = null;
+/** @type {File[]} */
 export let attachedFiles = [];
+/** @type {UserSettings} */
 export let userSettings = { name: '', avatar: CONFIG.AVATAR_DEFAULT };
+/** @type {number|null} */
 export let loadPeersTimer = null;
 
+/**
+ * Установить клиент сервера
+ * @param {ServerClient} client
+ */
 export function setServerClient(client) { serverClient = client; }
+
+/**
+ * Получить клиент сервера
+ * @returns {ServerClient|null}
+ */
 export function getServerClient() { return serverClient; }
+
+/**
+ * Установить прикреплённые файлы
+ * @param {File[]} files
+ */
 export function setAttachedFiles(files) { attachedFiles = files; }
+
+/**
+ * Установить настройки пользователя
+ * @param {UserSettings} settings
+ */
 export function setUserSettings(settings) { userSettings = settings; }

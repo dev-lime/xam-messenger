@@ -53,6 +53,9 @@ export function getCachedServers() {
 
 /**
  * Вызов Tauri команды (совместимость с v1 и v2)
+ * @param {string} cmd - Имя команды
+ * @param {object} args - Аргументы команды
+ * @returns {Promise<*>} Результат вызова команды
  */
 async function invokeTauri(cmd, args = {}) {
     if (window.__TAURI__?.core?.invoke) return window.__TAURI__.core.invoke(cmd, args);
