@@ -5,7 +5,7 @@
 
 'use strict';
 
-import { DELIVERY_STATUS } from '../utils/helpers.js';
+import { DELIVERY_STATUS, CONFIG } from '../utils/helpers.js';
 import { filterMessagesForCurrentChat } from './pagination.js';
 import { renderPeers } from '../utils/peers.js';
 import { renderMessages, renderEmptyChatState } from '../utils/messages.js';
@@ -40,15 +40,15 @@ export function handleNewMessage(msg) {
 
     // Замена локального сообщения
     if (isMine) {
-        const localIndex = state.messages.findIndex(m =>
-            m.id.startsWith('local_') && m.sender_id === state.user?.id &&
-            m.text === msg.text && Math.abs(m.timestamp - msg.timestamp) < 10
-        );
+        const localIndex = findLocalMessage(msg);
         if (localIndex !== -1) {
             msg.delivery_status = state.messages[localIndex].delivery_status;
             state.messages[localIndex] = msg;
-            const filteredIndex = state.filteredMessages.findIndex(m =>
-                m.id.startsWith('local_') && m.text === msg.text && m.sender_id === msg.sender_id
+            // Заменяем в filteredMessages
+            const filteredIndex = state.filteredMessages.findIndex(
+                m => m.id.startsWith('local_') &&
+                    m.text === msg.text &&
+                    m.sender_id === msg.sender_id
             );
             if (filteredIndex !== -1) state.filteredMessages[filteredIndex] = msg;
             renderMessages(state.currentPeer !== null);
@@ -105,6 +105,25 @@ function updateUnreadBadge(peerId) {
     } else if (badge) {
         badge.remove();
     }
+}
+
+/**
+ * Поиск локального сообщения по тексту и времени
+ */
+function findLocalMessage(msg) {
+    return state.messages.findIndex(m => {
+        if (!m.id.startsWith('local_') || m.sender_id !== state.user?.id) return false;
+        if (Math.abs(m.timestamp - msg.timestamp) >= CONFIG.LOCAL_MESSAGE_TTL) return false;
+        // Текстовое совпадение (оба пустых = совпадение)
+        if (m.text === msg.text) return true;
+        // Fallback для файлов: один получатель, совпадение по именам файлов
+        if (m.recipient_id === msg.recipient_id &&
+            m.files?.length > 0 && msg.files?.length > 0 &&
+            m.files.length === msg.files.length) {
+            return m.files.every((f, i) => f.name === msg.files[i]?.name);
+        }
+        return false;
+    });
 }
 
 /**

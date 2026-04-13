@@ -119,7 +119,14 @@ export async function connectToServer() {
         state.user = user; state.connected = true; state.serverUrl = state.selectedServer.wsUrl;
         saveSession(user, state.selectedServer);
 
+        // Обновляем индикатор статуса подключения
+        if (elements.statusIndicator) {
+            elements.statusIndicator.classList.remove('offline');
+            elements.statusIndicator.classList.add('online');
+        }
+
         updateUserProfile(user.name, 'В сети');
+        if (elements.statusText) elements.statusText.textContent = 'В сети';
         if (elements.serverStatus) elements.serverStatus.innerHTML = `<span style="color:var(--success);">${t('connected')}</span>`;
 
         if (!state.lastMessageId && state.messages.length === 0) {

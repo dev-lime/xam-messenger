@@ -154,8 +154,8 @@ test.describe('Полный цикл обмена сообщениями', () =>
 			await dialog.accept();
 		});
 
-		// Нажимаем "Удалить чат"
-		await userA.page.locator('[data-action="delete-chat"]').click();
+		// Нажимаем "Удалить чат" в контекстном меню контакта
+		await userA.page.locator('.peer-context-menu.open [data-action="delete-chat"]').click();
 
 		// Ждём удаления сообщений у A
 		await expect(userA.page.locator('.message-text', { hasText: msgAtoB })).toBeHidden({ timeout: 10000 });
@@ -338,14 +338,16 @@ test.describe('Краевые случаи E2E', () => {
 		// Переключаем A в оффлайн через контекст страницы
 		await userA.page.context().setOffline(true);
 
-		// Ждём пока сервер обнаружит отключение
-		await userA.page.waitForTimeout(3000);
-
-		// B должен увидеть A как оффлайн (или не в сети)
-		// Проверяем что статус изменился
-		const statusEl = peerA.locator('.peer-status');
-		const statusText = await statusEl.textContent();
-		expect(statusText).toContain('не в сети');
+		// Ждём пока B увидит A как оффлайн (сервер рассылает user_online: false)
+		await userB.page.waitForFunction((name) => {
+			const peers = document.querySelectorAll('.peer-name');
+			const peerAEl = Array.from(peers).find(el => el.textContent?.includes(name));
+			if (!peerAEl) return false;
+			const peerItem = peerAEl.closest('.peer-item');
+			if (!peerItem) return false;
+			const status = peerItem.querySelector('.peer-status');
+			return status && status.textContent?.includes('не в сети');
+		}, userA.name, { timeout: 15000 });
 
 		// Возвращаем A в онлайн
 		await userA.page.context().setOffline(false);

@@ -78,6 +78,13 @@ export function closeProfileMenu() {
 export function logout() {
     if (state.connected) getServerClient().disconnect();
     state.connected = false; state.user = null; state.selectedServer = null;
+
+    // Сбрасываем индикатор статуса
+    if (elements.statusIndicator) {
+        elements.statusIndicator.classList.remove('online');
+        elements.statusIndicator.classList.add('offline');
+    }
+    if (elements.statusText) elements.statusText.textContent = 'Не в сети';
     state.peers = []; state.messages = []; state.filteredMessages = []; state.currentPeer = null;
     clearSession();
     location.reload();
