@@ -106,4 +106,48 @@ test.describe('Файлообмен', () => {
 			filePaths.forEach(p => { try { fs.unlinkSync(p); } catch { /* ignore */ } });
 		}
 	});
+
+	test('несколько файлов с текстовой подписью — нет дубликатов', async ({ users }) => {
+		const { userA, userB } = await users.createTwoUsers();
+		await users.openChat(userA.page, userB.name);
+
+		const tmpDir = os.tmpdir();
+		const captionText = `Подпись к файлам ${Date.now()}`;
+		const filePaths = [
+			path.join(tmpDir, `f1-${Date.now()}.txt`),
+			path.join(tmpDir, `f2-${Date.now()}.txt`),
+		];
+		filePaths.forEach(p => fs.writeFileSync(p, 'content'));
+
+		try {
+			// Считаем сообщения ДО
+			const mineBefore = await userA.page.locator('.message.mine').count();
+
+			// Прикрепляем 2 файла + текст
+			await userA.page.locator('#fileInput').setInputFiles(filePaths);
+			await expect(userA.page.locator('#attachedFiles .attached-file-name').first()).toBeVisible({ timeout: 5000 });
+
+			// Вводим текст и отправляем
+			await userA.page.fill('#messageInput', captionText);
+			await userA.page.click('#sendBtn');
+
+			// Ждём появления сообщений у получателя
+			await users.openChat(userB.page, userA.name);
+			await userB.page.waitForSelector('.message-text', { state: 'visible', timeout: 10000 });
+
+			// Текст появился ровно в 1 сообщении
+			const textMessages = await userB.page.locator('.message-text', { hasText: captionText }).count();
+			expect(textMessages).toBe(1);
+
+			// Файлы появились (2 файла = 2 сообщения с файлами)
+			const fileItems = await userB.page.locator('.file-item').count();
+			expect(fileItems).toBeGreaterThanOrEqual(2);
+
+			// У отправителя: 2 файла + 1 текст = не больше 3 новых
+			const mineAfter = await userA.page.locator('.message.mine').count();
+			expect(mineAfter - mineBefore).toBeLessThanOrEqual(3);
+		} finally {
+			filePaths.forEach(p => { try { fs.unlinkSync(p); } catch { /* ignore */ } });
+		}
+	});
 });

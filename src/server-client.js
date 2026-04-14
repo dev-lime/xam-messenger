@@ -749,27 +749,28 @@ class ServerClient {
 
     /**
 	 * Отправка сообщения с файлами через WebSocket чанки
+	 * Каждый файл создаёт отдельное сообщение на сервере (при file_end).
+	 * Текст отправляется отдельным сообщением ТОЛЬКО если есть текст.
 	 * @param {string} text - Текст сообщения
 	 * @param {File[]} files - Массив File объектов
 	 * @param {string|null} recipientId - ID получателя (опционально)
 	 * @param {Function} [onFileProgress] - Callback прогресса для файлов
 	 */
     async sendMessageWithFiles(text, files, recipientId = null, onFileProgress = null) {
-        // Сначала отправляем все файлы
-        const fileResults = [];
+        // Отправляем файлы (каждый создаёт своё сообщение на сервере)
         for (const file of files) {
             try {
-                const result = await this.sendFile(file, recipientId, onFileProgress);
-                fileResults.push(result);
+                await this.sendFile(file, recipientId, onFileProgress);
             } catch (error) {
                 console.error('❌ Ошибка отправки файла:', file.name, error);
             }
         }
 
-        // Если есть текст — отправляем отдельным сообщением
+        // Текст — отдельным сообщением (только если есть)
         if (text && text.trim()) {
             this.sendMessage(text.trim(), recipientId);
         }
+        // Если текста нет — ничего больше не отправляем (файлы уже отправлены)
     }
 
     /**

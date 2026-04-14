@@ -136,7 +136,9 @@
             </div>
 
             <!-- Скрытый input для файлов -->
-            <input type="file" id="fileInput" style="display: none;" multiple>
+            <!-- display:none не работает в некоторых WebView релизных сборок (Tauri),
+                 поэтому добавлен fallback-класс visually-hidden -->
+            <input type="file" id="fileInput" class="visually-hidden" style="display: none;" multiple>
         </main>
     </div>
 
@@ -180,12 +182,6 @@
         <div class="dialog-actions">
             <button class="btn" id="cancelSettings" data-i18n="cancel">Отмена</button>
             <button class="btn btn-primary" id="saveSettings" data-i18n="save">Сохранить</button>
-        </div>
-        <div class="dialog-actions dialog-actions-danger" style="border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px;">
-            <button class="btn btn-danger-outline" id="deleteProfileBtn" data-action="delete-profile" data-i18n="deleteProfile">
-                🗑️ Удалить профиль
-            </button>
-            <p class="hint" data-i18n="deleteProfileDesc" style="margin-top: 4px;">Это действие удалит ваш аккаунт с сервера.</p>
         </div>
     </dialog>
 
@@ -285,6 +281,17 @@
                 <div style="display: flex; gap: 8px; margin-top: 12px;">
                     <button class="btn" id="clearCacheBtn">Очистить кэш</button>
                     <button class="btn" id="exportDataBtn">Экспорт данных</button>
+                </div>
+            </div>
+
+            <!-- Удаление профиля -->
+            <div class="settings-section">
+                <h4>Аккаунт</h4>
+                <div class="dialog-actions-danger" style="margin-top: 8px;">
+                    <button class="btn btn-danger-outline" id="deleteProfileBtn" data-action="delete-profile" data-i18n="deleteProfile">
+                        🗑️ Удалить профиль
+                    </button>
+                    <p class="hint" data-i18n="deleteProfileDesc" style="margin-top: 4px;">Это действие удалит ваш аккаунт с сервера.</p>
                 </div>
             </div>
         </div>
