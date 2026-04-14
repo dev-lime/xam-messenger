@@ -57,9 +57,7 @@ fn create_db_pool(
         Ok(())
     });
 
-    let pool = Pool::builder()
-        .max_size(16)
-        .build(manager)?;
+    let pool = Pool::builder().max_size(16).build(manager)?;
 
     Ok(pool)
 }
@@ -283,7 +281,9 @@ pub async fn create_test_state() -> AppState {
     {
         let init_conn = rusqlite::Connection::open(&temp_path).expect("Failed to open test DB");
         db::init_database(&init_conn).expect("Failed to init test DB");
-        init_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").expect("Failed to checkpoint");
+        init_conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("Failed to checkpoint");
         drop(init_conn);
     }
 
