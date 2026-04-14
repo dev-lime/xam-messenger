@@ -30,6 +30,40 @@ test.describe('Обнаружение сервера', () => {
 		await context.close();
 	});
 
+	test('mDNS сервер отображается как онлайн', async ({ browser }) => {
+		const context = await browser.newContext();
+
+		// Предзаполняем кэш сервером с source: 'mdns'
+		await context.addInitScript(() => {
+			const cached = [{
+				ip: 'localhost',
+				port: parseInt(process.env.XAM_SERVER_PORT || '8080'),
+				lastSeen: Date.now(),
+				source: 'mdns'
+			}];
+			localStorage.setItem('xam_server_cache', JSON.stringify(cached));
+		});
+
+		const page = await context.newPage();
+		await page.goto(FRONTEND_URL, { waitUntil: 'domcontentloaded' });
+
+		// Ждём диалог выбора сервера
+		await expect(page.locator('#serverSelectorDialog')).toBeVisible({ timeout: 15000 });
+
+		// Ждём немного чтобы discovery завершился
+		await page.waitForTimeout(2000);
+
+		// mDNS сервер должен быть помечен как онлайн (зелёный индикатор)
+		const onlineServer = page.locator('.server-item.online').first();
+		await expect(onlineServer).toBeVisible({ timeout: 10000 });
+
+		// Проверяем что индикатор статуса зелёный
+		const statusIndicator = onlineServer.locator('.server-status-indicator.online');
+		await expect(statusIndicator).toBeVisible();
+
+		await context.close();
+	});
+
 	test.fixme('кэширование сервера → автоподключение', async ({ browser }) => {
 		const context = await browser.newContext();
 

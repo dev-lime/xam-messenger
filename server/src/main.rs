@@ -38,22 +38,28 @@ fn create_db_pool(
         std::fs::create_dir_all(parent)?;
     }
 
-    // FIX L-02: PRAGMA применяются только в init_database(), не дублируем здесь
-    let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
-        // Инициализируем схему БД (создаёт таблицы, применяет PRAGMA и миграции)
-        db::init_database(conn)?;
+    // Сначала инициализируем БД отдельным соединением (создание таблиц, миграции)
+    {
+        let init_conn = rusqlite::Connection::open(db_path)?;
+        db::init_database(&init_conn)?;
+        init_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        drop(init_conn);
+    }
+
+    // Каждое соединение pool получает PRAGMA для конкурентной работы
+    let manager = SqliteConnectionManager::file(db_path.clone()).with_init(|conn| {
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 10000;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA cache_size = -5000;",
+        )?;
         Ok(())
     });
 
     let pool = Pool::builder()
-        .max_size(16) // 16 соединений — достаточно для LAN мессенджера
+        .max_size(16)
         .build(manager)?;
-
-    // Применяем миграции к одному соединению
-    {
-        let conn = pool.get()?;
-        db::apply_migrations(&conn)?;
-    }
 
     Ok(pool)
 }
@@ -269,9 +275,25 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 /// ARCH-3: Создаёт тестовое состояние с r2d2 pool и PRAGMA
 #[cfg(test)]
 pub async fn create_test_state() -> AppState {
-    // FIX L-02: PRAGMA только в init_database, не дублируем
-    let manager = SqliteConnectionManager::file(":memory:").with_init(|conn| {
-        db::init_database(conn)?;
+    // Используем временный файл для тестов чтобы все соединения pool работали с одной БД
+    let temp_path: std::path::PathBuf =
+        std::env::temp_dir().join(format!("xam-test-{}.db", uuid::Uuid::new_v4()));
+
+    // Инициализируем БД один раз
+    {
+        let init_conn = rusqlite::Connection::open(&temp_path).expect("Failed to open test DB");
+        db::init_database(&init_conn).expect("Failed to init test DB");
+        init_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").expect("Failed to checkpoint");
+        drop(init_conn);
+    }
+
+    let manager = SqliteConnectionManager::file(&temp_path).with_init(|conn| {
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 10000;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA cache_size = -5000;",
+        )?;
         Ok(())
     });
 

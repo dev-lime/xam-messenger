@@ -420,7 +420,12 @@ async fn handle_register(
         return;
     }
 
-    let avatar = if !client_msg.text.is_empty() {
+    // FIX: avatar поле теперь называется avatar, но для обратной совместимости
+    // поддерживаем старое поле text (если avatar пуст, но text заполнен — используем text)
+    let avatar = if !client_msg.avatar.is_empty() {
+        client_msg.avatar.clone()
+    } else if !client_msg.text.is_empty() {
+        // Старый клиент отправил avatar в поле text
         client_msg.text.clone()
     } else {
         "👤".to_string()
@@ -532,7 +537,10 @@ async fn handle_update_profile(
         }
     };
 
-    let new_avatar = if !client_msg.text.is_empty() {
+    // FIX: avatar поле теперь называется avatar, fallback на text для обратной совместимости
+    let new_avatar = if !client_msg.avatar.is_empty() {
+        client_msg.avatar.clone()
+    } else if !client_msg.text.is_empty() {
         client_msg.text.clone()
     } else {
         "👤".to_string()
@@ -591,7 +599,7 @@ async fn handle_update_profile(
 async fn handle_message(
     client_msg: ClientMsg,
     user_id: &Option<String>,
-    _session: &mut actix_ws::Session,
+    session: &mut actix_ws::Session,
     state: &AppState,
 ) {
     let uid = match user_id {
@@ -609,6 +617,18 @@ async fn handle_message(
             client_msg.text.len(),
             max_message_length()
         );
+        // Отправляем клиенту ошибку чтобы он мог показать визуальную индикацию
+        let _ = session
+            .text(
+                json!({
+                    "type": "error",
+                    "error": format!("Message too long (max {} characters)", max_message_length()),
+                    "text": client_msg.text,
+                    "recipient_id": client_msg.recipient_id,
+                })
+                .to_string(),
+            )
+            .await;
         return;
     }
 

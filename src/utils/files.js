@@ -70,7 +70,7 @@ export function updateSendButton() {
 }
 
 /**
- * Открытие файла — скачивание
+ * Открытие файла — скачивание с прогрессом
  */
 export async function openFile(filepath, filename) {
     if (!filepath) { showError(t('filePathNotSpecified')); return; }
@@ -78,15 +78,82 @@ export async function openFile(filepath, filename) {
         const httpUrl = getServerClient().httpUrl;
         const fileUrl = filepath.startsWith('http') ? filepath :
             `${httpUrl}/files/download?file_id=${encodeURIComponent(filepath)}`;
+
+        // Находим кнопку для этого файла
+        const btn = document.querySelector(`.file-download-btn[data-filepath="${filepath}"]`);
+        const downloadIcon = btn?.querySelector('.download-icon');
+        const progressRing = btn?.querySelector('.progress-ring');
+        const progressCircle = btn?.querySelector('.progress-ring-circle');
+        const downloadedIcon = btn?.querySelector('.downloaded-icon');
+
+        if (downloadIcon && progressRing) {
+            downloadIcon.style.display = 'none';
+            progressRing.style.display = 'inline';
+        }
+
         const response = await fetch(fileUrl);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click();
-        window.URL.revokeObjectURL(url); document.body.removeChild(a);
-    } catch (error) { showError(t('fileDownloadError', error.message)); }
+
+        const contentLength = response.headers.get('content-length');
+        const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+        if (totalBytes > 0 && progressCircle) {
+            const reader = response.body.getReader();
+            const chunks = [];
+            let receivedBytes = 0;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                receivedBytes += value.length;
+
+                const circumference = 56.55;
+                const progress = receivedBytes / totalBytes;
+                const offset = circumference * (1 - progress);
+                progressCircle.style.strokeDashoffset = offset;
+            }
+
+            const blob = new Blob(chunks);
+            downloadAndOpenBlob(blob, filename);
+
+            if (progressRing && downloadedIcon) {
+                progressRing.style.display = 'none';
+                downloadedIcon.style.display = 'inline';
+            }
+        } else {
+            const blob = await response.blob();
+            downloadAndOpenBlob(blob, filename);
+
+            if (progressRing && downloadedIcon) {
+                progressRing.style.display = 'none';
+                downloadedIcon.style.display = 'inline';
+            }
+        }
+    } catch (error) {
+        const btn = document.querySelector(`.file-download-btn[data-filepath="${filepath}"]`);
+        const downloadIcon = btn?.querySelector('.download-icon');
+        const progressRing = btn?.querySelector('.progress-ring');
+        if (downloadIcon && progressRing) {
+            progressRing.style.display = 'none';
+            downloadIcon.style.display = 'inline';
+        }
+        showError(t('fileDownloadError', error.message));
+    }
+}
+
+/**
+ * Скачивание и открытие blob
+ */
+function downloadAndOpenBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
 }
 
 /**

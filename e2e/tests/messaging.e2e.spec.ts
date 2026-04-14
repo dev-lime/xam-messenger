@@ -211,6 +211,28 @@ test.describe('Полный цикл обмена сообщениями', () =>
 	});
 });
 
+test.describe('Ошибка отправки сообщения', () => {
+	test('превышение лимита текста → красный ❗ на сообщении', async ({ users }) => {
+		const { userA } = await users.createTwoUsers();
+
+		await users.openChat(userA.page, 'Nobody');
+
+		// Генерируем сообщение > 10000 символов (лимит по умолчанию)
+		const longText = 'A'.repeat(10001) + ` (${Date.now()})`;
+		await userA.page.fill('#messageInput', longText);
+		await userA.page.click('#sendBtn');
+
+		// Ждём появления сообщения с ошибкой
+		await userA.page.waitForSelector('.message.mine.message-error', { state: 'visible', timeout: 10000 });
+
+		// Проверяем что есть красный восклицательный знак
+		const errorStatus = userA.page.locator('.message.mine.message-error .read-status.status-error');
+		await expect(errorStatus).toBeVisible({ timeout: 5000 });
+		const statusText = await errorStatus.textContent();
+		expect(statusText).toContain('❗');
+	});
+});
+
 test.describe('Краевые случаи E2E', () => {
 	test('специальные символы в сообщении', async ({ users }) => {
 		const { userA, userB } = await users.createTwoUsers();

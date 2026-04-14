@@ -493,6 +493,11 @@ class ServerClient {
             this.notifyHandlers('server_shutdown', data);
             break;
 
+        case 'error':
+            console.error('❌ Ошибка от сервера:', data.error, data);
+            this.notifyHandlers('error', data);
+            break;
+
         default:
             console.warn('⚠️ Неизвестный тип сообщения:', type);
         }

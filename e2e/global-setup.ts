@@ -65,6 +65,14 @@ export default async function globalSetup(): Promise<ServerContext> {
 			fs.unlinkSync(dbPath);
 			console.log('🧹 Очищена серверная БД');
 		}
+		// Также чистим WAL и SHM файлы
+		for (const ext of ['-wal', '-shm']) {
+			const walPath = dbPath + ext;
+			if (fs.existsSync(walPath)) {
+				fs.unlinkSync(walPath);
+				console.log(`🧹 Очищена ${ext} файл`);
+			}
+		}
 		if (fs.existsSync(filesDir)) {
 			fs.rmSync(filesDir, { recursive: true, force: true });
 		}

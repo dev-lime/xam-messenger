@@ -71,16 +71,25 @@ function createMessageElement(msg) {
     const time = new Date(msg.timestamp * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
     if (isMine) {
-        const statusIcon = msg.delivery_status === DELIVERY_STATUS.READ ? STATUS_ICONS.READ :
-            msg.delivery_status === DELIVERY_STATUS.DELIVERED ? STATUS_ICONS.DELIVERED : STATUS_ICONS.SENT;
-        const statusTitle = msg.delivery_status === DELIVERY_STATUS.READ ? 'Прочитано' :
-            msg.delivery_status === DELIVERY_STATUS.DELIVERED ? 'Доставлено' : 'Отправлено';
+        // Проверка на ошибку отправки
+        const hasError = msg.delivery_status === -1;
+        if (hasError) {
+            div.classList.add('message-error');
+            div.title = msg.send_error || 'Ошибка отправки';
+        }
+
+        const statusIcon = hasError ? '❗' :
+            msg.delivery_status === DELIVERY_STATUS.READ ? STATUS_ICONS.READ :
+                msg.delivery_status === DELIVERY_STATUS.DELIVERED ? STATUS_ICONS.DELIVERED : STATUS_ICONS.SENT;
+        const statusTitle = hasError ? (msg.send_error || 'Ошибка отправки') :
+            msg.delivery_status === DELIVERY_STATUS.READ ? 'Прочитано' :
+                msg.delivery_status === DELIVERY_STATUS.DELIVERED ? 'Доставлено' : 'Отправлено';
         const filesHtml = msg.files?.length ? createFilesHtml(msg.files) : '';
         div.innerHTML = `
             ${msg.text ? `<div class="message-text">${escapeHtml(msg.text)}</div>` : ''}
             ${filesHtml ? `<div class="message-files">${filesHtml}</div>` : ''}
             <div class="message-meta">
-                <span class="read-status" title="${statusTitle}">${statusIcon}</span>
+                <span class="read-status${hasError ? ' status-error' : ''}" title="${statusTitle}">${statusIcon}</span>
                 <span>${time}</span>
             </div>`;
     } else {
@@ -109,9 +118,25 @@ function createFilesHtml(files) {
                 <span class="file-name-row">
                     <span class="file-name">${name}</span>
                     <button class="file-download-btn" data-filepath="${pathAttr}" data-filename="${name}" type="button">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                            <path d="M12 5v14M5 12l7 7 7-7"/>
-                        </svg>
+                        <span class="download-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 5v14M5 12l7 7 7-7"/>
+                            </svg>
+                        </span>
+                        <span class="progress-ring" style="display:none;">
+                            <svg width="18" height="18" viewBox="0 0 24 24">
+                                <circle class="progress-ring-bg" cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" opacity="0.2"/>
+                                <circle class="progress-ring-circle" cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-dasharray="56.55" stroke-dashoffset="56.55" stroke-linecap="round"
+                                    transform="rotate(-90 12 12)"/>
+                            </svg>
+                        </span>
+                        <span class="downloaded-icon" style="display:none;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34c759" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                                <path d="M8 12l3 3 5-5"/>
+                            </svg>
+                        </span>
                     </button>
                 </span>
                 <span class="file-size">${size}</span>
@@ -170,26 +195,98 @@ export function setupFileDelegation() {
 }
 
 /**
- * Открытие/скачивание файла
+ * Открытие/скачивание файла с прогрессом
  */
 async function openFile(filepath, filename) {
     if (!filepath) { showError(t('filePathNotSpecified')); return; }
     try {
         const sc = getServerClient();
         const url = filepath.startsWith('http') ? filepath : `${sc.httpUrl}/files/download?file_id=${encodeURIComponent(filepath)}`;
-        const r = await fetch(url);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const blob = await r.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(a.href);
-        document.body.removeChild(a);
+
+        // Находим кнопку для этого файла
+        const btn = document.querySelector(`.file-download-btn[data-filepath="${filepath}"]`);
+        const downloadIcon = btn?.querySelector('.download-icon');
+        const progressRing = btn?.querySelector('.progress-ring');
+        const progressCircle = btn?.querySelector('.progress-ring-circle');
+        const downloadedIcon = btn?.querySelector('.downloaded-icon');
+
+        // Показываем прогресс-кольцо
+        if (downloadIcon && progressRing) {
+            downloadIcon.style.display = 'none';
+            progressRing.style.display = 'inline';
+        }
+
+        // Fetch с чтением stream для прогресса
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const contentLength = response.headers.get('content-length');
+        const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
+
+        if (totalBytes > 0 && progressCircle) {
+            // Читаем stream чанками для отображения прогресса
+            const reader = response.body.getReader();
+            const chunks = [];
+            let receivedBytes = 0;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                receivedBytes += value.length;
+
+                // Обновляем круговой прогресс
+                const circumference = 56.55; // 2 * PI * 9
+                const progress = receivedBytes / totalBytes;
+                const offset = circumference * (1 - progress);
+                progressCircle.style.strokeDashoffset = offset;
+            }
+
+            // Собираем blob из чанков
+            const blob = new Blob(chunks);
+            downloadAndOpenBlob(blob, filename);
+
+            // Показываем галочку
+            if (progressRing && downloadedIcon) {
+                progressRing.style.display = 'none';
+                downloadedIcon.style.display = 'inline';
+            }
+        } else {
+            // Нет content-length — скачиваем как обычно
+            const blob = await response.blob();
+            downloadAndOpenBlob(blob, filename);
+
+            // Показываем галочку
+            if (progressRing && downloadedIcon) {
+                progressRing.style.display = 'none';
+                downloadedIcon.style.display = 'inline';
+            }
+        }
     } catch (error) {
+        // Возвращаем иконку скачивания при ошибке
+        const btn = document.querySelector(`.file-download-btn[data-filepath="${filepath}"]`);
+        const downloadIcon = btn?.querySelector('.download-icon');
+        const progressRing = btn?.querySelector('.progress-ring');
+        if (downloadIcon && progressRing) {
+            progressRing.style.display = 'none';
+            downloadIcon.style.display = 'inline';
+        }
         showError(t('fileOpenError', error.message));
     }
+}
+
+/**
+ * Скачивание и открытие blob
+ */
+function downloadAndOpenBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
 }
 
 /**
