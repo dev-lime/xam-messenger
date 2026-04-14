@@ -230,6 +230,24 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     .bind(format!("{}:{}", server_config.host, server_config.port))?
     .run();
 
+    // Фоновая задача: периодический WAL checkpoint (каждые 30 секунд)
+    let db_for_checkpoint = state.db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            if let Ok(conn) = db_for_checkpoint.get() {
+                // PASSIVE — не блокирует другие соединения
+                if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)") {
+                    log::warn!("⚠️ WAL checkpoint ошибка: {}", e);
+                } else {
+                    log::debug!("🧹 WAL checkpoint выполнен");
+                }
+            }
+        }
+    });
+
     // Graceful shutdown
     let state_for_shutdown = state.clone();
     let server_handle = server.handle();
@@ -247,6 +265,25 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 info!("📤 Отправлено server_shutdown пользователю {}", user_id);
             }
             drop(senders);
+
+            // Финальный WAL checkpoint перед завершением
+            if let Ok(conn) = state_for_shutdown.db.get() {
+                if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
+                    log::warn!("⚠️ Финальный WAL checkpoint ошибка: {}", e);
+                } else {
+                    info!("🧹 Финальный WAL checkpoint выполнен");
+                }
+            }
+
+            // Логируем метрики contention
+            let retry_ok = db::BUSY_RETRY_OK.load(std::sync::atomic::Ordering::Relaxed);
+            let retry_timeout = db::BUSY_RETRY_TIMEOUT.load(std::sync::atomic::Ordering::Relaxed);
+            if retry_ok > 0 || retry_timeout > 0 {
+                info!(
+                    "📊 Метрики contention: retry_ok={}, retry_timeout={}",
+                    retry_ok, retry_timeout
+                );
+            }
 
             // Небольшая задержка чтобы клиенты получили уведомление
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
