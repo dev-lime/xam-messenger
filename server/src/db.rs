@@ -4,9 +4,90 @@
 //!         Миграции применяются при инициализации pool.
 
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::thread;
+use std::time::Duration;
 
 use crate::models::{ChatMessage, FileData, User};
+
+// ============================================================================
+// Метрики contention (для мониторинга и отладки)
+// ============================================================================
+
+/// Количество успешных retry после SQLITE_BUSY
+pub static BUSY_RETRY_OK: AtomicU32 = AtomicU32::new(0);
+
+/// Количество retry которые не помогли (timeout)
+pub static BUSY_RETRY_TIMEOUT: AtomicU32 = AtomicU32::new(0);
+
+/// Задержка между retry при SQLITE_BUSY (ms): 50 → 100 → 200 → 500 → 1000
+const RETRY_DELAYS_MS: &[u64] = &[50, 100, 200, 500, 1000];
+
+/// Проверить: это ошибка SQLITE_BUSY?
+fn is_sqlite_busy(err: &rusqlite::Error) -> bool {
+    matches!(
+        err,
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked,
+                ..
+            },
+            _
+        )
+    )
+}
+
+/// Выполнить операцию с retry при SQLITE_BUSY (exponential backoff)
+pub fn with_retry<T, F>(mut f: F) -> Result<T, rusqlite::Error>
+where
+    F: FnMut() -> Result<T, rusqlite::Error>,
+{
+    for (i, delay_ms) in RETRY_DELAYS_MS.iter().enumerate() {
+        match f() {
+            Ok(v) => {
+                if i > 0 {
+                    BUSY_RETRY_OK.fetch_add(1, Ordering::Relaxed);
+                    log::warn!(
+                        "⚠️ SQLITE_BUSY retry успешен после {} попыток (задержка {}ms)",
+                        i + 1,
+                        delay_ms
+                    );
+                }
+                return Ok(v);
+            }
+            Err(e) => {
+                if is_sqlite_busy(&e) && i < RETRY_DELAYS_MS.len() - 1 {
+                    log::warn!(
+                        "⚠️ SQLITE_BUSY, retry через {}ms (попытка {}/{})",
+                        delay_ms,
+                        i + 1,
+                        RETRY_DELAYS_MS.len()
+                    );
+                    thread::sleep(Duration::from_millis(*delay_ms));
+                } else {
+                    if is_sqlite_busy(&e) {
+                        BUSY_RETRY_TIMEOUT.fetch_add(1, Ordering::Relaxed);
+                        log::error!(
+                            "❌ SQLITE_BUSY после {} retry попыток — отдаём ошибку",
+                            RETRY_DELAYS_MS.len()
+                        );
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+    // Сюда не должны попасть, но на всякий случай
+    BUSY_RETRY_TIMEOUT.fetch_add(1, Ordering::Relaxed);
+    Err(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error {
+            code: ErrorCode::DatabaseBusy,
+            extended_code: 5,
+        },
+        Some("SQLITE_BUSY after all retries".to_string()),
+    ))
+}
 
 /// ARCH-1: Текущая версия схемы БД
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -110,10 +191,12 @@ pub fn get_or_create_user(
 
     // Пользователя нет — создаём нового
     let user_id = uuid::Uuid::new_v4().to_string();
-    let changes = conn.execute(
-        "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
-        params![user_id, name, avatar],
-    )?;
+    let changes = with_retry(|| {
+        conn.execute(
+            "INSERT INTO users (id, name, avatar) VALUES (?1, ?2, ?3)",
+            params![user_id, name, avatar],
+        )
+    })?;
 
     if changes == 0 {
         // Конфликт (race condition): другой поток вставил пользователя с тем же именем
@@ -301,20 +384,22 @@ fn parse_message_row(row: &rusqlite::Row) -> Result<ChatMessage, rusqlite::Error
 pub fn save_message(conn: &Connection, message: &ChatMessage) -> Result<(), rusqlite::Error> {
     let files_json = serde_json::to_string(&message.files).unwrap_or_default();
 
-    conn.execute(
-        "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            message.id,
-            message.sender_id,
-            message.sender_name,
-            message.text,
-            message.timestamp,
-            message.delivery_status,
-            message.recipient_id,
-            files_json
-        ],
-    )?;
+    with_retry(|| {
+        conn.execute(
+            "INSERT INTO messages (id, sender_id, sender_name, text, timestamp, delivery_status, recipient_id, files) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                message.id,
+                message.sender_id,
+                message.sender_name,
+                message.text,
+                message.timestamp,
+                message.delivery_status,
+                message.recipient_id,
+                files_json
+            ],
+        )
+    })?;
 
     Ok(())
 }
@@ -325,10 +410,12 @@ pub fn update_message_delivery_status(
     message_id: &str,
     status: u8,
 ) -> Result<usize, rusqlite::Error> {
-    conn.execute(
-        "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
-        params![status, message_id],
-    )
+    with_retry(|| {
+        conn.execute(
+            "UPDATE messages SET delivery_status = ?1 WHERE id = ?2",
+            params![status, message_id],
+        )
+    })
 }
 
 /// Сохранение метаданных файла
@@ -341,19 +428,21 @@ pub fn save_file_metadata(
     sender_id: &str,
     recipient_id: &str,
 ) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO files (id, name, path, size, sender_id, recipient_id, timestamp) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            id,
-            name,
-            path,
-            size,
-            sender_id,
-            recipient_id,
-            Utc::now().timestamp()
-        ],
-    )?;
+    with_retry(|| {
+        conn.execute(
+            "INSERT INTO files (id, name, path, size, sender_id, recipient_id, timestamp) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                name,
+                path,
+                size,
+                sender_id,
+                recipient_id,
+                Utc::now().timestamp()
+            ],
+        )
+    })?;
     Ok(())
 }
 
@@ -456,6 +545,7 @@ pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
          PRAGMA cache_size = -5000;
          PRAGMA synchronous = NORMAL;
          PRAGMA wal_autocheckpoint = 100;
+         PRAGMA journal_size_limit = 67108864;
          PRAGMA foreign_keys = ON;",
     )?;
 

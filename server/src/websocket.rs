@@ -669,7 +669,24 @@ async fn handle_message(
     log::info!("💾 Сохраняем сообщение с {} файлами", message.files.len());
 
     if let Err(e) = db::save_message(&conn, &message) {
-        log::error!("Failed to save message: {}", e);
+        // SQLITE_BUSY после всех retry → уведомляем клиента
+        let err_msg = e.to_string().to_lowercase();
+        if err_msg.contains("busy") || err_msg.contains("locked") {
+            log::warn!("⚠️ SQLITE_BUSY при сохранении сообщения → уведомляем клиента");
+            let _ = session
+                .text(
+                    json!({
+                        "type": "error",
+                        "error": "Server busy, message not saved. Retry.",
+                        "text": client_msg.text,
+                        "recipient_id": client_msg.recipient_id,
+                    })
+                    .to_string(),
+                )
+                .await;
+        } else {
+            log::error!("Failed to save message: {}", e);
+        }
         return;
     }
 

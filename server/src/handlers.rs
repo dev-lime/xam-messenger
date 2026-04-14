@@ -11,11 +11,38 @@ use crate::models::AppState;
 
 /// Health-check эндпоинт для мониторинга
 pub async fn health_check(data: web::Data<AppState>) -> HttpResponse {
-    let db_ok = data.db.get().is_ok();
-    HttpResponse::Ok().json(json!({
-        "status": "ok",
+    // Проверяем доступность БД
+    let db_ok = match data.db.get() {
+        Ok(conn) => {
+            // Проверяем integrity
+            match conn.query_row("PRAGMA quick_check(1)", [], |row| row.get::<_, String>(0)) {
+                Ok(result) => result == "ok",
+                Err(e) => {
+                    log::error!("❌ Health check: integrity failed: {}", e);
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("❌ Health check: не удалось получить соединение: {}", e);
+            false
+        }
+    };
+
+    // Считаем метрики contention
+    let retry_ok = crate::db::BUSY_RETRY_OK.load(std::sync::atomic::Ordering::Relaxed);
+    let retry_timeout = crate::db::BUSY_RETRY_TIMEOUT.load(std::sync::atomic::Ordering::Relaxed);
+
+    let status_code = if db_ok { 200 } else { 503 };
+
+    HttpResponse::build(actix_web::http::StatusCode::from_u16(status_code).unwrap()).json(json!({
+        "status": if db_ok { "ok" } else { "degraded" },
         "version": "1.0.0",
         "db_available": db_ok,
+        "contention": {
+            "busy_retry_ok": retry_ok,
+            "busy_retry_timeout": retry_timeout
+        },
         "timestamp": Utc::now().timestamp()
     }))
 }
@@ -30,6 +57,12 @@ pub struct RegisterRequest {
 
 fn default_avatar() -> String {
     "👤".to_string()
+}
+
+/// Проверить: это ошибка SQLITE_BUSY?
+fn is_busy_error(e: &AppError) -> bool {
+    let msg = e.to_string().to_lowercase();
+    msg.contains("busy") || msg.contains("locked")
 }
 
 /// Регистрация нового пользователя
@@ -62,8 +95,15 @@ pub async fn register(data: web::Data<AppState>, body: web::Json<RegisterRequest
     match db::get_or_create_user(&conn, name, &body.avatar) {
         Ok(user) => HttpResponse::Ok().json(json!({"success": true, "data": user})),
         Err(e) => {
-            // BP-4: Используем AppError для корректной обработки
-            AppError::database(e.to_string()).to_response()
+            let err = AppError::database(e.to_string());
+            // SQLITE_BUSY → 503 с Retry-After
+            if is_busy_error(&err) {
+                log::warn!("⚠️ Регистрация: SQLITE_BUSY → 503");
+                return HttpResponse::ServiceUnavailable()
+                    .insert_header(("Retry-After", "2"))
+                    .json(json!({"success": false, "error": "Server busy, please retry"}));
+            }
+            err.to_response()
         }
     }
 }
