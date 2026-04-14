@@ -23,13 +23,27 @@ export async function sendMessage() {
     if (!text && filesToSend.length === 0) return;
     if (!state.connected) { showError(t('noConnection')); return; }
 
-    const messageData = {
-        id: `local_${Date.now()}`,
-        sender_id: state.user.id, sender_name: state.user.name,
-        text, timestamp: Date.now() / 1000, delivery_status: DELIVERY_STATUS.SENT,
-        files: filesToSend.map(f => ({ name: f.name, size: f.size, path: '' })),
-        recipient_id: state.currentPeer,
-    };
+    // Создаём локальные сообщения (каждый файл — отдельное сообщение, текст — отдельное)
+    const localMessages = [];
+    for (const file of filesToSend) {
+        localMessages.push({
+            id: `local_${Date.now()}_file_${file.name}`,
+            sender_id: state.user.id, sender_name: state.user.name,
+            text: `📎 ${file.name}`, timestamp: Date.now() / 1000,
+            delivery_status: DELIVERY_STATUS.SENT,
+            files: [{ name: file.name, size: file.size, path: '' }],
+            recipient_id: state.currentPeer,
+        });
+    }
+    if (text) {
+        localMessages.push({
+            id: `local_${Date.now()}_text`,
+            sender_id: state.user.id, sender_name: state.user.name,
+            text, timestamp: Date.now() / 1000, delivery_status: DELIVERY_STATUS.SENT,
+            files: [],
+            recipient_id: state.currentPeer,
+        });
+    }
 
     if (filesToSend.length > 0) {
         getServerClient().sendMessageWithFiles(text, filesToSend, state.currentPeer)
@@ -38,9 +52,12 @@ export async function sendMessage() {
         getServerClient().sendMessage(text, state.currentPeer);
     }
 
-    state.messages.push(messageData);
+    // Добавляем все локальные сообщения
+    for (const msg of localMessages) {
+        state.messages.push(msg);
+        if (state.currentPeer) state.filteredMessages.push(msg);
+    }
     if (state.currentPeer) {
-        state.filteredMessages.push(messageData);
         renderMessages(true);
     } else { renderMessages(); }
 

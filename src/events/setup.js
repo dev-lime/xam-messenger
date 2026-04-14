@@ -159,12 +159,15 @@ async function showLatency() {
     statusEl.classList.add('pinging');
     latencyEl.textContent = '⏳ ...';
     latencyEl.className = 'status-latency visible';
+    // FIX: записываем время начала ДО запроса
+    latencyEl.dataset.start = String(performance.now());
     try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 3000);
         await fetch(`${state.selectedServer.httpUrl}/users`, { method: 'GET', signal: controller.signal });
         clearTimeout(timer);
-        latencyEl.textContent = `⏱ ${t('latencyMs', Math.round(performance.now() - latencyEl.dataset.start || 0))}`;
+        const elapsed = Math.round(performance.now() - parseFloat(latencyEl.dataset.start || '0'));
+        latencyEl.textContent = `⏱ ${t('latencyMs', elapsed)}`;
     } catch { latencyEl.textContent = t('noResponse'); }
     setTimeout(() => { latencyEl.classList.remove('visible'); latencyEl.classList.add('hiding'); setTimeout(() => { statusEl.classList.remove('pinging'); latencyEl.className = 'status-latency'; }, 400); }, 2000);
 }

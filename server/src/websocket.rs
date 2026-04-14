@@ -325,24 +325,25 @@ pub async fn handle_client_message(
     let msg_type = client_msg.msg_type.clone();
 
     // Rate limiting для зарегистрированных пользователей (пропускаем register)
-    if let Some(uid) = user_id.as_ref() {
-        if msg_type != "register" && check_ws_rate_limit(uid) {
-            log::warn!(
-                "⚠️ Rate limit превышен для пользователя {}: {}",
-                uid,
-                msg_type
-            );
-            let _ = session
-                .text(
-                    json!({
-                        "type": "error",
-                        "message": "Rate limit exceeded. Too many messages per second."
-                    })
-                    .to_string(),
-                )
-                .await;
-            return;
-        }
+    if let Some(uid) = user_id.as_ref()
+        && msg_type != "register"
+        && check_ws_rate_limit(uid)
+    {
+        log::warn!(
+            "⚠️ Rate limit превышен для пользователя {}: {}",
+            uid,
+            msg_type
+        );
+        let _ = session
+            .text(
+                json!({
+                    "type": "error",
+                    "message": "Rate limit exceeded. Too many messages per second."
+                })
+                .to_string(),
+            )
+            .await;
+        return;
     }
 
     let future = AssertUnwindSafe(async {
