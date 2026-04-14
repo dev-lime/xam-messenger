@@ -7,10 +7,10 @@ use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::{LazyLock, Mutex};
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
+use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::unbounded_channel;
@@ -60,7 +60,9 @@ static WS_RATE_LIMITERS: LazyLock<Mutex<HashMap<String, WsRateLimiter>>> =
 /// Проверить rate limit для пользователя
 fn check_ws_rate_limit(user_id: &str) -> bool {
     let mut limiters = WS_RATE_LIMITERS.lock().unwrap();
-    let limiter = limiters.entry(user_id.to_string()).or_insert_with(WsRateLimiter::new);
+    let limiter = limiters
+        .entry(user_id.to_string())
+        .or_insert_with(WsRateLimiter::new);
     limiter.check_and_increment()
 }
 
