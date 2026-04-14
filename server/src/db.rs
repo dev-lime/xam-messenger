@@ -450,14 +450,14 @@ pub fn delete_chat_messages(
 
 /// Инициализация схемы базы данных
 pub fn init_database(conn: &Connection) -> Result<(), rusqlite::Error> {
-    // Включаем WAL mode
-    conn.execute_batch("PRAGMA journal_mode = WAL")?;
-
-    // Увеличиваем размер кэша
-    conn.execute("PRAGMA cache_size = -5000", [])?;
-
-    // Включаем foreign keys
-    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    // Включаем WAL mode и настраиваем PRAGMA одним батчем
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA cache_size = -5000;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA wal_autocheckpoint = 100;
+         PRAGMA foreign_keys = ON;",
+    )?;
 
     // Таблица пользователей
     conn.execute(

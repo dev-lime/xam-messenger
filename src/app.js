@@ -12,7 +12,7 @@ import { requestPermission as requestNotifPermission } from './notifications.js'
 import { setupEventListeners, initAppSettings } from './events/setup.js';
 import { renderPeers } from './utils/peers.js';
 import { renderMessages, setupFileDelegation } from './utils/messages.js';
-import { handleNewMessage, handleAck, handleMessages, handleUserOnline, handleUserUpdated, handleChatDeleted } from './chat/handlers.js';
+import { handleNewMessage, handleAck, handleMessages, handleUserOnline, handleUserUpdated, handleChatDeleted, handleServerError } from './chat/handlers.js';
 import { selectPeer, sendMessage, loadMoreMessages } from './chat/actions.js';
 import { filterMessagesForCurrentChat, hasMoreMessagesForCurrentPeer } from './chat/pagination.js';
 import { connectToServer, openServerSelector, discoverServers, refreshServerList } from './dialogs/server.js';
@@ -79,6 +79,7 @@ async function init() {
         clearSession();
     });
     sc.on('chat_deleted', handleChatDeleted);
+    sc.on('error', handleServerError);
     sc.on('server_shutdown', () => {
         state.connected = false;
         clearSession();

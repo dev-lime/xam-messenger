@@ -150,4 +150,130 @@ test.describe('Файлообмен', () => {
 			filePaths.forEach(p => { try { fs.unlinkSync(p); } catch { /* ignore */ } });
 		}
 	});
+
+	test('круговой прогрессбар при скачивании файла', async ({ users }) => {
+		const { userA, userB } = await users.createTwoUsers();
+
+		await users.openChat(userA.page, userB.name);
+
+		const tmpDir = os.tmpdir();
+		const content = 'Прогрессбар тест ' + 'X'.repeat(10000);
+		const filePath = path.join(tmpDir, `progress-test-${Date.now()}.txt`);
+		fs.writeFileSync(filePath, content);
+
+		try {
+			await userA.page.locator('#fileInput').setInputFiles(filePath);
+			await expect(userA.page.locator('#attachedFiles .attached-file-name')).toBeVisible({ timeout: 5000 });
+			await userA.page.click('#sendBtn');
+			await userA.page.waitForSelector('.message.mine .file-item', { state: 'visible', timeout: 10000 });
+
+			// B открывает чат
+			await users.openChat(userB.page, userA.name);
+			const downloadBtn = userB.page.locator('.file-download-btn').first();
+			await expect(downloadBtn).toBeVisible({ timeout: 10000 });
+
+			// Проверяем что кнопка содержит SVG для прогрессбара
+			const progressRing = downloadBtn.locator('.progress-ring');
+			await expect(progressRing).toBeVisible();
+
+			// Запускаем скачивание
+			const [download] = await Promise.all([
+				userB.page.waitForEvent('download'),
+				downloadBtn.click(),
+			]);
+
+			const downloadedPath = await download.path();
+			expect(downloadedPath).toBeTruthy();
+			const downloadedContent = fs.readFileSync(downloadedPath!, 'utf-8');
+			expect(downloadedContent).toContain(content);
+		} finally {
+			try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+		}
+	});
+
+	test('галочка в кружке после скачивания файла', async ({ users }) => {
+		const { userA, userB } = await users.createTwoUsers();
+
+		await users.openChat(userA.page, userB.name);
+
+		const tmpDir = os.tmpdir();
+		const content = 'Галочка тест ' + Date.now();
+		const filePath = path.join(tmpDir, `checkmark-test-${Date.now()}.txt`);
+		fs.writeFileSync(filePath, content);
+
+		try {
+			await userA.page.locator('#fileInput').setInputFiles(filePath);
+			await expect(userA.page.locator('#attachedFiles .attached-file-name')).toBeVisible({ timeout: 5000 });
+			await userA.page.click('#sendBtn');
+			await userA.page.waitForSelector('.message.mine .file-item', { state: 'visible', timeout: 10000 });
+
+			// B открывает чат
+			await users.openChat(userB.page, userA.name);
+			const downloadBtn = userB.page.locator('.file-download-btn').first();
+			await expect(downloadBtn).toBeVisible({ timeout: 10000 });
+
+			// Скачиваем
+			const [download] = await Promise.all([
+				userB.page.waitForEvent('download'),
+				downloadBtn.click(),
+			]);
+
+			const downloadedPath = await download.path();
+			expect(downloadedPath).toBeTruthy();
+
+			// После скачивания должна появиться зелёная галочка в кружке
+			const downloadedIcon = downloadBtn.locator('.downloaded-icon');
+			await expect(downloadedIcon).toBeVisible({ timeout: 5000 });
+
+			// Проверяем что галочка зелёная (SVG stroke="#34c759" или css color)
+			const svgCheck = downloadedIcon.locator('svg path').last();
+			await expect(svgCheck).toBeVisible();
+		} finally {
+			try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+		}
+	});
+
+	test('повторный клик по скачанному файлу — повторное скачивание', async ({ users }) => {
+		const { userA, userB } = await users.createTwoUsers();
+
+		await users.openChat(userA.page, userB.name);
+
+		const tmpDir = os.tmpdir();
+		const content = 'Повторное скачивание ' + Date.now();
+		const filePath = path.join(tmpDir, `redownload-${Date.now()}.txt`);
+		fs.writeFileSync(filePath, content);
+
+		try {
+			await userA.page.locator('#fileInput').setInputFiles(filePath);
+			await expect(userA.page.locator('#attachedFiles .attached-file-name')).toBeVisible({ timeout: 5000 });
+			await userA.page.click('#sendBtn');
+			await userA.page.waitForSelector('.message.mine .file-item', { state: 'visible', timeout: 10000 });
+
+			// B открывает чат и скачивает
+			await users.openChat(userB.page, userA.name);
+			const downloadBtn = userB.page.locator('.file-download-btn').first();
+
+			// Первое скачивание
+			const [download1] = await Promise.all([
+				userB.page.waitForEvent('download'),
+				downloadBtn.click(),
+			]);
+			expect(await download1.path()).toBeTruthy();
+
+			// Ждём появления галочки
+			await expect(downloadBtn.locator('.downloaded-icon')).toBeVisible({ timeout: 5000 });
+
+			// Повторный клик — должен скачать снова
+			const [download2] = await Promise.all([
+				userB.page.waitForEvent('download'),
+				downloadBtn.click(),
+			]);
+			expect(await download2.path()).toBeTruthy();
+
+			const downloadedContent2 = fs.readFileSync(await download2.path()!, 'utf-8');
+			expect(downloadedContent2).toContain(content);
+		} finally {
+			try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+		}
+	});
 });

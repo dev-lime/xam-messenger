@@ -78,19 +78,21 @@ function formatMessageTime(timestamp) {
  * @returns {string} HTML строка
  */
 function createMineMessageHtml(msg, time) {
-    const statusIcon = getStatusIcon(msg.delivery_status);
-    const statusTitle = getStatusTitle(msg.delivery_status);
+    const hasError = msg.delivery_status === -1;
+    const statusIcon = hasError ? '❗' : getStatusIcon(msg.delivery_status);
+    const statusTitle = hasError ? (msg.send_error || 'Ошибка отправки') : getStatusTitle(msg.delivery_status);
     const filesHtml = createFilesHtml(msg.files);
     const safeText = escapeHtml(msg.text);
+    const errorClass = hasError ? ' message-error' : '';
 
     return `
-		<div class="message mine" data-message-id="${msg.id}">
+		<div class="message mine${errorClass}" data-message-id="${msg.id}"${hasError ? ` title="${escapeHtml(statusTitle)}"` : ''}>
 			<div class="message-content">
 				${safeText ? `<div class="message-text">${safeText}</div>` : ''}
 				${filesHtml ? `<div class="message-files">${filesHtml}</div>` : ''}
 				<div class="message-meta">
 					<span class="message-time">${time}</span>
-					<span class="message-status" title="${statusTitle}">${statusIcon}</span>
+					<span class="message-status${hasError ? ' status-error' : ''}" title="${escapeHtml(statusTitle)}">${statusIcon}</span>
 				</div>
 			</div>
 		</div>

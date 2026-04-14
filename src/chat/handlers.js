@@ -251,6 +251,63 @@ export function handleChatDeleted(data) {
     renderPeers();
 }
 
+/**
+ * Обработка ошибки от сервера (error)
+ * Отмечаем локальное сообщение как failed
+ */
+export function handleServerError(data) {
+    console.error('❌ Ошибка сервера:', data.error, data);
+
+    // Находим локальное сообщение, которое не удалось отправить
+    // Сервер может прислать message_id, error, и контекст
+    const errorMsg = data.error || data.message || 'Unknown error';
+
+    // Ищем локальные сообщения, которые ещё не получили реальный id
+    const localMsg = state.messages.find(m =>
+        m.id.startsWith('local_') &&
+        m.sender_id === state.user?.id &&
+        // delivery_status === SENT (0) значит сообщение ещё не подтверждено
+        m.delivery_status === DELIVERY_STATUS.SENT &&
+        // Проверяем совпадение по тексту или файлам
+        (m.text === data.text ||
+         (data.file_id && m.files?.some(f => f.path === data.file_id)) ||
+         // Fallback: последнее локальное сообщение
+         false)
+    );
+
+    // Если нашли точное совпадение — помечаем его
+    if (localMsg) {
+        localMsg.delivery_status = -1; // special "error" status
+        localMsg.send_error = errorMsg;
+        // Обновляем filteredMessages
+        const filteredMsg = state.filteredMessages.find(m => m.id === localMsg.id);
+        if (filteredMsg) {
+            filteredMsg.delivery_status = -1;
+            filteredMsg.send_error = errorMsg;
+        }
+        renderMessages(state.currentPeer !== null);
+        return;
+    }
+
+    // Если не нашли точное — помечаем последнее локальное сообщение
+    const lastLocal = [...state.messages].reverse().find(m =>
+        m.id.startsWith('local_') &&
+        m.sender_id === state.user?.id &&
+        m.delivery_status === DELIVERY_STATUS.SENT
+    );
+
+    if (lastLocal) {
+        lastLocal.delivery_status = -1;
+        lastLocal.send_error = errorMsg;
+        const filteredMsg = state.filteredMessages.find(m => m.id === lastLocal.id);
+        if (filteredMsg) {
+            filteredMsg.delivery_status = -1;
+            filteredMsg.send_error = errorMsg;
+        }
+        renderMessages(state.currentPeer !== null);
+    }
+}
+
 function updateLoadMoreButton() {
     if (!elements.loadMoreBtn || !elements.loadMoreContainer) return;
     const shouldShow = state.currentPeer && state.hasMoreMessages && !state.isLoadingMessages && state.currentPeerBeforeId;

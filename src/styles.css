@@ -1128,6 +1128,23 @@ body {
 	color: rgba(200, 220, 255, 0.9);
 }
 
+/* Сообщение с ошибкой отправки */
+.message.message-error {
+	border: 2px solid var(--error);
+	background: rgba(255, 59, 48, 0.08);
+}
+
+.message.message-error .message-text {
+	opacity: 0.7;
+}
+
+.read-status.status-error {
+	color: var(--error) !important;
+	font-size: 15px;
+	animation: shake 0.5s var(--ease-out-expo) both;
+	cursor: help;
+}
+
 /* ============================================================================
    Files in Messages (Файлы в сообщениях)
    ============================================================================ */
@@ -1196,15 +1213,43 @@ body {
 	flex-shrink: 0;
 	color: inherit;
 	opacity: 0.6;
+	position: relative;
 }
 
 .file-download-btn:hover {
 	opacity: 1;
-	background: rgba(255, 255, 255, 0.1);
+	background: rgba(255, 255, 255, 0.15);
 }
 
 .file-download-btn:active {
-	transform: scale(0.95);
+	transform: scale(0.9);
+}
+
+/* Circular progress ring внутри кнопки */
+.file-download-btn .progress-ring svg {
+	display: block;
+	animation: progressPulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes progressPulse {
+	from { opacity: 0.7; }
+	to { opacity: 1; }
+}
+
+.file-download-btn .progress-ring-circle {
+	transition: stroke-dashoffset 0.15s ease-out;
+}
+
+/* Downloaded icon — зелёная галочка */
+.file-download-btn .downloaded-icon svg {
+	filter: drop-shadow(0 0 2px rgba(52, 199, 89, 0.3));
+}
+
+/* Переход между состояниями */
+.file-download-btn .download-icon,
+.file-download-btn .progress-ring,
+.file-download-btn .downloaded-icon {
+	transition: opacity 0.2s ease, transform 0.2s var(--spring-normal);
 }
 
 .file-size {

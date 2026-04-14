@@ -46,8 +46,10 @@ pub struct ChatMessage {
 pub struct ClientMsg {
     #[serde(rename = "type")]
     pub msg_type: String,
+    /// Аватар (используется в register/update_profile).
+    /// Поддерживает старое поле `text` для обратной совместимости.
     #[serde(default)]
-    pub text: String,
+    pub avatar: String,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -71,6 +73,9 @@ pub struct ClientMsg {
     pub file_size: Option<u64>,
     #[serde(default)]
     pub files: Vec<FileData>,
+    /// Текст сообщения (используется в message/get_messages)
+    #[serde(default, rename = "text")]
+    pub text: String,
 }
 
 /// PERF-3: Targeted delivery — мапа user_id → список отправителей

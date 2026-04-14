@@ -42,7 +42,7 @@
     "ws": "^8.14.0"
   },
   "simple-git-hooks": {
-    "pre-commit": "npm run lint && npm test -- --silent --bail"
+    "pre-commit": "npm run lint && npm test -- --silent --bail && node scripts/pre-commit-rust.cjs"
   },
   "jest": {
     "testEnvironment": "jsdom",

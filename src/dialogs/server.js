@@ -57,16 +57,35 @@ export async function refreshServerList() {
         state.discoveredServers = servers;
         if (servers.length === 0) { renderServerList([]); return; }
 
-        // Сначала показываем все серверы со статусом "pending" (только что найдены)
-        const pendingServers = servers.map(s => ({ ...s, online: null })); // null = unknown
-        renderServerList(pendingServers);
+        // mDNS серверы только что найдены — они точно онлайн
+        // Помечаем их сразу, без HTTP ping
+        const mdnsServers = servers.filter(s => s.source === 'mdns');
+        const nonMdnsServers = servers.filter(s => s.source !== 'mdns');
 
-        // Затем пингуем каждый сервер и обновляем статус
-        const withStatus = await Promise.all(servers.map(async s => {
-            const online = await pingServer(s.httpUrl, 3000);
-            return { ...s, online };
-        }));
-        renderServerList(withStatus);
+        // Сначала показываем все серверы: mDNS = online, остальные = pending
+        const initialServers = servers.map(s => {
+            if (s.source === 'mdns') {
+                return { ...s, online: true }; // mDNS = точно онлайн
+            }
+            return { ...s, online: null }; // null = unknown
+        });
+        renderServerList(initialServers);
+
+        // Пингуем только non-mDNS серверы
+        if (nonMdnsServers.length > 0) {
+            const withStatus = await Promise.all(nonMdnsServers.map(async s => {
+                const online = await pingServer(s.httpUrl, 3000);
+                return { ...s, online };
+            }));
+
+            // Обновляем итоговый список
+            const finalServers = [
+                ...mdnsServers.map(s => ({ ...s, online: true })),
+                ...withStatus,
+            ];
+            renderServerList(finalServers);
+            state.discoveredServers = finalServers;
+        }
     } catch (error) {
         console.error('❌ Ошибка:', error);
         elements.serverList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--error);">❌ Ошибка</div>';
