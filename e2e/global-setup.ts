@@ -77,9 +77,23 @@ export default async function globalSetup(): Promise<ServerContext> {
 
 	// Запускаем Rust сервер
 	console.log(`🚀 Запуск Rust сервера на порту ${SERVER_PORT}...`);
+
+	// Предварительная компиляция (ускорение запуска)
+	console.log('🔨 Компиляция сервера...');
+	const buildResult = await new Promise<number>((resolve) => {
+		const build = spawn('cargo', ['build', '--manifest-path', path.join(SERVER_DIR, 'Cargo.toml')], {
+			cwd: SERVER_DIR,
+			stdio: 'inherit',
+		});
+		build.on('close', (code) => resolve(code ?? 1));
+	});
+	if (buildResult !== 0) {
+		throw new Error('Не удалось скомпилировать сервер');
+	}
+
 	context.serverProcess = spawn(
 		'cargo',
-		['run', '--manifest-path', path.join(SERVER_DIR, 'Cargo.toml')],
+		['run', '--manifest-path', path.join(SERVER_DIR, 'Cargo.toml'), '--quiet'],
 		{
 			cwd: SERVER_DIR,
 			env: { ...process.env, XAM_PORT: SERVER_PORT, XAM_SKIP_RATE_LIMIT: '1' },

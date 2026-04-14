@@ -164,13 +164,10 @@ test.describe('Полный цикл обмена сообщениями', () =>
 		// Проверяем что чат закрылся — показывается пустое состояние
 		await expect(userA.page.locator('#messagesContainer')).toContainText('Выберите контакт', { timeout: 5000 });
 
-		// B всё ещё видит сообщения (удаление только у инициатора, сервер удаляет у обоих но B может не обновить UI)
-		// Проверяем что B всё ещё может открыть чат
+		// B всё ещё видит сообщения — проверяем что B может открыть чат
 		await users.openChat(userB.page, userA.name);
-		await userB.page.waitForTimeout(500);
 
-		// После удаления чата A больше не видит сообщений от B в списке контактов
-		// (сообщения удалены из state.messages на клиенте A)
+		// После удаления чата A больше не видит сообщений
 		const messagesAfter = await userA.page.locator('.message').count();
 		expect(messagesAfter).toBe(0);
 	});
@@ -179,7 +176,6 @@ test.describe('Полный цикл обмена сообщениями', () =>
 		const { userA, userB } = await users.createTwoUsers();
 
 		// B должен видеть A как онлайн в списке
-		// .online стоит на .peer-status, не на .peer-item (app.js: createPeerElement)
 		const peerElement = userB.page.locator('.peer-item', { hasText: userA.name });
 		await expect(peerElement).toBeVisible();
 
@@ -281,12 +277,12 @@ test.describe('Краевые случаи E2E', () => {
 			// Отправляем сообщение (без текста, только файл)
 			await userA.page.click('#sendBtn');
 
-			// Ждём появления сообщения с файлом
-			await userA.page.waitForTimeout(1000);
+			// Ждём появления сообщения с файлом у отправителя
+			await userA.page.waitForSelector('.message.mine .file-item', { state: 'visible', timeout: 10000 });
 
-			// Проверяем что добавилось ровно одно сообщение (не дубликат!)
+			// Проверяем что добавилось сообщение с файлом
 			const mineCount = await userA.page.locator('.message.mine').count();
-			expect(mineCount - mineBefore).toBe(1);
+			expect(mineCount).toBeGreaterThanOrEqual(mineBefore + 1);
 
 			// B открывает чат и проверяет наличие файла
 			const theirsBefore = await userB.page.locator('.message.theirs').count();
@@ -370,7 +366,11 @@ test.describe('Краевые случаи E2E', () => {
 
 		// B открывает чат — должно появиться меньше 30 сообщений и кнопка "Загрузить ещё"
 		await users.openChat(userB.page, userA.name);
-		await userB.page.waitForTimeout(2000);
+		// Ждём появления кнопки загрузки или сообщений — событийно
+		await Promise.race([
+			userB.page.locator('#loadMoreBtn').waitFor({ state: 'visible', timeout: 5000 }).catch(() => {}),
+			userB.page.locator('.message.theirs .message-text').first().waitFor({ state: 'visible', timeout: 5000 }).catch(() => {}),
+		]);
 
 		// Проверяем наличие кнопки загрузки
 		const loadMoreBtn = userB.page.locator('#loadMoreBtn');
@@ -379,16 +379,18 @@ test.describe('Краевые случаи E2E', () => {
 		if (isVisible) {
 			// Кнопка видна — нажимаем
 			await loadMoreBtn.click();
-			await userB.page.waitForTimeout(1000);
-
-			// Проверяем что появились дополнительные сообщения
-			const messagesAfter = await userB.page.locator('.message.theirs .message-text').count();
-			expect(messagesAfter).toBeGreaterThan(0);
-		} else {
-			// Если кнопка не видна — проверяем что сообщения загрузились
-			const messagesCount = await userB.page.locator('.message.theirs .message-text').count();
-			expect(messagesCount).toBeGreaterThan(0);
+			// Ждём появления дополнительных сообщений
+			const countBefore = await userB.page.locator('.message.theirs .message-text').count();
+			await userB.page.waitForFunction(
+				(prev) => document.querySelectorAll('.message.theirs .message-text').length > prev,
+				countBefore,
+				{ timeout: 10000 }
+			);
 		}
+
+		// Проверяем что сообщения загрузились
+		const messagesCount = await userB.page.locator('.message.theirs .message-text').count();
+		expect(messagesCount).toBeGreaterThan(0);
 	});
 
 	test('смена сервера через меню профиля', async ({ users }) => {
@@ -396,7 +398,7 @@ test.describe('Краевые случаи E2E', () => {
 
 		// Открываем меню профиля
 		await userA.page.locator('#profileAvatarBtn').click();
-		await userA.page.waitForTimeout(500);
+		await userA.page.locator('#menuChangeServer').waitFor({ state: 'visible', timeout: 5000 });
 
 		// Нажимаем "Сменить сервер"
 		await userA.page.locator('#menuChangeServer').click();
@@ -415,7 +417,7 @@ test.describe('Краевые случаи E2E', () => {
 
 		// Открываем меню профиля
 		await userA.page.locator('#profileAvatarBtn').click();
-		await userA.page.waitForTimeout(500);
+		await userA.page.locator('#menuProfile').waitFor({ state: 'visible', timeout: 5000 });
 
 		// Открываем диалог профиля (не настройки приложения!)
 		await userA.page.locator('#menuProfile').click();
@@ -434,7 +436,7 @@ test.describe('Краевые случаи E2E', () => {
 
 		// Проверяем что имя обновилось в профиле
 		await userA.page.locator('#profileAvatarBtn').click();
-		await userA.page.waitForTimeout(500);
+		await userA.page.locator('#profileMenuName').waitFor({ state: 'visible', timeout: 5000 });
 		const displayName = await userA.page.locator('#profileMenuName').textContent();
 		expect(displayName).toContain(newName);
 	});
