@@ -96,8 +96,7 @@ export const test = base.extend<{ users: UsersFixture }>({
 				// Открываем приложение
 				const FRONTEND_URL = process.env.XAM_FRONTEND_URL || 'http://localhost:3000';
 				console.log(`🌐 Навигация на ${FRONTEND_URL}`);
-				await page.goto('/');
-				await page.waitForLoadState('networkidle');
+				await page.goto('/', { waitUntil: 'domcontentloaded' });
 
 				// 1. Ждём диалог выбора сервера
 				await page.waitForSelector('#serverSelectorDialog[open]', { state: 'visible', timeout: 15000 });
@@ -161,15 +160,17 @@ export const test = base.extend<{ users: UsersFixture }>({
 					);
 				}
 
-				// Ждём появления зелёного индикатора
-				await page.waitForTimeout(1000);
+				// Ждём появления зелёного индикатора (событийно, без фиксированной задержки)
 				await page.waitForSelector('.status-indicator.online', {
 					state: 'visible',
 					timeout: 15000,
 				});
 
-				// 6. Ждём загрузки списка контактов
-				await page.waitForTimeout(1500);
+				// Ждём загрузки списка контактов — появление хотя бы одного элемента или сообщения "Нет других пользователей"
+				await Promise.race([
+					page.waitForSelector('.peer-item', { state: 'visible', timeout: 10000 }).catch(() => {}),
+					page.waitForSelector('.peers-list', { state: 'visible', timeout: 10000 }).catch(() => {}),
+				]);
 
 				const userId = await fixture.findUserIdByName(name);
 				if (!userId) {
@@ -195,14 +196,14 @@ export const test = base.extend<{ users: UsersFixture }>({
 			},
 
 			waitForPeerInList: async (page: Page, peerName: string) => {
-				// Увеличенный таймаут т.к. peers загружаются через WebSocket
+				// Event-based ожидание контакта
 				await page.waitForFunction(
 					(peerName) => {
 						const peers = document.querySelectorAll('.peer-name');
 						return Array.from(peers).some((el) => el.textContent?.includes(peerName));
 					},
 					peerName,
-					{ timeout: 20000 }
+					{ timeout: 10000 }
 				);
 			},
 
@@ -213,29 +214,29 @@ export const test = base.extend<{ users: UsersFixture }>({
 						return Array.from(messages).some((el) => el.textContent?.includes(msgText));
 					},
 					text,
-					{ timeout: 10000 }
+					{ timeout: 5000 }
 				);
 			},
 
 			sendMessage: async (page: Page, text: string) => {
 				await page.fill('#messageInput', text);
 				await page.click('#sendBtn');
-				// Ждём появления сообщения в чате (локальное)
+				// Ждём появления сообщения в чате (локальное) — событийно
 				await page.waitForFunction(
 					(msgText) => {
 						const messages = document.querySelectorAll('.message-text');
 						return Array.from(messages).some((el) => el.textContent?.includes(msgText));
 					},
 					text,
-					{ timeout: 5000 }
+					{ timeout: 3000 }
 				);
 			},
 
 			openChat: async (page: Page, peerName: string) => {
 				const peerItem = page.locator('.peer-item').filter({ hasText: peerName }).first();
 				await peerItem.click();
-				// Ждём загрузки чата
-				await page.waitForTimeout(500);
+				// Ждём появления области ввода сообщений вместо фиксированной задержки
+				await page.locator('#messageInput').waitFor({ state: 'visible', timeout: 5000 });
 			},
 
 			findUserIdByName,
