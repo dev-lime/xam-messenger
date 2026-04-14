@@ -11,10 +11,13 @@ import { storage } from './storage.js';
 const STORAGE_KEY = 'xam-language';
 
 /** @type {Object<string, Object<string, string>>} */
-let translations = {};
+let translations = {
+    ru: getFallbackTranslations('ru'),
+    en: getFallbackTranslations('en'),
+};
 
 /**
- * Загрузка переводов из JSON файлов
+ * Загрузка переводов из JSON файлов (обновляет уже загруженные fallback)
  * @returns {Promise<void>}
  */
 export async function loadTranslations() {
@@ -31,16 +34,10 @@ export async function loadTranslations() {
             fetchJSON('locales/en.json').catch(() => null),
         ]);
 
-        if (ru) translations.ru = ru;
-        if (en) translations.en = en;
-
-        // Fallback на встроенные данные если JSON не загрузились (тесты)
-        if (!translations.ru) translations.ru = getFallbackTranslations('ru');
-        if (!translations.en) translations.en = getFallbackTranslations('en');
+        if (ru) translations.ru = { ...getFallbackTranslations('ru'), ...ru };
+        if (en) translations.en = { ...getFallbackTranslations('en'), ...en };
     } catch {
-        console.warn('⚠️ Ошибка загрузки переводов, используем fallback');
-        translations.ru = getFallbackTranslations('ru');
-        translations.en = getFallbackTranslations('en');
+        // Используем уже загруженные fallback
     }
 }
 
