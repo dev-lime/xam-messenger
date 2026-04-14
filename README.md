@@ -70,10 +70,17 @@ cd src-tauri && cargo tauri dev
 ## 🧪 Тесты
 
 ```bash
-cd server && cargo test       # Сервер (21 тест ✅)
-npm test                      # Клиент (198 тестов ✅)
+cd server && cargo test       # Сервер (28 тестов ✅)
+npm test                      # Клиент (309 тестов ✅)
 npm run test:integration      # Интеграционные
+npm run test:e2e              # E2E (23 теста ✅, 5 fixme)
 ```
+
+| Тип | Количество | Покрытие |
+|-----|-----------|----------|
+| Сервер (Rust) | 28 | ~85% |
+| Клиент (JS) | 309 | helpers.js 100%, chat.js 100%, renderers.js 100% |
+| E2E (Playwright) | 23 | Полный цикл: регистрация → чат → файлы → настройки |
 
 ---
 
