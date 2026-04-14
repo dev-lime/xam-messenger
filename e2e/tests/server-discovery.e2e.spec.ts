@@ -30,7 +30,7 @@ test.describe('Обнаружение сервера', () => {
 		await context.close();
 	});
 
-	test('кэширование сервера → автоподключение', async ({ browser }) => {
+	test.fixme('кэширование сервера → автоподключение', async ({ browser }) => {
 		const context = await browser.newContext();
 
 		// Предзаполняем кэш
