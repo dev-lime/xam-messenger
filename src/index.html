@@ -12,7 +12,7 @@
     <div class="app">
         <!-- Левая панель - список контактов -->
         <aside class="sidebar">
-            <!-- Шапка сайдбара: Профиль и статус -->
+            <!-- Шапка сайдбара -->
             <div class="sidebar-header">
                 <div class="profile-menu-container" id="profileMenuContainer">
                     <button class="profile-avatar-btn" id="profileAvatarBtn" title="Профиль">
@@ -77,7 +77,7 @@
 
             <!-- Список контактов -->
             <div class="peers-list" id="peersList">
-                <!-- Контакты будут загружены сюда -->
+                <!-- Контакты будут здесь -->
             </div>
         </aside>
 
@@ -136,13 +136,13 @@
             </div>
 
             <!-- Скрытый input для файлов -->
-            <!-- display:none не работает в некоторых WebView релизных сборок (Tauri),
+            <!-- display:none не работает в некоторых релизных сборках,
                  поэтому добавлен fallback-класс visually-hidden -->
             <input type="file" id="fileInput" class="visually-hidden" style="display: none;" multiple>
         </main>
     </div>
 
-    <!-- Диалог подключения (ввод имени после выбора сервера) -->
+    <!-- Диалог авторизации -->
     <dialog id="connectDialog" class="dialog">
         <div class="dialog-header">
             <h3>Вход в XAM Messenger</h3>
@@ -163,7 +163,7 @@
         </div>
     </dialog>
 
-    <!-- Диалог настроек -->
+    <!-- Диалог настроек профиля -->
     <dialog id="settingsDialog" class="dialog">
         <div class="dialog-header">
             <h3 data-i18n="profileSettings">Настройки профиля</h3>
@@ -222,7 +222,7 @@
     <!-- Диалог настроек приложения -->
     <dialog id="appSettingsDialog" class="dialog">
         <div class="dialog-header">
-            <h3>Настройки</h3>
+            <h3>Настройки (в разработке)</h3>
             <button class="dialog-close" id="closeAppSettings" type="button">×</button>
         </div>
         <div class="dialog-content">
@@ -249,18 +249,6 @@
                         <option value="en">English</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Размер шрифта: <span id="fontSizeValue">14px</span></label>
-                    <input type="range" id="settingFontSize" min="12" max="20" value="14">
-                </div>
-                <label class="setting-toggle">
-                    <span>Показывать пользовательские аватары</span>
-                    <input type="checkbox" id="settingAvatars" checked>
-                </label>
-                <label class="setting-toggle">
-                    <span>Показывать время сообщений</span>
-                    <input type="checkbox" id="settingTimestamps" checked>
-                </label>
                 <div class="form-group" style="margin-top: 12px;">
                     <label>Тема оформления</label>
                     <select id="settingTheme">
@@ -269,6 +257,14 @@
                         <option value="system">Системная</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label>Размер шрифта: <span id="fontSizeValue">14px</span></label>
+                    <input type="range" id="settingFontSize" min="12" max="20" value="14">
+                </div>
+                <label class="setting-toggle">
+                    <span>Показывать пользовательские аватары</span>
+                    <input type="checkbox" id="settingAvatars" checked>
+                </label>
             </div>
 
             <!-- Данные -->
@@ -276,11 +272,10 @@
                 <h4>Данные</h4>
                 <label class="setting-toggle">
                     <span>Автозагрузка файлов</span>
-                    <input type="checkbox" id="settingAutoDownload" checked>
+                    <input type="checkbox" id="settingAutoDownload">
                 </label>
                 <div style="display: flex; gap: 8px; margin-top: 12px;">
                     <button class="btn" id="clearCacheBtn">Очистить кэш</button>
-                    <button class="btn" id="exportDataBtn">Экспорт данных</button>
                 </div>
             </div>
 
@@ -288,10 +283,9 @@
             <div class="settings-section">
                 <h4>Аккаунт</h4>
                 <div class="dialog-actions-danger" style="margin-top: 8px;">
-                    <button class="btn btn-danger-outline" id="deleteProfileBtn" data-action="delete-profile" data-i18n="deleteProfile">
-                        🗑️ Удалить профиль
+                    <button class="btn btn-danger" id="deleteProfileBtn" data-action="delete-profile" data-i18n="deleteProfile">
+                        Удалить профиль
                     </button>
-                    <p class="hint" data-i18n="deleteProfileDesc" style="margin-top: 4px;">Это действие удалит ваш аккаунт с сервера.</p>
                 </div>
             </div>
         </div>
