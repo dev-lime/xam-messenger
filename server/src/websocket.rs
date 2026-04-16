@@ -1145,7 +1145,6 @@ pub async fn ws_handler(
         }
     }
 
-
     let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
     let state_spawn = state.clone();
     actix_web::rt::spawn(async move {
