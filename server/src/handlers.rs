@@ -9,27 +9,36 @@ use crate::db;
 use crate::error::AppError;
 use crate::models::AppState;
 
-/// Health-check эндпоинт для мониторинга
+/// Liveness: пул БД отдаёт соединение (без PRAGMA quick_check на каждый запрос)
 pub async fn health_check(data: web::Data<AppState>) -> HttpResponse {
-    // Проверяем доступность БД
+    let pool_ok = data.db.get().is_ok();
+    let status_code = if pool_ok { 200 } else { 503 };
+    HttpResponse::build(actix_web::http::StatusCode::from_u16(status_code).unwrap()).json(json!({
+        "status": if pool_ok { "ok" } else { "degraded" },
+        "version": "1.0.0",
+        "db_pool": pool_ok,
+        "timestamp": Utc::now().timestamp()
+    }))
+}
+
+/// Readiness: PRAGMA quick_check + метрики contention
+pub async fn health_ready(data: web::Data<AppState>) -> HttpResponse {
     let db_ok = match data.db.get() {
         Ok(conn) => {
-            // Проверяем integrity
             match conn.query_row("PRAGMA quick_check(1)", [], |row| row.get::<_, String>(0)) {
                 Ok(result) => result == "ok",
                 Err(e) => {
-                    log::error!("❌ Health check: integrity failed: {}", e);
+                    log::error!("Readiness: integrity failed: {}", e);
                     false
                 }
             }
         }
         Err(e) => {
-            log::error!("❌ Health check: не удалось получить соединение: {}", e);
+            log::error!("Readiness: pool error: {}", e);
             false
         }
     };
 
-    // Считаем метрики contention
     let retry_ok = crate::db::BUSY_RETRY_OK.load(std::sync::atomic::Ordering::Relaxed);
     let retry_timeout = crate::db::BUSY_RETRY_TIMEOUT.load(std::sync::atomic::Ordering::Relaxed);
 
@@ -46,6 +55,7 @@ pub async fn health_check(data: web::Data<AppState>) -> HttpResponse {
         "timestamp": Utc::now().timestamp()
     }))
 }
+
 
 /// Запрос регистрации пользователя
 #[derive(Deserialize)]
@@ -149,6 +159,15 @@ pub async fn get_messages(
     data: web::Data<AppState>,
     query: web::Query<MessagesQuery>,
 ) -> HttpResponse {
+    // Без аутентификации HTTP нельзя безопасно отдавать приватную историю по chat_peer_id (IDOR).
+    if query.chat_peer_id.is_some() {
+        log::warn!("Отклонён GET /messages с chat_peer_id (используйте WebSocket после register)");
+        return HttpResponse::Forbidden().json(json!({
+            "success": false,
+            "error": "Private chat history is not available over HTTP; use WebSocket after register"
+        }));
+    }
+
     let limit = query.limit.clamp(1, 200);
 
     let conn = match data.db.get() {
@@ -159,17 +178,11 @@ pub async fn get_messages(
         }
     };
 
-    let (messages, next_before_id, has_more) = if let Some(chat_peer_id) = &query.chat_peer_id {
-        match db::get_messages_for_chat(&conn, limit, query.before_id.as_deref(), chat_peer_id) {
-            Ok(result) => result,
-            Err(e) => return AppError::database(e.to_string()).to_response(),
-        }
-    } else {
+    let (messages, next_before_id, has_more) =
         match db::get_messages_with_pagination(&conn, limit, query.before_id.as_deref()) {
             Ok(result) => result,
             Err(e) => return AppError::database(e.to_string()).to_response(),
-        }
-    };
+        };
 
     HttpResponse::Ok().json(json!({
         "success": true,

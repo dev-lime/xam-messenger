@@ -489,13 +489,25 @@ pub fn update_user_name(
     )
 }
 
-/// Получение sender_id сообщения по ID (для targeted ACK delivery)
-pub fn get_message_sender(conn: &Connection, message_id: &str) -> Result<String, rusqlite::Error> {
+/// Участники сообщения: отправитель и получатель (для проверки ACK)
+pub fn get_message_participants(
+    conn: &Connection,
+    message_id: &str,
+) -> Result<(String, Option<String>), rusqlite::Error> {
     conn.query_row(
-        "SELECT sender_id FROM messages WHERE id = ?1",
+        "SELECT sender_id, recipient_id FROM messages WHERE id = ?1",
         params![message_id],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )
+}
+
+/// Может ли пользователь подтвердить доставку/прочтение (только адресат DM)
+pub fn recipient_may_ack(recipient_id: &Option<String>, ack_user_id: &str) -> bool {
+    match recipient_id {
+        None => false,
+        Some(r) if r.is_empty() => false,
+        Some(r) => r == ack_user_id,
+    }
 }
 
 /// Удаление всех сообщений чата между двумя пользователями

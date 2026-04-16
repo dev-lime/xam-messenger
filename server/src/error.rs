@@ -97,9 +97,27 @@ impl AppError {
             AppError::UserNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             AppError::MessageNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             AppError::File(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            AppError::Database(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
-            AppError::WebSocket(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            AppError::Database(msg) => {
+                log::error!("Database error (redacted from client): {}", msg);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+            }
+            AppError::WebSocket(msg) => {
+                log::error!("WebSocket error (redacted from client): {}", msg);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+            }
+            AppError::Internal(msg) => {
+                log::error!("Internal error (redacted from client): {}", msg);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+            }
         };
 
         HttpResponse::build(status).json(json!({

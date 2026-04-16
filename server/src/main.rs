@@ -146,7 +146,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // PERF-3: user_senders вместо broadcast канала
     let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
-    let file_uploads: FileUploads = Arc::new(Mutex::new(HashMap::new()));
+    let file_uploads: FileUploads = Arc::new(std::sync::Mutex::new(HashMap::new()));
     let ws_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let state = AppState {
@@ -226,6 +226,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             )
             .route("/api/v1/online", web::get().to(handlers::get_online_users))
             .route("/health", web::get().to(handlers::health_check))
+            .route("/health/ready", web::get().to(handlers::health_ready))
     })
     .bind(format!("{}:{}", server_config.host, server_config.port))?
     .run();
@@ -342,7 +343,7 @@ pub async fn create_test_state() -> AppState {
     let (_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
     let user_senders = Arc::new(Mutex::new(HashMap::new()));
     let online_users = Arc::new(Mutex::new(HashMap::new()));
-    let file_uploads: FileUploads = Arc::new(Mutex::new(HashMap::new()));
+    let file_uploads: FileUploads = Arc::new(std::sync::Mutex::new(HashMap::new()));
     let ws_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     AppState {
@@ -363,29 +364,29 @@ pub async fn create_test_state() -> AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{App, test, web};
+    use actix_web::{App, test as aw_test, web};
     use rusqlite::params;
     use serde_json::json;
 
     #[actix_rt::test]
     async fn test_register_new_user() {
         let state = create_test_state().await;
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/register", web::post().to(handlers::register)),
         )
         .await;
 
-        let req = test::TestRequest::post()
+        let req = aw_test::TestRequest::post()
             .uri("/api/v1/register")
             .set_json(json!({ "name": "Тестовый Пользователь" }))
             .to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         assert_eq!(body["data"]["name"], "Тестовый Пользователь");
         assert!(
@@ -410,22 +411,22 @@ mod tests {
             .expect("Failed to insert test user");
         }
 
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/register", web::post().to(handlers::register)),
         )
         .await;
 
-        let req = test::TestRequest::post()
+        let req = aw_test::TestRequest::post()
             .uri("/api/v1/register")
             .set_json(json!({ "name": "Existing User" }))
             .to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         assert_eq!(body["data"]["name"], "Existing User");
         assert_eq!(body["data"]["id"], "test-id");
@@ -434,22 +435,22 @@ mod tests {
     #[actix_rt::test]
     async fn test_register_empty_name() {
         let state = create_test_state().await;
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/register", web::post().to(handlers::register)),
         )
         .await;
 
-        let req = test::TestRequest::post()
+        let req = aw_test::TestRequest::post()
             .uri("/api/v1/register")
             .set_json(json!({ "name": "" }))
             .to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert_eq!(resp.status(), 400);
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], false);
         assert_eq!(body["error"], "Empty name");
     }
@@ -457,7 +458,7 @@ mod tests {
     #[actix_rt::test]
     async fn test_register_name_too_long() {
         let state = create_test_state().await;
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/register", web::post().to(handlers::register)),
@@ -465,15 +466,15 @@ mod tests {
         .await;
 
         let long_name = "a".repeat(51);
-        let req = test::TestRequest::post()
+        let req = aw_test::TestRequest::post()
             .uri("/api/v1/register")
             .set_json(json!({ "name": long_name }))
             .to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert_eq!(resp.status(), 400);
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], false);
         assert!(
             body["error"]
@@ -501,19 +502,19 @@ mod tests {
             .expect("Failed to insert user2");
         }
 
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/users", web::get().to(handlers::get_users)),
         )
         .await;
 
-        let req = test::TestRequest::get().uri("/api/v1/users").to_request();
+        let req = aw_test::TestRequest::get().uri("/api/v1/users").to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         let users = body["data"].as_array().expect("Expected data array");
         assert_eq!(users.len(), 2);
@@ -529,19 +530,19 @@ mod tests {
             online.insert("user2".to_string(), 12346);
         }
 
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/online", web::get().to(handlers::get_online_users)),
         )
         .await;
 
-        let req = test::TestRequest::get().uri("/api/v1/online").to_request();
+        let req = aw_test::TestRequest::get().uri("/api/v1/online").to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         let online = body["data"].as_array().expect("Expected data array");
         assert_eq!(online.len(), 2);
@@ -550,21 +551,21 @@ mod tests {
     #[actix_rt::test]
     async fn test_get_messages_empty() {
         let state = create_test_state().await;
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/messages", web::get().to(handlers::get_messages)),
         )
         .await;
 
-        let req = test::TestRequest::get()
+        let req = aw_test::TestRequest::get()
             .uri("/api/v1/messages")
             .to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         assert_eq!(
             body["data"].as_array().expect("Expected data array").len(),
@@ -595,28 +596,49 @@ mod tests {
             }
         }
 
-        let app = test::init_service(
+        let app = aw_test::init_service(
             App::new()
                 .app_data(web::Data::new(state))
                 .route("/api/v1/messages", web::get().to(handlers::get_messages)),
         )
         .await;
 
-        let req = test::TestRequest::get()
+        let req = aw_test::TestRequest::get()
             .uri("/api/v1/messages?limit=5")
             .to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], true);
         let messages = body["data"].as_array().expect("Expected data array");
         assert_eq!(messages.len(), 5);
     }
 
     #[actix_rt::test]
-    async fn test_get_messages_for_chat() {
+    async fn test_http_messages_chat_peer_id_forbidden() {
+        let state = create_test_state().await;
+        let app = aw_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .route("/api/v1/messages", web::get().to(handlers::get_messages)),
+        )
+        .await;
+
+        let req = aw_test::TestRequest::get()
+            .uri("/api/v1/messages?chat_peer_id=user2")
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::FORBIDDEN);
+
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
+        assert_eq!(body["success"], false);
+    }
+
+    #[actix_rt::test]
+    async fn test_db_get_messages_for_chat_filters() {
         let state = create_test_state().await;
 
         {
@@ -639,7 +661,6 @@ mod tests {
                 params!["msg3", "user3", "User 3", "Other chat", 1002, "user4"],
             )
             .expect("Failed to insert msg3");
-            // FIX M-01: сообщение без получателя НЕ должно попадать в приватный чат
             conn.execute(
                 "INSERT INTO messages (id, sender_id, sender_name, text, timestamp) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -648,33 +669,11 @@ mod tests {
             .expect("Failed to insert msg4");
         }
 
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(state))
-                .route("/api/v1/messages", web::get().to(handlers::get_messages)),
-        )
-        .await;
-
-        let req = test::TestRequest::get()
-            .uri("/api/v1/messages?chat_peer_id=user2")
-            .to_request();
-
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], true);
-        let messages = body["data"].as_array().expect("Expected data array");
-        // FIX M-01: после убирания ветки "OR recipient_id IS NULL" общие сообщения
-        // НЕ возвращаются в приватном чате. Ожидаем только msg1 и msg2.
+        let conn = state.db.get().expect("Failed to get connection");
+        let (messages, _, _) =
+            db::get_messages_for_chat(&conn, 50, None, "user2").expect("get_messages_for_chat");
         assert_eq!(messages.len(), 2);
-
-        // Проверяем что msg4 (общее сообщение) НЕ вернулся в чате user2
-        let has_general = messages.iter().any(|m| m["id"] == "msg4");
-        assert!(
-            !has_general,
-            "General message should NOT appear in private chat"
-        );
+        assert!(!messages.iter().any(|m| m.id == "msg4"));
     }
 
     /// FIX M-01/M-06: тест что сообщения без recipient_id НЕ существуют в системе.
@@ -710,50 +709,38 @@ mod tests {
             .expect("Failed to insert general message");
         }
 
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(state))
-                .route("/api/v1/messages", web::get().to(handlers::get_messages)),
-        )
-        .await;
+        let conn = state.db.get().expect("Failed to get connection");
+        let (messages, _, _) =
+            db::get_messages_for_chat(&conn, 50, None, "user2").expect("get_messages_for_chat");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, "msg-with-recipient");
+    }
 
-        // Запрос чата user2 — должен вернуть ТОЛЬКО msg-with-recipient
-        let req = test::TestRequest::get()
-            .uri("/api/v1/messages?chat_peer_id=user2")
-            .to_request();
-
-        let resp = test::call_service(&app, req).await;
-        assert!(resp.status().is_success());
-
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        let messages = body["data"].as_array().expect("Expected data array");
-
-        // FIX M-01: msg-no-recipient НЕ должен возвращаться в приватном чате
-        assert_eq!(
-            messages.len(),
-            1,
-            "Should only return messages involving user2"
-        );
-        assert_eq!(messages[0]["id"], "msg-with-recipient");
+    #[test]
+    fn test_recipient_may_ack() {
+        assert!(db::recipient_may_ack(&Some("u2".to_string()), "u2"));
+        assert!(!db::recipient_may_ack(&Some("u2".to_string()), "u1"));
+        assert!(!db::recipient_may_ack(&None, "u1"));
+        assert!(!db::recipient_may_ack(&Some(String::new()), "u1"));
     }
 
     #[actix_rt::test]
     async fn test_download_file_not_found() {
         let state = create_test_state().await;
-        let app = test::init_service(App::new().app_data(web::Data::new(state)).route(
+        let app = aw_test::init_service(App::new().app_data(web::Data::new(state)).route(
             "/api/v1/files/download",
             web::get().to(handlers::download_file),
         ))
         .await;
 
-        let req = test::TestRequest::get()
+        let req = aw_test::TestRequest::get()
             .uri("/api/v1/files/download?file_id=nonexistent")
             .to_request();
 
-        let resp = test::call_service(&app, req).await;
+        let resp = aw_test::call_service(&app, req).await;
         assert_eq!(resp.status(), 404);
 
-        let body: serde_json::Value = test::read_body_json(resp).await;
+        let body: serde_json::Value = aw_test::read_body_json(resp).await;
         assert_eq!(body["success"], false);
         assert_eq!(body["error"], "File not found");
     }
