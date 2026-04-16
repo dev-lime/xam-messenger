@@ -56,7 +56,6 @@ pub async fn health_ready(data: web::Data<AppState>) -> HttpResponse {
     }))
 }
 
-
 /// Запрос регистрации пользователя
 #[derive(Deserialize)]
 pub struct RegisterRequest {

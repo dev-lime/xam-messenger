@@ -509,7 +509,9 @@ mod tests {
         )
         .await;
 
-        let req = aw_test::TestRequest::get().uri("/api/v1/users").to_request();
+        let req = aw_test::TestRequest::get()
+            .uri("/api/v1/users")
+            .to_request();
 
         let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
@@ -537,7 +539,9 @@ mod tests {
         )
         .await;
 
-        let req = aw_test::TestRequest::get().uri("/api/v1/online").to_request();
+        let req = aw_test::TestRequest::get()
+            .uri("/api/v1/online")
+            .to_request();
 
         let resp = aw_test::call_service(&app, req).await;
         assert!(resp.status().is_success());
