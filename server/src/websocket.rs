@@ -8,11 +8,9 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::Ordering;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
 use std::time::{Duration, Instant};
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::unbounded_channel;
 use uuid::Uuid;
 
@@ -25,6 +23,9 @@ use crate::models::{AppState, ChatMessage, ClientMsg, FileUploadState, User};
 
 /// Лимит сообщений в секунду на пользователя
 const WS_RATE_LIMIT: u32 = 30;
+
+/// Макс. размер накопленного JSON по continuation (защита от memory DoS)
+const MAX_WS_TEXT_FRAGMENT_BYTES: usize = 1_048_576;
 
 /// Структура для отслеживания частоты сообщений
 struct WsRateLimiter {
@@ -207,34 +208,42 @@ async fn handle_file_start(
         sender_name,
     };
 
-    state.file_uploads.lock().await.insert(file_id, upload);
+    state
+        .file_uploads
+        .lock()
+        .map_err(|_| "Upload state lock poisoned".to_string())?
+        .insert(file_id, upload);
     Ok(())
 }
 
-/// Обработка бинарного чанка файла
+/// Обработка бинарного чанка файла (синхронная запись в spawn_blocking — без await под async Mutex)
 async fn handle_file_chunk(file_id: &str, data: &[u8], state: &AppState) -> Result<(), String> {
-    let mut uploads = state.file_uploads.lock().await;
-    let upload = uploads.get_mut(file_id).ok_or("File upload not found")?;
-
-    // Проверка что не превышаем размер
-    if upload.uploaded_bytes + data.len() as u64 > upload.size {
-        return Err("File size mismatch: received more than declared".to_string());
-    }
-
-    // Открываем файл в режиме append (создаём если нет)
-    let mut file = File::options()
-        .create(true)
-        .append(true)
-        .open(&upload.filepath)
-        .await
-        .map_err(|e| format!("Failed to open file for writing: {}", e))?;
-
-    file.write_all(data)
-        .await
-        .map_err(|e| format!("Failed to write file chunk: {}", e))?;
-
-    upload.uploaded_bytes += data.len() as u64;
-    Ok(())
+    let file_id = file_id.to_string();
+    let data = data.to_vec();
+    let uploads = Arc::clone(&state.file_uploads);
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut map = uploads
+            .lock()
+            .map_err(|_| "Upload state lock poisoned".to_string())?;
+        let upload = map
+            .get_mut(&file_id)
+            .ok_or_else(|| "File upload not found".to_string())?;
+        if upload.uploaded_bytes + data.len() as u64 > upload.size {
+            return Err("File size mismatch: received more than declared".to_string());
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&upload.filepath)
+            .map_err(|e| format!("Failed to open file for writing: {}", e))?;
+        file.write_all(&data)
+            .map_err(|e| format!("Failed to write file chunk: {}", e))?;
+        upload.uploaded_bytes += data.len() as u64;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {}", e))?
 }
 
 /// Обработка file_end — завершение загрузки, сохранение в БД, рассылка
@@ -246,7 +255,10 @@ async fn handle_file_end(
     let file_id = client_msg.file_id.ok_or("file_id is required")?;
 
     let upload = {
-        let mut uploads = state.file_uploads.lock().await;
+        let mut uploads = state
+            .file_uploads
+            .lock()
+            .map_err(|_| "Upload state lock poisoned".to_string())?;
         uploads.remove(&file_id).ok_or("File upload not found")?
     };
 
@@ -728,17 +740,31 @@ async fn handle_ack(
         }
     };
 
-    // Находим оригинальный sender сообщения чтобы отправить ACK ему
-    let original_sender = match db::get_message_sender(&conn, &msg_id) {
-        Ok(sender) => sender,
+    if msg_id.is_empty() {
+        log::warn!("Пустой message_id в ACK");
+        return;
+    }
+
+    let (original_sender, recipient_id) = match db::get_message_participants(&conn, &msg_id) {
+        Ok(p) => p,
         Err(e) => {
-            log::error!("Failed to get message sender for ACK: {}", e);
+            log::error!("Failed to get message participants for ACK: {}", e);
             return;
         }
     };
 
+    if !db::recipient_may_ack(&recipient_id, &ack_sender_id) {
+        log::warn!(
+            "Отклонён ACK: пользователь {} не является получателем сообщения {} (recipient {:?})",
+            ack_sender_id,
+            msg_id,
+            recipient_id
+        );
+        return;
+    }
+
     log::info!(
-        "📨 ACK {} для {} от {} → отправителю {}",
+        "ACK {} для {} от {} → отправителю {}",
         client_msg.status,
         msg_id,
         ack_sender_id,
@@ -793,8 +819,14 @@ async fn handle_get_messages(
         }
     };
 
+    // Клиент шлёт chat_peer_id; recipient_id оставлен для совместимости.
+    let chat_peer = client_msg
+        .chat_peer_id
+        .as_ref()
+        .or(client_msg.recipient_id.as_ref());
+
     // FIX C-03 + M-01: При запросе чата проверяем что пользователь — участник чата.
-    let result = if let Some(ref chat_peer_id) = client_msg.recipient_id {
+    let result = if let Some(chat_peer_id) = chat_peer {
         // FIX C-03: Проверяем что requester является участником чата
         let is_participant = db::is_chat_participant(&conn, &uid, chat_peer_id).unwrap_or(false);
         if !is_participant {
@@ -808,7 +840,7 @@ async fn handle_get_messages(
                 .await;
             return;
         }
-        db::get_messages_for_chat(&conn, limit, before_id.as_deref(), chat_peer_id)
+        db::get_messages_for_chat(&conn, limit, before_id.as_deref(), chat_peer_id.as_str())
     } else {
         db::get_messages_with_pagination(&conn, limit, before_id.as_deref())
     };
@@ -961,7 +993,12 @@ pub async fn handle_websocket_session(
                             Err(e) => {
                                 log::warn!("⚠️ Ошибка парсинга JSON: {}", e);
                                 log::debug!("📝 Первые 200 символов: {}", text.chars().take(200).collect::<String>());
-                                text_fragment_buffer = text.to_string();
+                                if text.len() > MAX_WS_TEXT_FRAGMENT_BYTES {
+                                    log::warn!("WS text превышает лимит фрагмента, сброс буфера");
+                                    text_fragment_buffer.clear();
+                                } else {
+                                    text_fragment_buffer = text.to_string();
+                                }
                             }
                         }
                     }
@@ -998,7 +1035,12 @@ pub async fn handle_websocket_session(
                                 }
                         } else {
                             let cont_text = String::from_utf8_lossy(bytes);
-                            text_fragment_buffer.push_str(&cont_text);
+                            if text_fragment_buffer.len() + cont_text.len() > MAX_WS_TEXT_FRAGMENT_BYTES {
+                                log::warn!("WS continuation превысил лимит {}, сброс", MAX_WS_TEXT_FRAGMENT_BYTES);
+                                text_fragment_buffer.clear();
+                            } else {
+                                text_fragment_buffer.push_str(&cont_text);
+                            }
 
                             if let Ok(client_msg) = serde_json::from_str::<ClientMsg>(&text_fragment_buffer) {
                                 text_fragment_buffer.clear();
@@ -1041,6 +1083,23 @@ async fn remove_user_from_online(state: &AppState, user_id: &str) {
         senders.remove(user_id);
     }
 
+    if let Ok(mut limiters) = WS_RATE_LIMITERS.lock() {
+        limiters.remove(user_id);
+    }
+
+    if let Ok(mut uploads) = state.file_uploads.lock() {
+        let keys: Vec<String> = uploads
+            .iter()
+            .filter(|(_, u)| u.sender_id == user_id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in keys {
+            if let Some(upl) = uploads.remove(&k) {
+                let _ = std::fs::remove_file(&upl.filepath);
+            }
+        }
+    }
+
     broadcast_except(
         state,
         user_id,
@@ -1063,21 +1122,29 @@ pub async fn ws_handler(
 ) -> Result<HttpResponse, actix_web::Error> {
     let state = data.get_ref().clone();
 
-    // Лимит подключений (защита от DoS)
     const MAX_CONNECTIONS: usize = 100;
-    let current = state.ws_connections.load(Ordering::Relaxed);
-    if current >= MAX_CONNECTIONS {
-        log::warn!(
-            "⚠️ Превышен лимит подключений: {}/{}",
-            current,
-            MAX_CONNECTIONS
-        );
-        return Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
-            "success": false,
-            "error": "Server is at capacity. Too many connections."
-        })));
+    loop {
+        let current = state.ws_connections.load(Ordering::Acquire);
+        if current >= MAX_CONNECTIONS {
+            log::warn!(
+                "Превышен лимит подключений: {}/{}",
+                current,
+                MAX_CONNECTIONS
+            );
+            return Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                "success": false,
+                "error": "Server is at capacity. Too many connections."
+            })));
+        }
+        if state
+            .ws_connections
+            .compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            break;
+        }
     }
-    state.ws_connections.fetch_add(1, Ordering::Relaxed);
+
 
     let (response, session, msg_stream) = actix_ws::handle(&req, stream)?;
     let state_spawn = state.clone();

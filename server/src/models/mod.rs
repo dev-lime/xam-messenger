@@ -5,8 +5,8 @@ use r2d2_sqlite::SqliteConnectionManager;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -62,6 +62,9 @@ pub struct ClientMsg {
     pub before_id: Option<String>,
     #[serde(default)]
     pub recipient_id: Option<String>,
+    /// ID собеседника для get_messages (клиент шлёт chat_peer_id; recipient_id — совместимость)
+    #[serde(default)]
+    pub chat_peer_id: Option<String>,
     /// Метаданные файла для file_start
     #[serde(default)]
     pub file_id: Option<String>,
@@ -94,8 +97,8 @@ pub struct FileUploadState {
     pub sender_name: String,
 }
 
-/// Контейнер для активных загрузок файлов
-pub type FileUploads = Arc<Mutex<HashMap<String, FileUploadState>>>;
+/// Контейнер для активных загрузок файлов (std mutex — синхронная запись чанков в spawn_blocking)
+pub type FileUploads = Arc<StdMutex<HashMap<String, FileUploadState>>>;
 
 /// Состояние приложения
 #[derive(Clone)]
